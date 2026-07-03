@@ -16,6 +16,7 @@ This document describes the behavior currently implemented by the project.
 - Keep configuration small and exact, using argv arrays for process execution
   and shell script strings for workflows that benefit from shared shell logic.
 - Support dynamic fish completion from resolved recipes.
+- Provide editor-facing schema and syntax support for TOML configuration.
 - Let the project use Shadowtree for its own development tasks.
 
 ## Non-Goals
@@ -27,6 +28,8 @@ This document describes the behavior currently implemented by the project.
 - Shadowtree does not provide built-in language-aware argument completion.
   Projects can opt into dynamic argument completion with recipe `values`
   commands.
+- Shadowtree's editor integrations do not replace runtime config validation.
+  The CLI loader remains authoritative.
 
 ## Isolation Model
 
@@ -532,6 +535,47 @@ Supported completion behavior:
 
 Completion parses config, checks profile markers, and runs only argument
 `values` commands needed for the active argument.
+
+## Editor Support
+
+Shadowtree ships editor integration files, but the CLI does not depend on them.
+
+Shared schema:
+
+```text
+schemas/shadowtree.schema.json
+```
+
+Zed support:
+
+```text
+editors/zed-shadowtree/
+```
+
+The Zed extension defines a `Shadowtree TOML` language backed by the pinned
+`tree-sitter-toml` grammar. Its queries provide:
+
+- base TOML highlighting
+- Shadowtree-specific key, recipe, argument, and variable highlighting
+- semantic shell highlighting for script-valued `cmd`, `shell_prelude`, and
+  `values` strings
+
+Shell semantic highlighting supports `shell = "bash"`, `shell = "sh"`, and
+`shell = "fish"` without hardcoding a single Zed shell language name.
+
+Zed completion and semantic tokens are provided by `shadowtree-lsp`.
+The Zed extension starts `shadowtree-lsp` from `PATH`; when developing inside
+the Shadowtree checkout, it can also run `go run ./cmd/shadowtree-lsp`.
+
+VS Code support:
+
+```text
+editors/vscode-shadowtree/
+```
+
+The VS Code companion manifest contributes a `tomlValidation` rule for
+`.shadowtree.toml` and `shadowtree.toml`. Even Better TOML consumes that rule
+and provides schema-backed validation, hover, and completion.
 
 ## Install Recipe Convention
 

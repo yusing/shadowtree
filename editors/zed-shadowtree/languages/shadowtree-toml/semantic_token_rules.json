@@ -1,0 +1,26 @@
+[
+  {
+    "token_type": "variable",
+    "style": ["variable.special", "variable", "constant"]
+  },
+  {
+    "token_type": "keyword",
+    "style": ["keyword"]
+  },
+  {
+    "token_type": "function",
+    "style": ["function"]
+  },
+  {
+    "token_type": "parameter",
+    "style": ["variable.parameter", "variable"]
+  },
+  {
+    "token_type": "operator",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "comment",
+    "style": ["comment"]
+  }
+]

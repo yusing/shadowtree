@@ -1,0 +1,36 @@
+{
+  "name": "shadowtree-toml",
+  "displayName": "Shadowtree TOML",
+  "description": "Shadowtree TOML config schema bindings for VS Code.",
+  "version": "0.1.0",
+  "publisher": "yusing",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yusing/shadowtree"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "shadowtree",
+    "toml",
+    "taplo",
+    "schema"
+  ],
+  "extensionDependencies": [
+    "tamasfe.even-better-toml"
+  ],
+  "contributes": {
+    "tomlValidation": [
+      {
+        "regexMatch": "^file://.*/(\\.shadowtree|shadowtree)\\.toml$",
+        "url": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json"
+      }
+    ]
+  }
+}

@@ -73,10 +73,10 @@ shell = "sh"
 
 shell_prelude = '''
 require_tool() {
-	command -v "$1" >/dev/null 2>&1 || {
-		echo "$1 is required" >&2
-		exit 1
-	}
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "$1 is required" >&2
+    exit 1
+  }
 }
 '''
 
@@ -133,6 +133,20 @@ shadowtree 'build[project=./cmd/shadowtree]'
 ```
 
 Supported argument types are `string`, `int`, `float`, and `bool`.
+
+## Editor Support
+
+Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
+integration files for Zed and VS Code under `editors/`. These provide
+completion, schema validation, Shadowtree-specific highlighting, and shell
+semantic highlighting inside script-valued config fields. See `docs/spec.md` and
+the editor integration READMEs for implementation details.
+
+Install the Zed language server with:
+
+```sh
+go install github.com/yusing/shadowtree/cmd/shadowtree-lsp@latest
+```
 
 ## Built-In Go Recipes
 

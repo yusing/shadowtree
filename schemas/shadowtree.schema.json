@@ -1,0 +1,273 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "id": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json",
+  "title": "Shadowtree config",
+  "description": "Configuration for Shadowtree development recipes.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema URL for editors that read schema declarations from TOML."
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["go"],
+      "description": "Recipe profile. Shadowtree currently provides built-in defaults for Go projects.",
+      "default": "go"
+    },
+    "shell": {
+      "$ref": "#/definitions/shell"
+    },
+    "shell_prelude": {
+      "$ref": "#/definitions/shellScript",
+      "description": "Shell code prepended to every script command and every sh -c command."
+    },
+    "sync_out": {
+      "$ref": "#/definitions/syncOut"
+    },
+    "env": {
+      "$ref": "#/definitions/env"
+    },
+    "vars": {
+      "$ref": "#/definitions/vars"
+    },
+    "var_commands": {
+      "$ref": "#/definitions/commandsMap"
+    },
+    "recipes": {
+      "$ref": "#/definitions/recipes"
+    }
+  },
+  "definitions": {
+    "env": {
+      "type": "object",
+      "description": "Environment variables passed to recipe commands.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "vars": {
+      "type": "object",
+      "description": "Static placeholder values. Use {NAME} in commands, args, default_args, pre, post, and sync_out.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "type": "string",
+          "description": "Placeholder value available as {NAME}."
+        }
+      }
+    },
+    "commandsMap": {
+      "type": "object",
+      "description": "Commands evaluated to produce shared placeholder values.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "$ref": "#/definitions/command"
+        }
+      }
+    },
+    "recipes": {
+      "type": "object",
+      "description": "Named development recipes. Reserved names such as run, recipes, init, config, completion, help, version, and __complete are not valid recipe names.",
+      "additionalProperties": {
+        "$ref": "#/definitions/recipe"
+      },
+      "x-taplo": {
+        "initKeys": ["test"]
+      }
+    },
+    "recipe": {
+      "type": "object",
+      "description": "A Shadowtree recipe. Sandboxed recipes run in a disposable workspace unless sandboxed is false.",
+      "additionalProperties": false,
+      "properties": {
+        "help": {
+          "type": "string",
+          "description": "Short help text shown by shadowtree help, shadowtree recipes, and shell completion."
+        },
+        "arguments": {
+          "$ref": "#/definitions/arguments"
+        },
+        "vars": {
+          "$ref": "#/definitions/vars",
+          "description": "Recipe-local placeholder values. These override top-level vars."
+        },
+        "shell": {
+          "$ref": "#/definitions/shell"
+        },
+        "shell_prelude": {
+          "$ref": "#/definitions/shellScript",
+          "description": "Recipe-local shell code appended after the top-level shell_prelude."
+        },
+        "sandboxed": {
+          "type": "boolean",
+          "description": "Whether to run this recipe in a disposable workspace. Defaults to true.",
+          "default": true
+        },
+        "cmd": {
+          "$ref": "#/definitions/command",
+          "description": "Required main command. Use an argv array for direct execution or a string for a shell script."
+        },
+        "args": {
+          "$ref": "#/definitions/stringArray",
+          "description": "Fixed arguments always inserted after cmd. Placeholder values such as {project} are expanded."
+        },
+        "default_args": {
+          "$ref": "#/definitions/stringArray",
+          "description": "Arguments used when the user does not provide recipe CLI args. Placeholder values such as {project} are expanded."
+        },
+        "pre": {
+          "$ref": "#/definitions/commandList",
+          "description": "Commands run before the main command."
+        },
+        "post": {
+          "$ref": "#/definitions/commandList",
+          "description": "Commands run after the main command."
+        },
+        "env": {
+          "$ref": "#/definitions/env"
+        },
+        "sync_out": {
+          "$ref": "#/definitions/syncOut"
+        }
+      },
+      "x-taplo": {
+        "initKeys": ["help", "cmd", "default_args"]
+      }
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Typed recipe arguments available as placeholders in commands and args.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[^=()\\[\\], \\t\\r\\n]+$": {
+          "$ref": "#/definitions/argument"
+        }
+      }
+    },
+    "argument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "help": {
+          "type": "string",
+          "description": "Short help text shown by shadowtree help <recipe> and shell completion."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "int", "float", "bool"],
+          "description": "Argument type. Defaults to string.",
+          "default": "string",
+          "x-taplo": {
+            "docs": {
+              "enumValues": [
+                "Arbitrary text.",
+                "Base-10 integer parsed by Go strconv.ParseInt.",
+                "Floating-point number parsed by Go strconv.ParseFloat.",
+                "Boolean parsed by Go strconv.ParseBool, such as true or false."
+              ]
+            }
+          }
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional 1-based positional index for positional CLI argument parsing."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the user must supply this argument.",
+          "default": false
+        },
+        "default": {
+          "$ref": "#/definitions/scalar",
+          "description": "Default value. Shadowtree converts the TOML scalar to a string and then validates it against type."
+        },
+        "values": {
+          "$ref": "#/definitions/command",
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help."
+        }
+      },
+      "x-taplo": {
+        "initKeys": ["help", "type", "default"]
+      }
+    },
+    "command": {
+      "description": "Command as either a shell script string or an argv array. Script strings run through the configured shell.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/shellScript"
+        },
+        {
+          "$ref": "#/definitions/argv"
+        }
+      ]
+    },
+    "commandList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/command"
+      }
+    },
+    "argv": {
+      "type": "array",
+      "description": "Direct process argv. The first item is the executable. Use {name} placeholders in any item.",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      },
+      "x-taplo": {
+        "initKeys": ["go", "test"]
+      }
+    },
+    "shell": {
+      "description": "Shell used for script commands. Defaults to sh. Supported editor highlighting values are sh, bash, and fish.",
+      "default": "sh",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": ["sh", "bash", "fish"]
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "shellScript": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0."
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "syncOut": {
+      "type": "array",
+      "description": "Paths mirrored back to the host checkout after a successful sandboxed run. Missing paths are mirrored as deletions.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scalar": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    }
+  }
+}
