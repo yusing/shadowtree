@@ -21,6 +21,7 @@ project_root = "pwd"
 
 [recipes.test]
 help = "Run tests."
+sandboxed = false
 cmd = "go test \"$@\""
 default_args = ["./..."]
 pre = [["go", "generate", "./..."]]
@@ -57,6 +58,9 @@ default = 1
 	}
 	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
 		t.Fatalf("Help = %q", got)
+	}
+	if got := loaded.Config.Recipes["test"].Sandboxed; got == nil || *got {
+		t.Fatalf("Sandboxed = %#v, want false", got)
 	}
 	if got := loaded.Config.Recipes["test"].Cmd; len(got) != 2 || got[0] != "__shadowtree_script__" {
 		t.Fatalf("cmd = %#v", got)

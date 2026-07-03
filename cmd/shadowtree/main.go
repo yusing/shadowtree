@@ -335,6 +335,9 @@ func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
 	fmt.Fprintf(w, "%s\n", name)
 	fmt.Fprintf(w, "  %s\n", recipe.Help(rec))
 	fmt.Fprintf(w, "\ncommand: %s\n", recipe.CommandSummary(rec))
+	if !recipe.RecipeSandboxed(rec) {
+		fmt.Fprintln(w, "sandboxed: false")
+	}
 	for i, command := range rec.Pre {
 		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.CommandHelpText(command))
 	}
@@ -362,8 +365,10 @@ func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
 		}
 		fmt.Fprintf(w, "  %s\n", recipe.ArgumentHelp(arg))
 	}
-	for _, path := range rec.SyncOut {
-		fmt.Fprintf(w, "sync_out: %s\n", path)
+	if recipe.RecipeSandboxed(rec) {
+		for _, path := range rec.SyncOut {
+			fmt.Fprintf(w, "sync_out: %s\n", path)
+		}
 	}
 	return nil
 }

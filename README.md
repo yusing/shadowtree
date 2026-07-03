@@ -13,11 +13,13 @@ shadowtree lint
 shadowtree run -- go test ./...
 ```
 
-By default, recipe writes stay inside the temporary workspace. Copy files back
-explicitly:
+By default, recipe writes stay inside the temporary workspace. Recipes that
+should edit the checkout directly can opt out:
 
-```sh
-shadowtree --sync-out go.mod --sync-out go.sum tidy
+```toml
+[recipes.tidy]
+sandboxed = false
+cmd = ["go", "mod", "tidy"]
 ```
 
 ## Development
@@ -44,8 +46,8 @@ shadowtree fmt
 shadowtree tidy
 ```
 
-Recipes that intentionally change the host checkout declare explicit
-`sync_out` paths in `.shadowtree.toml`.
+Recipes that intentionally change the host checkout set `sandboxed = false` in
+`.shadowtree.toml`.
 
 The `install` recipe follows the same convention as `git-agent`: it installs the
 binary to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
@@ -102,8 +104,8 @@ go list -f '{{.ImportPath}}{{"\t"}}{{.Doc}}' ./...
 
 [recipes.tidy]
 help = "Tidy Go module files."
+sandboxed = false
 cmd = ["go", "mod", "tidy"]
-sync_out = ["go.mod", "go.sum"]
 ```
 
 CLI args replace `default_args`:

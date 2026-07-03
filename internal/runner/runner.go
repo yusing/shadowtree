@@ -48,6 +48,13 @@ func Run(ctx context.Context, options Options) error {
 	if err != nil {
 		return err
 	}
+	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
+	if !options.Resolved.Sandboxed {
+		if options.Verbose {
+			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
+		}
+		return runResolvedCommands(ctx, source, env, options, stdin, stdout, stderr)
+	}
 	workDir, err := os.MkdirTemp("", "shadowtree-*")
 	if err != nil {
 		return err
@@ -64,24 +71,8 @@ func Run(ctx context.Context, options Options) error {
 	if err := CopyTree(source, workspace); err != nil {
 		return fmt.Errorf("copy workspace: %w", err)
 	}
-	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
-	var firstErr error
-	for i, command := range options.Resolved.Recipe.Pre {
-		if err := runCommand(ctx, workspace, env, command, stdin, stdout, stderr, options.Verbose, "pre", i); err != nil {
-			firstErr = err
-			break
-		}
-	}
-	if firstErr == nil {
-		firstErr = runCommand(ctx, workspace, env, options.Resolved.Main, stdin, stdout, stderr, options.Verbose, "main", 0)
-	}
-	for i, command := range options.Resolved.Recipe.Post {
-		if err := runCommand(ctx, workspace, env, command, stdin, stdout, stderr, options.Verbose, "post", i); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if firstErr != nil {
-		return firstErr
+	if err := runResolvedCommands(ctx, workspace, env, options, stdin, stdout, stderr); err != nil {
+		return err
 	}
 	if options.SyncOutAll {
 		if options.Verbose {
@@ -95,6 +86,25 @@ func Run(ctx context.Context, options Options) error {
 		}
 	}
 	return nil
+}
+
+func runResolvedCommands(ctx context.Context, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
+	var firstErr error
+	for i, command := range options.Resolved.Recipe.Pre {
+		if err := runCommand(ctx, dir, env, command, stdin, stdout, stderr, options.Verbose, "pre", i); err != nil {
+			firstErr = err
+			break
+		}
+	}
+	if firstErr == nil {
+		firstErr = runCommand(ctx, dir, env, options.Resolved.Main, stdin, stdout, stderr, options.Verbose, "main", 0)
+	}
+	for i, command := range options.Resolved.Recipe.Post {
+		if err := runCommand(ctx, dir, env, command, stdin, stdout, stderr, options.Verbose, "post", i); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func runCommand(ctx context.Context, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, verbose bool, phase string, index int) error {
@@ -128,6 +138,9 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	if resolved.ConfigPath != "" {
 		fmt.Fprintf(w, "config: %s\n", resolved.ConfigPath)
+	}
+	if !resolved.Sandboxed {
+		fmt.Fprintln(w, "sandboxed: false")
 	}
 	for i, command := range resolved.Recipe.Pre {
 		fmt.Fprintf(w, "pre[%d]: %s\n", i, strings.Join(command, " "))

@@ -82,6 +82,27 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(&out, "tidy", recipe.Recipe{
+		Help:      "Tidy module files.",
+		Cmd:       recipe.Command{"go", "mod", "tidy"},
+		Sandboxed: new(false),
+		SyncOut:   []string{"go.mod", "go.sum"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "sandboxed: false") {
+		t.Fatalf("recipe help output missing sandboxed marker:\n%s", text)
+	}
+	if strings.Contains(text, "sync_out:") {
+		t.Fatalf("recipe help output shows ignored sync_out:\n%s", text)
+	}
+}
+
 func zeroLoaded() configfile.Loaded {
 	return configfile.Loaded{}
 }

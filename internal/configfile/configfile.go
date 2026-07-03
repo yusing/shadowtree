@@ -103,8 +103,8 @@ default_args = ["./..."]
 
 [recipes.tidy]
 help = "Tidy Go module files."
+sandboxed = false
 cmd = ["go", "mod", "tidy"]
-sync_out = ["go.mod", "go.sum"]
 `
 	return os.WriteFile(path, []byte(sample), 0o644)
 }

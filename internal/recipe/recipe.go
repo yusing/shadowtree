@@ -78,6 +78,7 @@ type Recipe struct {
 	Vars         map[string]string   `toml:"vars" yaml:"vars"`
 	Shell        string              `toml:"shell" yaml:"shell"`
 	ShellPrelude string              `toml:"shell_prelude" yaml:"shell_prelude"`
+	Sandboxed    *bool               `toml:"sandboxed" yaml:"sandboxed"`
 	Cmd          Command             `toml:"cmd" yaml:"cmd"`
 	Args         []string            `toml:"args" yaml:"args"`
 	DefaultArgs  []string            `toml:"default_args" yaml:"default_args"`
@@ -101,6 +102,7 @@ type Resolved struct {
 	Recipe     Recipe
 	Main       Command
 	SyncOut    []string
+	Sandboxed  bool
 	GlobalEnv  map[string]string
 	ConfigPath string
 	Profile    string
@@ -154,9 +156,9 @@ func Builtins(profile string) map[string]Recipe {
 			DefaultArgs: []string{"./..."},
 		},
 		"tidy": {
-			Help:    "Tidy Go module files.",
-			Cmd:     Command{"go", "mod", "tidy"},
-			SyncOut: []string{"go.mod", "go.sum"},
+			Help:      "Tidy Go module files.",
+			Cmd:       Command{"go", "mod", "tidy"},
+			Sandboxed: new(false),
 		},
 	}
 }
@@ -188,6 +190,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	}
 	if override.ShellPrelude != "" {
 		out.ShellPrelude = override.ShellPrelude
+	}
+	if override.Sandboxed != nil {
+		out.Sandboxed = new(*override.Sandboxed)
 	}
 	if len(override.Cmd) > 0 {
 		out.Cmd = slices.Clone(override.Cmd)
@@ -262,9 +267,13 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	for i := range post {
 		post[i] = CommandWithShell(post[i], rec.Shell, rec.ShellPrelude)
 	}
-	syncOut, err := expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values)
-	if err != nil {
-		return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
+	sandboxed := RecipeSandboxed(rec)
+	var syncOut []string
+	if sandboxed {
+		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
+		}
 	}
 	if err := ValidateCommand(cmd); err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
@@ -291,10 +300,15 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		Recipe:     resolvedRecipe,
 		Main:       main,
 		SyncOut:    syncOut,
+		Sandboxed:  sandboxed,
 		GlobalEnv:  maps.Clone(globalEnv),
 		ConfigPath: configPath,
 		Profile:    profile,
 	}, nil
+}
+
+func RecipeSandboxed(rec Recipe) bool {
+	return rec.Sandboxed == nil || *rec.Sandboxed
 }
 
 func ValidateConfig(cfg Config) error {

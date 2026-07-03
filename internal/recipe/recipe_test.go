@@ -10,10 +10,12 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:         Command{"go", "test"},
 		DefaultArgs: []string{"./..."},
+		Sandboxed:   new(true),
 	}
 	override := Recipe{
-		Args: []string{"-count=1"},
-		Pre:  []Command{{"go", "generate", "./..."}},
+		Args:      []string{"-count=1"},
+		Pre:       []Command{{"go", "generate", "./..."}},
+		Sandboxed: new(false),
 	}
 
 	got := MergeRecipe(base, override)
@@ -28,6 +30,9 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	}
 	if len(got.Pre) != 1 || !slices.Equal(got.Pre[0], Command{"go", "generate", "./..."}) {
 		t.Fatalf("Pre = %#v", got.Pre)
+	}
+	if got.Sandboxed == nil || *got.Sandboxed {
+		t.Fatalf("Sandboxed = %#v, want false", got.Sandboxed)
 	}
 }
 
@@ -44,6 +49,65 @@ func TestResolveUsesCLIArgsInsteadOfDefaultArgs(t *testing.T) {
 	}
 	if !slices.Equal(got.Main, Command{"go", "test", "-race", "./internal/..."}) {
 		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveDefaultsToSandboxed(t *testing.T) {
+	got, err := Resolve("test", Recipe{Cmd: Command{"go", "test"}}, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Sandboxed {
+		t.Fatal("Sandboxed = false, want true")
+	}
+}
+
+func TestResolvePreservesUnsandboxedRecipe(t *testing.T) {
+	got, err := Resolve("tidy", Recipe{Cmd: Command{"go", "mod", "tidy"}, Sandboxed: new(false)}, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sandboxed {
+		t.Fatal("Sandboxed = true, want false")
+	}
+}
+
+func TestResolveUnsandboxedIgnoresSyncOut(t *testing.T) {
+	got, err := Resolve(
+		"tidy",
+		Recipe{
+			Cmd:       Command{"go", "mod", "tidy"},
+			Sandboxed: new(false),
+			SyncOut:   []string{"{missing}"},
+		},
+		nil,
+		[]string{"{also_missing}"},
+		nil,
+		"",
+		GoProfile,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SyncOut != nil {
+		t.Fatalf("SyncOut = %#v, want nil", got.SyncOut)
+	}
+}
+
+func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
+	builtins := Builtins(GoProfile)
+	if RecipeSandboxed(builtins["tidy"]) {
+		t.Fatal("built-in tidy is sandboxed, want unsandboxed")
+	}
+
+	merged := MergeRecipe(builtins["tidy"], Recipe{Help: "Custom tidy."})
+	if RecipeSandboxed(merged) {
+		t.Fatal("partial override reset tidy sandboxing")
+	}
+
+	merged = MergeRecipe(merged, Recipe{Sandboxed: new(true)})
+	if !RecipeSandboxed(merged) {
+		t.Fatal("explicit override failed to reset tidy sandboxing")
 	}
 }
 

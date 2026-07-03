@@ -30,7 +30,7 @@ This document describes the behavior currently implemented by the project.
 
 ## Isolation Model
 
-For each run, Shadowtree creates a temporary workspace:
+For each sandboxed run, Shadowtree creates a temporary workspace:
 
 ```text
 /tmp/shadowtree-*/workspace
@@ -45,12 +45,16 @@ By default:
 - The temporary workspace is removed after the run.
 - The host checkout is not changed.
 
-Exceptions:
+Exceptions for sandboxed runs:
 
 - `--sync-out PATH` copies selected paths back after a successful recipe.
 - Recipe-level `sync_out` copies selected paths back after a successful recipe.
 - `--sync-out-all` copies the whole workspace back after a successful recipe.
 - `--keep` keeps the temporary workspace for debugging.
+
+Unsandboxed recipes set `sandboxed = false` and run directly in the host
+checkout. `--keep`, `--sync-out`, `sync_out`, and `--sync-out-all` only apply to
+sandboxed execution.
 
 Shadowtree intentionally skips `.git`, `.shadowtree`, and `.shadowtree.*` while
 copying workspaces. Because `.git` is skipped, Go build recipes that require VCS
@@ -135,6 +139,7 @@ DYNAMIC_NAME = ["cmd", "arg"]
 
 [recipes.<name>]
 help = "Short recipe help text."
+sandboxed = true
 pre = [["cmd", "arg"]]
 cmd = ["cmd", "arg"]
 args = ["fixed", "args"]
@@ -210,6 +215,10 @@ top-level vars.
 : Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
   and shell completion.
 
+`sandboxed`
+: Whether to run the recipe in a temporary workspace. Defaults to `true`.
+  `false` runs the recipe directly in the source checkout and skips sync-out.
+
 `cmd`
 : Required argv prefix or shell script for the main command.
 
@@ -229,7 +238,8 @@ top-level vars.
 : Recipe-specific environment overrides.
 
 `sync_out`
-: Paths copied back to the host checkout after a successful recipe.
+: Paths copied back to the host checkout after a successful sandboxed recipe.
+  Ignored when `sandboxed = false`.
 
 ## Recipe Arguments
 
@@ -371,7 +381,7 @@ such as `{project}`.
 
 ## Execution Semantics
 
-For a recipe:
+For a sandboxed recipe:
 
 1. Copy the source tree into a temporary workspace.
 2. Run `pre` commands in order.
@@ -388,6 +398,10 @@ Failure behavior:
 - The process exits with the first failing command's exit code when available.
 
 All commands run from the temporary workspace root.
+
+For an unsandboxed recipe, Shadowtree skips the temporary workspace and runs
+`pre`, main, and `post` commands directly from the source checkout. Sync-out is
+not performed because command writes already target the host checkout.
 
 ## Reserved Recipe Names
 
@@ -541,12 +555,11 @@ fmt      Format Go source files.
 tidy     Tidy module dependencies.
 ```
 
-Recipes that intentionally mutate the host checkout declare `sync_out`:
+Recipes that intentionally mutate the host checkout set `sandboxed = false`:
 
 ```text
-build  -> bin/{binary}
-fmt    -> cmd, internal
-tidy   -> go.mod, go.sum
+fmt
+tidy
 ```
 
 ## Known Limits

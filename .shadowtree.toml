@@ -58,11 +58,11 @@ default_args = ["./..."]
 
 [recipes.fmt]
 help = "Format Go source files."
+sandboxed = false
 cmd = ["gofmt", "-w"]
 default_args = ["cmd", "internal"]
-sync_out = ["cmd", "internal"]
 
 [recipes.tidy]
 help = "Tidy module dependencies."
+sandboxed = false
 cmd = ["go", "mod", "tidy"]
-sync_out = ["go.mod", "go.sum"]
