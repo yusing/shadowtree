@@ -2,6 +2,7 @@ package completion
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -127,8 +128,64 @@ func TestCandidatesCompleteBoolArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteDynamicArgumentValues(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build[project=s"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd:          recipe.Command{"go", "build"},
+			ShellPrelude: "project_values() { printf 'sip/scheduler\\tScheduler daemon\\ntools/agi\\tFastAGI server\\n'; }",
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.Command{"sh", "-c", "project_values"},
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[project=sip/scheduler" || candidates[0].Help != "Scheduler daemon" {
+		t.Fatalf("candidates = %#v, want sip scheduler value", candidates)
+	}
+}
+
+func TestCandidatesCompleteDynamicArgumentValuesWithRecipeEnv(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "project=api"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Env: map[string]string{"PROJECTS": "api\tAPI service\nweb\tWeb service\n"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("printf '%s' \"$PROJECTS\""),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "project=api" || candidates[0].Help != "API service" {
+		t.Fatalf("candidates = %#v, want api value from recipe env", candidates)
+	}
+}
+
+func TestCandidatesCompleteSpacedDynamicArgumentValuesContainingSlash(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "project=sip/"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("printf 'sip/scheduler\\tScheduler daemon\\nsip/snmptrap\\tSNMP trap daemon\\n'"),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 2 || candidates[0].Value != "project=sip/scheduler" || candidates[1].Value != "project=sip/snmptrap" {
+		t.Fatalf("candidates = %#v, want slash-containing project values", candidates)
+	}
+}
+
 func TestCandidatesRejectUnsupportedShell(t *testing.T) {
-	_, err := Candidates("zsh", []string{"shadowtree", ""}, nil)
+	_, err := Candidates(context.Background(), "zsh", []string{"shadowtree", ""}, nil, Options{})
 	if err == nil {
 		t.Fatal("Candidates succeeded for unsupported shell")
 	}
@@ -170,7 +227,7 @@ func TestFishCandidatesSanitizeNewlines(t *testing.T) {
 
 func complete(t *testing.T, words []string, recipes map[string]recipe.Recipe) []Candidate {
 	t.Helper()
-	candidates, err := Candidates("fish", words, recipes)
+	candidates, err := Candidates(t.Context(), "fish", words, recipes, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

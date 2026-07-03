@@ -1,17 +1,22 @@
 package recipe
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"go.yaml.in/yaml/v4"
 )
 
 const GoProfile = "go"
+const scriptCommand = "__shadowtree_script__"
 
 var ReservedNames = map[string]bool{
 	"run":        true,
@@ -26,31 +31,69 @@ var ReservedNames = map[string]bool{
 
 type Command []string
 
+func (command *Command) UnmarshalTOML(value any) error {
+	decoded, err := decodeCommand(value)
+	if err != nil {
+		return err
+	}
+	*command = decoded
+	return nil
+}
+
+func (command *Command) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var script string
+		if err := value.Decode(&script); err != nil {
+			return err
+		}
+		*command = ScriptCommand(script)
+		return nil
+	case yaml.SequenceNode:
+		var args []string
+		if err := value.Decode(&args); err != nil {
+			return err
+		}
+		*command = Command(args)
+		return nil
+	default:
+		return fmt.Errorf("command must be string or string array")
+	}
+}
+
 type Config struct {
-	Profile string            `toml:"profile" yaml:"profile"`
-	Env     map[string]string `toml:"env" yaml:"env"`
-	SyncOut []string          `toml:"sync_out" yaml:"sync_out"`
-	Recipes map[string]Recipe `toml:"recipes" yaml:"recipes"`
+	Profile      string             `toml:"profile" yaml:"profile"`
+	Env          map[string]string  `toml:"env" yaml:"env"`
+	Vars         map[string]string  `toml:"vars" yaml:"vars"`
+	VarCommands  map[string]Command `toml:"var_commands" yaml:"var_commands"`
+	Shell        string             `toml:"shell" yaml:"shell"`
+	ShellPrelude string             `toml:"shell_prelude" yaml:"shell_prelude"`
+	SyncOut      []string           `toml:"sync_out" yaml:"sync_out"`
+	Recipes      map[string]Recipe  `toml:"recipes" yaml:"recipes"`
 }
 
 type Recipe struct {
-	Help        string              `toml:"help" yaml:"help"`
-	Arguments   map[string]Argument `toml:"arguments" yaml:"arguments"`
-	Cmd         Command             `toml:"cmd" yaml:"cmd"`
-	Args        []string            `toml:"args" yaml:"args"`
-	DefaultArgs []string            `toml:"default_args" yaml:"default_args"`
-	Pre         []Command           `toml:"pre" yaml:"pre"`
-	Post        []Command           `toml:"post" yaml:"post"`
-	Env         map[string]string   `toml:"env" yaml:"env"`
-	SyncOut     []string            `toml:"sync_out" yaml:"sync_out"`
+	Help         string              `toml:"help" yaml:"help"`
+	Arguments    map[string]Argument `toml:"arguments" yaml:"arguments"`
+	Vars         map[string]string   `toml:"vars" yaml:"vars"`
+	Shell        string              `toml:"shell" yaml:"shell"`
+	ShellPrelude string              `toml:"shell_prelude" yaml:"shell_prelude"`
+	Cmd          Command             `toml:"cmd" yaml:"cmd"`
+	Args         []string            `toml:"args" yaml:"args"`
+	DefaultArgs  []string            `toml:"default_args" yaml:"default_args"`
+	Pre          []Command           `toml:"pre" yaml:"pre"`
+	Post         []Command           `toml:"post" yaml:"post"`
+	Env          map[string]string   `toml:"env" yaml:"env"`
+	SyncOut      []string            `toml:"sync_out" yaml:"sync_out"`
 }
 
 type Argument struct {
-	Help     string `toml:"help" yaml:"help"`
-	Type     string `toml:"type" yaml:"type"`
-	Position int    `toml:"position" yaml:"position"`
-	Required bool   `toml:"required" yaml:"required"`
-	Default  any    `toml:"default" yaml:"default"`
+	Help     string  `toml:"help" yaml:"help"`
+	Type     string  `toml:"type" yaml:"type"`
+	Position int     `toml:"position" yaml:"position"`
+	Required bool    `toml:"required" yaml:"required"`
+	Default  any     `toml:"default" yaml:"default"`
+	Values   Command `toml:"values" yaml:"values"`
 }
 
 type Resolved struct {
@@ -64,6 +107,7 @@ type Resolved struct {
 }
 
 var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func Builtins(profile string) map[string]Recipe {
 	if profile != GoProfile {
@@ -136,6 +180,15 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.Arguments != nil {
 		out.Arguments = mergeArguments(out.Arguments, override.Arguments)
 	}
+	if override.Vars != nil {
+		out.Vars = maps.Clone(override.Vars)
+	}
+	if override.Shell != "" {
+		out.Shell = override.Shell
+	}
+	if override.ShellPrelude != "" {
+		out.ShellPrelude = override.ShellPrelude
+	}
 	if len(override.Cmd) > 0 {
 		out.Cmd = slices.Clone(override.Cmd)
 	}
@@ -160,6 +213,19 @@ func MergeRecipe(base, override Recipe) Recipe {
 	return out
 }
 
+func ApplyGlobals(recipes map[string]Recipe, vars map[string]string, shell, shellPrelude string) map[string]Recipe {
+	out := maps.Clone(recipes)
+	for name, rec := range out {
+		rec.Vars = mergeStringMaps(vars, rec.Vars)
+		if rec.Shell == "" {
+			rec.Shell = shell
+		}
+		rec.ShellPrelude = joinShell(shellPrelude, rec.ShellPrelude)
+		out[name] = rec
+	}
+	return out
+}
+
 func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv map[string]string, configPath, profile string) (Resolved, error) {
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
@@ -168,10 +234,12 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
+	values = mergeStringMaps(rec.Vars, values)
 	cmd, err := expandCommand(rec.Cmd, values)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
+	cmd = CommandWithShell(cmd, rec.Shell, rec.ShellPrelude)
 	fixedArgs, err := expandStrings(rec.Args, values)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
@@ -184,9 +252,15 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
+	for i := range pre {
+		pre[i] = CommandWithShell(pre[i], rec.Shell, rec.ShellPrelude)
+	}
 	post, err := expandCommands(rec.Post, values)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
+	}
+	for i := range post {
+		post[i] = CommandWithShell(post[i], rec.Shell, rec.ShellPrelude)
 	}
 	syncOut, err := expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values)
 	if err != nil {
@@ -224,12 +298,21 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 }
 
 func ValidateConfig(cfg Config) error {
+	if err := ValidateVarsMap("vars", cfg.Vars); err != nil {
+		return err
+	}
+	if err := ValidateCommandsMap("var_commands", cfg.VarCommands); err != nil {
+		return err
+	}
 	for name, rec := range cfg.Recipes {
 		if ReservedNames[name] {
 			return fmt.Errorf("recipe name %q is reserved", name)
 		}
 		if err := ValidateArguments(rec.Arguments); err != nil {
 			return fmt.Errorf("recipe %q arguments: %w", name, err)
+		}
+		if err := ValidateVarsMap(fmt.Sprintf("recipe %q vars", name), rec.Vars); err != nil {
+			return err
 		}
 		if len(rec.Cmd) > 0 {
 			if err := ValidateCommand(rec.Cmd); err != nil {
@@ -360,6 +443,39 @@ func ValidateArguments(args map[string]Argument) error {
 				return err
 			}
 		}
+		if len(arg.Values) > 0 {
+			if err := ValidateCommand(arg.Values); err != nil {
+				return fmt.Errorf("%s values: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func ValidateCommandsMap(name string, commands map[string]Command) error {
+	for key, command := range commands {
+		if err := validateIdentifierKey(name, key); err != nil {
+			return err
+		}
+		if err := ValidateCommand(command); err != nil {
+			return fmt.Errorf("%s.%s: %w", name, key, err)
+		}
+	}
+	return nil
+}
+
+func ValidateVarsMap(name string, vars map[string]string) error {
+	for key := range vars {
+		if err := validateIdentifierKey(name, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateIdentifierKey(section, key string) error {
+	if !identifierPattern.MatchString(key) {
+		return fmt.Errorf("%s has invalid key %q", section, key)
 	}
 	return nil
 }
@@ -367,6 +483,15 @@ func ValidateArguments(args map[string]Argument) error {
 func ValidateCommand(command Command) error {
 	if len(command) == 0 {
 		return errors.New("empty command")
+	}
+	if IsScriptCommand(command) {
+		if len(command) != 2 {
+			return errors.New("script command must have one body")
+		}
+		if strings.TrimSpace(command[1]) == "" {
+			return errors.New("empty script")
+		}
+		return nil
 	}
 	if strings.TrimSpace(command[0]) == "" {
 		return errors.New("empty executable")
@@ -408,6 +533,9 @@ func CommandSummary(rec Recipe) string {
 }
 
 func CommandHelpText(command Command) string {
+	if IsScriptCommand(command) {
+		return "<script>"
+	}
 	var parts []string
 	for _, arg := range command {
 		if strings.ContainsAny(arg, "\r\n") {
@@ -485,6 +613,9 @@ func MergeArgument(base, override Argument) Argument {
 	if override.Default != nil {
 		out.Default = override.Default
 	}
+	if len(override.Values) > 0 {
+		out.Values = slices.Clone(override.Values)
+	}
 	return out
 }
 
@@ -519,19 +650,168 @@ func expandStrings(items []string, values map[string]string) ([]string, error) {
 
 func expandPlaceholders(text string, values map[string]string) (string, error) {
 	var missing string
-	out := placeholderPattern.ReplaceAllStringFunc(text, func(match string) string {
-		name := strings.TrimSuffix(strings.TrimPrefix(match, "{"), "}")
+	if !strings.Contains(text, "{") {
+		return text, nil
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	for i := 0; i < len(text); {
+		if text[i] != '{' || (i > 0 && text[i-1] == '$') {
+			b.WriteByte(text[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(text[i:], '}')
+		if end < 0 {
+			b.WriteByte(text[i])
+			i++
+			continue
+		}
+		end += i
+		match := text[i : end+1]
+		if !placeholderPattern.MatchString(match) {
+			b.WriteString(match)
+			i = end + 1
+			continue
+		}
+		name := text[i+1 : end]
 		value, ok := values[name]
 		if !ok {
 			missing = name
-			return match
+			b.WriteString(match)
+			i = end + 1
+			continue
 		}
-		return value
-	})
+		b.WriteString(value)
+		i = end + 1
+	}
+	out := b.String()
 	if missing != "" {
 		return "", fmt.Errorf("missing value for {%s}", missing)
 	}
 	return out, nil
+}
+
+func CommandWithShell(command Command, shell, shellPrelude string) Command {
+	shell = defaultShell(shell)
+	if IsScriptCommand(command) {
+		return Command{shell, "-c", joinShell(shellPrelude, command[1]), "shadowtree"}
+	}
+	if strings.TrimSpace(shellPrelude) == "" || !isShellScriptCommand(command) {
+		return command
+	}
+	out := slices.Clone(command)
+	out[2] = joinShell(shellPrelude, out[2])
+	return out
+}
+
+func IsScriptCommand(command Command) bool {
+	return len(command) > 0 && command[0] == scriptCommand
+}
+
+func ScriptCommand(script string) Command {
+	return Command{scriptCommand, script}
+}
+
+func isShellScriptCommand(command Command) bool {
+	return len(command) >= 3 && (command[0] == "sh" || strings.HasSuffix(command[0], "/sh")) && command[1] == "-c"
+}
+
+func EvalVarCommands(ctx context.Context, dir string, env map[string]string, commands map[string]Command, shell, shellPrelude string) (map[string]string, error) {
+	values := map[string]string{}
+	for _, key := range slices.Sorted(maps.Keys(commands)) {
+		value, err := commandOutput(ctx, dir, env, CommandWithShell(commands[key], shell, shellPrelude))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		values[key] = strings.TrimSpace(value)
+	}
+	return values, nil
+}
+
+func CommandOutput(ctx context.Context, dir string, env map[string]string, command Command) (string, error) {
+	return commandOutput(ctx, dir, env, command)
+}
+
+func commandOutput(ctx context.Context, dir string, env map[string]string, command Command) (string, error) {
+	if err := ValidateCommand(command); err != nil {
+		return "", err
+	}
+	command = CommandWithShell(command, "", "")
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = dir
+	cmd.Env = mergedEnv(os.Environ(), env)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func mergedEnv(base []string, overlays ...map[string]string) []string {
+	env := map[string]string{}
+	for _, item := range base {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	for _, overlay := range overlays {
+		maps.Copy(env, overlay)
+	}
+	out := make([]string, 0, len(env))
+	for _, key := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func joinShell(parts ...string) string {
+	var nonempty []string
+	for _, part := range parts {
+		part = strings.TrimRight(part, "\r\n")
+		if strings.TrimSpace(part) != "" {
+			nonempty = append(nonempty, part)
+		}
+	}
+	return strings.Join(nonempty, "\n")
+}
+
+func defaultShell(shell string) string {
+	if strings.TrimSpace(shell) == "" {
+		return "sh"
+	}
+	return shell
+}
+
+func decodeCommand(value any) (Command, error) {
+	switch value := value.(type) {
+	case string:
+		return ScriptCommand(value), nil
+	case []any:
+		out := make(Command, len(value))
+		for i, item := range value {
+			text, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("command item %d must be string", i)
+			}
+			out[i] = text
+		}
+		return out, nil
+	case []string:
+		return Command(value), nil
+	default:
+		return nil, fmt.Errorf("command must be string or string array, got %T", value)
+	}
+}
+
+func mergeStringMaps(base, override map[string]string) map[string]string {
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, override)
+	return out
 }
 
 func validateArgumentType(value string) error {

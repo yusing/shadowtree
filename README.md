@@ -64,6 +64,19 @@ TOML is the default format:
 
 ```toml
 profile = "go"
+shell = "sh"
+
+shell_prelude = '''
+require_tool() {
+	command -v "$1" >/dev/null 2>&1 || {
+		echo "$1 is required" >&2
+		exit 1
+	}
+}
+'''
+
+[vars]
+go_ldflags = "-buildvcs=false"
 
 [recipes.test]
 help = "Run tests after regenerating code."
@@ -73,7 +86,9 @@ default_args = ["./..."]
 
 [recipes.build]
 help = "Build a Go package."
-cmd = ["go", "build"]
+cmd = '''
+go build {go_ldflags} "$@"
+'''
 default_args = ["{project}"]
 
 [recipes.build.arguments.project]
@@ -81,6 +96,9 @@ help = "Go package to build."
 type = "string"
 position = 1
 default = "./..."
+values = '''
+go list -f '{{.ImportPath}}{{"\t"}}{{.Doc}}' ./...
+'''
 
 [recipes.tidy]
 help = "Tidy Go module files."

@@ -13,8 +13,8 @@ This document describes the behavior currently implemented by the project.
 - Keep command writes isolated from the host checkout unless explicitly synced.
 - Avoid triggering editor/LSP reindexing for generated or temporary files.
 - Provide useful defaults for Go projects.
-- Keep configuration small and exact, using argv arrays rather than shell-like
-  command strings.
+- Keep configuration small and exact, using argv arrays for process execution
+  and shell script strings for workflows that benefit from shared shell logic.
 - Support dynamic fish completion from resolved recipes.
 - Let the project use Shadowtree for its own development tasks.
 
@@ -24,8 +24,9 @@ This document describes the behavior currently implemented by the project.
 - Shadowtree does not currently use Linux namespaces, overlayfs, or reflinks.
 - Shadowtree does not currently provide Docker, remote execution, matrix jobs,
   watch mode, or persistent named sessions.
-- Shadowtree does not currently perform deep language-aware argument completion
-  such as `go list ./...` package completion.
+- Shadowtree does not provide built-in language-aware argument completion.
+  Projects can opt into dynamic argument completion with recipe `values`
+  commands.
 
 ## Isolation Model
 
@@ -115,10 +116,22 @@ Top-level fields:
 
 ```toml
 profile = "go"
+shell = "sh"
+shell_prelude = '''
+shared_function() {
+	echo ok
+}
+'''
 sync_out = ["path/from/project/root"]
 
 [env]
 KEY = "value"
+
+[vars]
+NAME = "static value"
+
+[var_commands]
+DYNAMIC_NAME = ["cmd", "arg"]
 
 [recipes.<name>]
 help = "Short recipe help text."
@@ -129,6 +142,9 @@ default_args = ["args", "with", "{placeholders}"]
 post = [["cmd", "arg"]]
 sync_out = ["path/from/project/root"]
 
+[recipes.<name>.vars]
+NAME = "recipe override"
+
 [recipes.<name>.env]
 KEY = "value"
 
@@ -138,6 +154,7 @@ type = "string"
 position = 1
 required = false
 default = "value"
+values = ["cmd", "arg"]
 ```
 
 YAML uses the same field names:
@@ -153,13 +170,48 @@ recipes:
 
 ## Recipe Fields
 
+Commands can be argv arrays or shell script strings. Script strings are executed
+with the configured shell:
+
+```toml
+shell = "bash"
+
+[recipes.example]
+cmd = '''
+set -euo pipefail
+echo "hello"
+'''
+```
+
+If `shell` is not set, Shadowtree uses `sh`.
+
+Top-level `shell_prelude` is prepended to every script command and every
+`["sh", "-c", "..."]` command. It is intended for shared shell functions and
+variables:
+
+```toml
+shell_prelude = '''
+require_tool() {
+	command -v "$1" >/dev/null 2>&1 || {
+		echo "$1 is required" >&2
+		exit 1
+	}
+}
+'''
+```
+
+Top-level `vars` are static placeholder values shared by every recipe.
+`var_commands` are evaluated from the source checkout when recipes are resolved
+for execution, printing, or help; surrounding whitespace is trimmed from stdout
+and the result becomes a shared placeholder value. Recipe-level `vars` override
+top-level vars.
+
 `help`
 : Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
   and shell completion.
 
 `cmd`
-: Required argv prefix for the main command. Commands are argv arrays, not shell
-  strings.
+: Required argv prefix or shell script for the main command.
 
 `args`
 : Fixed arguments always inserted after `cmd`.
@@ -206,6 +258,10 @@ Argument fields:
 `default`
 : Optional default value. Defaults are type-checked.
 
+`values`
+: Optional command that produces completion candidates for this argument. Each
+  output line is a value, optionally followed by a tab and help text.
+
 Example:
 
 ```toml
@@ -221,6 +277,9 @@ help = "Go package to build."
 type = "string"
 position = 1
 default = "./cmd/shadowtree"
+values = '''
+go list -f '{{.ImportPath}}{{"\t"}}{{.Doc}}' ./cmd/...
+'''
 
 [recipes.build.arguments.binary]
 help = "Output binary name under bin/."
@@ -249,8 +308,10 @@ shadowtree 'build[project=./cmd/shadowtree,binary=shadowtree-dev]'
 Bracket-style syntax is preferred for shell completion, especially in fish.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
-Placeholders are expanded in `cmd`, `args`, `default_args`, `pre`, `post`, and
-`sync_out`.
+Shared vars are exposed through the same placeholder syntax. Placeholders are
+expanded in `cmd`, `args`, `default_args`, `pre`, `post`, and `sync_out`.
+Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
+placeholder.
 
 ## Recipe Resolution
 
@@ -444,9 +505,11 @@ Supported completion behavior:
   `build[project=`.
 - `shadowtree test race=<TAB>` completes `true` and `false` for bool
   arguments.
+- Arguments with `values` complete dynamic values produced by the configured
+  command.
 
-Completion is intentionally cheap. It parses config and checks profile markers;
-it does not run project commands like `go list`, `go test`, or codegen.
+Completion parses config, checks profile markers, and runs only argument
+`values` commands needed for the active argument.
 
 ## Install Recipe Convention
 
@@ -491,6 +554,7 @@ tidy   -> go.mod, go.sum
 - Workspace isolation is implemented by copying files into a temp directory.
 - Large repositories may be slower than an overlay/reflink implementation.
 - Commands can still intentionally read or write absolute host paths.
-- No shell-string recipe shorthand exists; use argv arrays.
+- Shell script strings are supported for recipes that need shell workflows;
+  argv arrays remain preferred for direct process execution.
 - Fish is the only shell completion target currently implemented.
 - Go is the only language profile currently implemented.

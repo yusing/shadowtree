@@ -10,10 +10,18 @@ func TestLoadTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 profile = "go"
+shell = "bash"
+shell_prelude = "set -eu"
+
+[vars]
+go_ldflags = "-s -w"
+
+[var_commands]
+project_root = "pwd"
 
 [recipes.test]
 help = "Run tests."
-cmd = ["go", "test"]
+cmd = "go test \"$@\""
 default_args = ["./..."]
 pre = [["go", "generate", "./..."]]
 
@@ -35,8 +43,23 @@ default = 1
 	if got := loaded.Config.Recipes["test"].Pre[0][1]; got != "generate" {
 		t.Fatalf("pre command = %#v", loaded.Config.Recipes["test"].Pre)
 	}
+	if got := loaded.Config.Shell; got != "bash" {
+		t.Fatalf("Shell = %q", got)
+	}
+	if got := loaded.Config.ShellPrelude; got != "set -eu" {
+		t.Fatalf("ShellPrelude = %q", got)
+	}
+	if got := loaded.Config.Vars["go_ldflags"]; got != "-s -w" {
+		t.Fatalf("go_ldflags = %q", got)
+	}
+	if got := loaded.Config.VarCommands["project_root"]; len(got) != 2 || got[0] != "__shadowtree_script__" {
+		t.Fatalf("project_root command = %#v", got)
+	}
 	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
 		t.Fatalf("Help = %q", got)
+	}
+	if got := loaded.Config.Recipes["test"].Cmd; len(got) != 2 || got[0] != "__shadowtree_script__" {
+		t.Fatalf("cmd = %#v", got)
 	}
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")

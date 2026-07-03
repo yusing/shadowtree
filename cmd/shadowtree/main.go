@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"os/signal"
 	"slices"
@@ -90,7 +91,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		return configfile.Init(path)
 	}
-	resolvedSet, loaded, profile, err := resolveSet(opts)
+	resolvedSet, loaded, profile, err := resolveSet(ctx, opts, true)
 	if err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func globalFlagTakesValue(arg string) bool {
 	}
 }
 
-func resolveSet(opts options) (map[string]recipe.Recipe, configfile.Loaded, string, error) {
+func resolveSet(ctx context.Context, opts options, evalDynamicVars bool) (map[string]recipe.Recipe, configfile.Loaded, string, error) {
 	cwd := mustGetwd()
 	loaded := configfile.Loaded{}
 	if opts.configPath != "" {
@@ -230,8 +231,23 @@ func resolveSet(opts options) (map[string]recipe.Recipe, configfile.Loaded, stri
 	if profile != "" && profile != recipe.GoProfile {
 		return nil, loaded, "", fmt.Errorf("unsupported profile: %s", profile)
 	}
+	vars := maps.Clone(loaded.Config.Vars)
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	if evalDynamicVars {
+		dynamicVars, err := recipe.EvalVarCommands(ctx, cwd, loaded.Config.Env, loaded.Config.VarCommands, loaded.Config.Shell, loaded.Config.ShellPrelude)
+		if err != nil {
+			return nil, loaded, "", fmt.Errorf("var_commands: %w", err)
+		}
+		maps.Copy(vars, dynamicVars)
+	}
 	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), loaded.Config.Recipes)
-	return recipes, loaded, profile, err
+	if err != nil {
+		return nil, loaded, "", err
+	}
+	recipes = recipe.ApplyGlobals(recipes, vars, loaded.Config.Shell, loaded.Config.ShellPrelude)
+	return recipes, loaded, profile, nil
 }
 
 func runComplete(args []string) error {
@@ -241,11 +257,14 @@ func runComplete(args []string) error {
 	shell := args[0]
 	words := args[1:]
 	opts := completionOptions(words)
-	recipes, _, _, err := resolveSet(opts)
+	recipes, loaded, _, err := resolveSet(context.Background(), opts, false)
 	if err != nil {
 		return nil
 	}
-	candidates, err := completion.Candidates(shell, words, recipes)
+	candidates, err := completion.Candidates(context.Background(), shell, words, recipes, completion.Options{
+		Dir: mustGetwd(),
+		Env: loaded.Config.Env,
+	})
 	if err != nil {
 		return err
 	}

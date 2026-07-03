@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"context"
 	"slices"
 	"testing"
 )
@@ -129,6 +130,118 @@ func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 	}
 	if !slices.Equal(got.Main, Command{"go", "build", "./cmd/shadowtree"}) {
 		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"build": {
+			Cmd:         Command{"go", "build"},
+			Args:        []string{"-ldflags={go_ldflags}"},
+			DefaultArgs: []string{"{project}"},
+			Arguments: map[string]Argument{
+				"project": {Default: "./cmd/default"},
+			},
+		},
+	}, map[string]string{"go_ldflags": "-s -w"}, "", "")["build"]
+
+	got, err := Resolve("build", rec, []string{"project=./cmd/shadowtree"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "build", "-ldflags=-s -w", "./cmd/shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"script": {
+			Cmd: ScriptCommand("say_hi"),
+		},
+	}, nil, "", "say_hi() { printf hi; }")["script"]
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"sh", "-c", "say_hi() { printf hi; }\nsay_hi", "shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveShellScriptUsesConfiguredShell(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"script": {
+			Cmd: ScriptCommand("printf ok"),
+		},
+	}, nil, "bash", "")["script"]
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"bash", "-c", "printf ok", "shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestExpandPlaceholdersIgnoresShellParameterExpansion(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"sh", "-c", `: "${PHP_DIR:=/var/www/frsip}"; printf {project}`},
+		Arguments: map[string]Argument{
+			"project": {Default: "api"},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Main[2] != `: "${PHP_DIR:=/var/www/frsip}"; printf api` {
+		t.Fatalf("script = %q", got.Main[2])
+	}
+}
+
+func TestValidateConfigRejectsInvalidVarKeys(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"static": {
+			Vars: map[string]string{"go-ldflags": "-s -w"},
+		},
+		"dynamic": {
+			VarCommands: map[string]Command{"1name": ScriptCommand("printf value")},
+		},
+		"recipe": {
+			Recipes: map[string]Recipe{
+				"build": {
+					Cmd:  Command{"go", "build"},
+					Vars: map[string]string{"bad name": "value"},
+				},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateConfig(cfg); err == nil {
+				t.Fatal("ValidateConfig succeeded with invalid var key")
+			}
+		})
+	}
+}
+
+func TestEvalVarCommandsUsesConfiguredShellAndPrelude(t *testing.T) {
+	got, err := EvalVarCommands(
+		context.Background(),
+		"",
+		nil,
+		map[string]Command{"value": ScriptCommand("print_value")},
+		"bash",
+		"print_value() { [[ -n ${BASH_VERSION:-} ]] && printf ' ok\\n'; }",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["value"] != "ok" {
+		t.Fatalf("value = %q", got["value"])
 	}
 }
 

@@ -1,8 +1,10 @@
 package completion
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +15,11 @@ import (
 type Candidate struct {
 	Value string
 	Help  string
+}
+
+type Options struct {
+	Dir string
+	Env map[string]string
 }
 
 type shellSpec struct {
@@ -92,7 +99,7 @@ func sanitizeFishField(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func Candidates(shell string, words []string, recipes map[string]recipe.Recipe) ([]Candidate, error) {
+func Candidates(ctx context.Context, shell string, words []string, recipes map[string]recipe.Recipe, opts Options) ([]Candidate, error) {
 	spec, err := shellFor(shell)
 	if err != nil {
 		return nil, err
@@ -106,7 +113,7 @@ func Candidates(shell string, words []string, recipes map[string]recipe.Recipe) 
 	if completesHelpRecipe(words) {
 		return recipeCandidates(words, recipes), nil
 	}
-	if candidates, ok := argumentCandidates(spec, words, recipes); ok {
+	if candidates, ok := argumentCandidates(ctx, spec, words, recipes, opts); ok {
 		return candidates, nil
 	}
 	if commandSelected(words) {
@@ -124,7 +131,7 @@ func Candidates(shell string, words []string, recipes map[string]recipe.Recipe) 
 	return filterPrefix(candidates, currentWord(words)), nil
 }
 
-func argumentCandidates(spec shellSpec, words []string, recipes map[string]recipe.Recipe) ([]Candidate, bool) {
+func argumentCandidates(ctx context.Context, spec shellSpec, words []string, recipes map[string]recipe.Recipe, opts Options) ([]Candidate, bool) {
 	positionals := normalizedWords(spec, positionalWords(words))
 	if len(positionals) == 0 {
 		return nil, false
@@ -134,6 +141,10 @@ func argumentCandidates(spec shellSpec, words []string, recipes map[string]recip
 		name = positionals[0]
 	}
 	current := spec.normalize(currentWord(words))
+	rawCurrent := spec.normalize(rawCurrentWord(words))
+	if current == "" && (strings.Contains(rawCurrent, "=") || strings.Contains(rawCurrent, spec.groupOpen)) {
+		current = rawCurrent
+	}
 	if strings.Contains(current, spec.groupOpen) {
 		if currentName, currentPrefix, ok := cutGroupedStart(spec, current); ok {
 			name = currentName
@@ -155,31 +166,31 @@ func argumentCandidates(spec shellSpec, words []string, recipes map[string]recip
 		if len(positionals) > 1 && positionals[0] != current {
 			content = strings.Join(append([]string{typedPrefix}, positionals[1:]...), " ")
 		}
-		return groupedArgumentCandidates(spec, prefix, content, rec, used), true
+		return groupedArgumentCandidates(ctx, spec, prefix, content, rec, used, opts), true
 	}
-	return spacedArgumentCandidates(current, rec, used), true
+	return spacedArgumentCandidates(ctx, current, rec, used, opts), true
 }
 
-func groupedArgumentCandidates(spec shellSpec, prefix, content string, rec recipe.Recipe, used map[string]bool) []Candidate {
+func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, content string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	before, active := splitGroupedContent(spec, content)
 	tokenPrefix := prefix + before
-	if key, _, ok := strings.Cut(active, "="); ok {
+	if key, valuePrefix, ok := strings.Cut(active, "="); ok {
 		arg, exists := rec.Arguments[key]
 		if !exists {
 			return nil
 		}
-		return valueCandidates(tokenPrefix+key+"=", arg)
+		return valueCandidates(ctx, tokenPrefix+key+"=", valuePrefix, arg, rec, opts)
 	}
 	return argumentNameCandidates(tokenPrefix, active, rec, used)
 }
 
-func spacedArgumentCandidates(current string, rec recipe.Recipe, used map[string]bool) []Candidate {
-	if key, _, ok := strings.Cut(current, "="); ok {
+func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
+	if key, valuePrefix, ok := strings.Cut(current, "="); ok {
 		arg, exists := rec.Arguments[key]
 		if !exists {
 			return nil
 		}
-		return valueCandidates(key+"=", arg)
+		return valueCandidates(ctx, key+"=", valuePrefix, arg, rec, opts)
 	}
 	return argumentNameCandidates("", current, rec, used)
 }
@@ -226,14 +237,46 @@ func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[
 	return candidates
 }
 
-func valueCandidates(prefix string, arg recipe.Argument) []Candidate {
+func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, opts Options) []Candidate {
+	if len(arg.Values) > 0 {
+		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, opts)
+	}
 	if arg.Type != "bool" {
 		return nil
 	}
-	return []Candidate{
+	return filterPrefix([]Candidate{
 		{Value: prefix + "true", Help: "bool"},
 		{Value: prefix + "false", Help: "bool"},
+	}, prefix+valuePrefix)
+}
+
+func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, opts Options) []Candidate {
+	command := recipe.CommandWithShell(arg.Values, rec.Shell, rec.ShellPrelude)
+	env := maps.Clone(opts.Env)
+	if env == nil {
+		env = map[string]string{}
 	}
+	maps.Copy(env, rec.Env)
+	output, err := recipe.CommandOutput(ctx, opts.Dir, env, command)
+	if err != nil {
+		return nil
+	}
+	var candidates []Candidate
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		value, help, _ := strings.Cut(line, "\t")
+		if valuePrefix != "" && !strings.HasPrefix(value, valuePrefix) {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Value: prefix + value,
+			Help:  help,
+		})
+	}
+	return candidates
 }
 
 func usedArguments(spec shellSpec, tokens []string, current string, rec recipe.Recipe) map[string]bool {
@@ -332,14 +375,21 @@ func positionalWords(words []string) []string {
 }
 
 func currentWord(words []string) string {
-	if len(words) == 0 {
+	word := rawCurrentWord(words)
+	if word == "" {
 		return ""
 	}
-	word := words[len(words)-1]
 	if filepath.Base(word) == word {
 		return word
 	}
 	return ""
+}
+
+func rawCurrentWord(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return words[len(words)-1]
 }
 
 func normalizedWords(spec shellSpec, words []string) []string {
