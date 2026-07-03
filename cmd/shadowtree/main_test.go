@@ -57,6 +57,42 @@ func TestPrintHelpIncludesRecipeHelp(t *testing.T) {
 	}
 }
 
+func TestPrintConfigAlignsLongRecipeNames(t *testing.T) {
+	var out bytes.Buffer
+	err := printConfig(&out, zeroLoaded(), "go", map[string]recipe.Recipe{
+		"build":            {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
+		"export-db-schema": {Help: "Export schemas.", Cmd: recipe.Command{"go", "run"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(out.String(), "\n")
+	buildLine := lineWithPrefix(t, lines, "  build")
+	exportLine := lineWithPrefix(t, lines, "  export-db-schema")
+	if got, want := strings.Index(buildLine, "Build binary."), strings.Index(exportLine, "Export schemas."); got != want {
+		t.Fatalf("description columns differ: build=%d export=%d\n%s\n%s", got, want, buildLine, exportLine)
+	}
+}
+
+func TestPrintRecipesAlignsLongRecipeNames(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipes(&out, map[string]recipe.Recipe{
+		"build":            {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
+		"export-db-schema": {Help: "Export schemas.", Cmd: recipe.Command{"go", "run"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(out.String(), "\n")
+	buildLine := lineWithPrefix(t, lines, "build")
+	exportLine := lineWithPrefix(t, lines, "export-db-schema")
+	if got, want := strings.Index(buildLine, "Build binary."), strings.Index(exportLine, "Export schemas."); got != want {
+		t.Fatalf("description columns differ: build=%d export=%d\n%s\n%s", got, want, buildLine, exportLine)
+	}
+}
+
 func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(&out, "install", recipe.Recipe{
@@ -105,4 +141,15 @@ func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 
 func zeroLoaded() configfile.Loaded {
 	return configfile.Loaded{}
+}
+
+func lineWithPrefix(t *testing.T, lines []string, prefix string) string {
+	t.Helper()
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	t.Fatalf("missing line with prefix %q in %#v", prefix, lines)
+	return ""
 }

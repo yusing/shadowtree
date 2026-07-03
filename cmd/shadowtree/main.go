@@ -291,12 +291,26 @@ func completionOptions(words []string) options {
 }
 
 func printRecipes(w io.Writer, recipes map[string]recipe.Recipe) error {
+	return printRecipeList(w, recipes, "")
+}
+
+func printRecipeList(w io.Writer, recipes map[string]recipe.Recipe, indent string) error {
 	names := mapsKeys(recipes)
 	slices.Sort(names)
+	nameColumn := recipeNameColumn(names)
 	for _, name := range names {
-		fmt.Fprintf(w, "%-12s %s\n", name, recipe.Help(recipes[name]))
+		fmt.Fprintf(w, "%s%-*s%s\n", indent, nameColumn, name, recipe.Help(recipes[name]))
 	}
 	return nil
+}
+
+func recipeNameColumn(names []string) int {
+	const minColumn = 13
+	column := minColumn
+	for _, name := range names {
+		column = max(column, len(name)+2)
+	}
+	return column
 }
 
 func printConfig(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe) error {
@@ -311,12 +325,7 @@ func printConfig(w io.Writer, loaded configfile.Loaded, profile string, recipes 
 		fmt.Fprintln(w, "profile: <none>")
 	}
 	fmt.Fprintln(w, "recipes:")
-	names := mapsKeys(recipes)
-	slices.Sort(names)
-	for _, name := range names {
-		fmt.Fprintf(w, "  %-12s %s\n", name, recipe.Help(recipes[name]))
-	}
-	return nil
+	return printRecipeList(w, recipes, "  ")
 }
 
 func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe) error {
