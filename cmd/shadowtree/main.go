@@ -77,10 +77,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	switch rest[0] {
 	case "completion":
-		if len(rest) != 2 || rest[1] != "fish" {
-			return errors.New("usage: shadowtree completion fish")
+		if len(rest) != 2 {
+			return errors.New("usage: shadowtree completion <shell>")
 		}
-		return completion.FishScript(os.Stdout)
+		return completion.Script(os.Stdout, rest[1])
 	case "__complete":
 		return runComplete(rest[1:])
 	case "init":
@@ -133,12 +133,12 @@ func run(ctx context.Context, args []string) error {
 			Stderr:     os.Stderr,
 		})
 	default:
-		name := rest[0]
+		name, recipeArgs := recipe.Invocation(rest)
 		rec, ok := resolvedSet[name]
 		if !ok {
 			return fmt.Errorf("unknown recipe: %s", name)
 		}
-		resolved, err := recipe.Resolve(name, rec, rest[1:], opts.syncOut, loaded.Config.Env, loaded.Path, profile)
+		resolved, err := recipe.Resolve(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile)
 		if err != nil {
 			return err
 		}
@@ -235,16 +235,21 @@ func resolveSet(opts options) (map[string]recipe.Recipe, configfile.Loaded, stri
 }
 
 func runComplete(args []string) error {
-	if len(args) == 0 || args[0] != "fish" {
-		return errors.New("usage: shadowtree __complete fish <words...>")
+	if len(args) == 0 {
+		return errors.New("usage: shadowtree __complete <shell> <words...>")
 	}
+	shell := args[0]
 	words := args[1:]
 	opts := completionOptions(words)
 	recipes, _, _, err := resolveSet(opts)
 	if err != nil {
 		return nil
 	}
-	return completion.FishCandidates(os.Stdout, completion.Candidates(words, recipes))
+	candidates, err := completion.Candidates(shell, words, recipes)
+	if err != nil {
+		return err
+	}
+	return completion.WriteCandidates(os.Stdout, shell, candidates)
 }
 
 func completionOptions(words []string) options {
@@ -316,6 +321,27 @@ func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
 	}
 	for i, command := range rec.Post {
 		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.CommandHelpText(command))
+	}
+	argNames := mapsKeys(rec.Arguments)
+	slices.Sort(argNames)
+	for _, argName := range argNames {
+		arg := rec.Arguments[argName]
+		fmt.Fprintf(w, "arg %s", argName)
+		if arg.Type != "" {
+			fmt.Fprintf(w, ":%s", arg.Type)
+		} else {
+			fmt.Fprint(w, ":string")
+		}
+		if arg.Position > 0 {
+			fmt.Fprintf(w, " position=%d", arg.Position)
+		}
+		if arg.Required {
+			fmt.Fprint(w, " required")
+		}
+		if arg.Default != nil {
+			fmt.Fprintf(w, " default=%v", arg.Default)
+		}
+		fmt.Fprintf(w, "  %s\n", recipe.ArgumentHelp(arg))
 	}
 	for _, path := range rec.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)

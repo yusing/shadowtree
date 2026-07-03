@@ -16,6 +16,11 @@ help = "Run tests."
 cmd = ["go", "test"]
 default_args = ["./..."]
 pre = [["go", "generate", "./..."]]
+
+[recipes.test.arguments.count]
+help = "Repeat count."
+type = "int"
+default = 1
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +38,9 @@ pre = [["go", "generate", "./..."]]
 	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
 		t.Fatalf("Help = %q", got)
 	}
+	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
+		t.Fatal("count default is nil")
+	}
 }
 
 func TestLoadYAML(t *testing.T) {
@@ -44,6 +52,11 @@ recipes:
     help: Run tests.
     cmd: [go, test]
     default_args: [./...]
+    arguments:
+      race:
+        help: Enable race detector.
+        type: bool
+        default: false
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +70,8 @@ recipes:
 	}
 	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
 		t.Fatalf("Help = %q", got)
+	}
+	if got := loaded.Config.Recipes["test"].Arguments["race"].Type; got != "bool" {
+		t.Fatalf("race type = %q", got)
 	}
 }

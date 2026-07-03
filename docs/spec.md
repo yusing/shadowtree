@@ -125,12 +125,19 @@ help = "Short recipe help text."
 pre = [["cmd", "arg"]]
 cmd = ["cmd", "arg"]
 args = ["fixed", "args"]
-default_args = ["args", "used", "when", "cli", "args", "are", "empty"]
+default_args = ["args", "with", "{placeholders}"]
 post = [["cmd", "arg"]]
 sync_out = ["path/from/project/root"]
 
 [recipes.<name>.env]
 KEY = "value"
+
+[recipes.<name>.arguments.<arg-name>]
+help = "Short argument help text."
+type = "string"
+position = 1
+required = false
+default = "value"
 ```
 
 YAML uses the same field names:
@@ -171,6 +178,79 @@ recipes:
 
 `sync_out`
 : Paths copied back to the host checkout after a successful recipe.
+
+## Recipe Arguments
+
+Recipes can define typed arguments under:
+
+```toml
+[recipes.<name>.arguments.<arg-name>]
+```
+
+Argument fields:
+
+`help`
+: Short help text used by `shadowtree help <recipe>` and shell completion.
+
+`type`
+: Optional type. Supported values are `string`, `int`, `float`, and `bool`.
+  The default is `string`.
+
+`position`
+: Optional 1-based positional index. Arguments with a position can be supplied
+  positionally.
+
+`required`
+: Whether the argument must be supplied by the user. Defaults to `false`.
+
+`default`
+: Optional default value. Defaults are type-checked.
+
+Example:
+
+```toml
+[recipes.build]
+help = "Build a Go package."
+cmd = ["go", "build"]
+args = ["-o", "bin/{binary}"]
+default_args = ["{project}"]
+sync_out = ["bin/{binary}"]
+
+[recipes.build.arguments.project]
+help = "Go package to build."
+type = "string"
+position = 1
+default = "./cmd/shadowtree"
+
+[recipes.build.arguments.binary]
+help = "Output binary name under bin/."
+type = "string"
+default = "shadowtree"
+```
+
+Arguments can be provided positionally:
+
+```sh
+shadowtree build ./cmd/shadowtree
+```
+
+Arguments can be provided by name:
+
+```sh
+shadowtree build project=./cmd/shadowtree binary=shadowtree-dev
+```
+
+Arguments can also be provided with bracket-style syntax:
+
+```sh
+shadowtree 'build[project=./cmd/shadowtree,binary=shadowtree-dev]'
+```
+
+Bracket-style syntax is preferred for shell completion, especially in fish.
+
+Argument values are exposed to recipe commands through `{name}` placeholders.
+Placeholders are expanded in `cmd`, `args`, `default_args`, `pre`, `post`, and
+`sync_out`.
 
 ## Recipe Resolution
 
@@ -223,6 +303,10 @@ go test -count=1 ./internal/recipe
 ```
 
 CLI args replace `default_args`; they do not append to them.
+
+For recipes with typed `arguments`, CLI args are parsed as argument values
+instead. In that case, `default_args` stays active and can contain placeholders
+such as `{project}`.
 
 ## Execution Semantics
 
@@ -354,6 +438,12 @@ Supported completion behavior:
 - `shadowtree te<TAB>` completes matching recipe names such as `test`.
 - `shadowtree help <TAB>` completes recipe names.
 - `shadowtree --profile <TAB>` completes `go`.
+- `shadowtree build <TAB>` completes configured recipe arguments such as
+  `project=`.
+- `shadowtree build[<TAB>` completes bracket-style arguments such as
+  `build[project=`.
+- `shadowtree test race=<TAB>` completes `true` and `false` for bool
+  arguments.
 
 Completion is intentionally cheap. It parses config and checks profile markers;
 it does not run project commands like `go list`, `go test`, or codegen.
@@ -391,7 +481,7 @@ tidy     Tidy module dependencies.
 Recipes that intentionally mutate the host checkout declare `sync_out`:
 
 ```text
-build  -> bin/shadowtree
+build  -> bin/{binary}
 fmt    -> cmd, internal
 tidy   -> go.mod, go.sum
 ```

@@ -71,6 +71,17 @@ pre = [["go", "generate", "./..."]]
 cmd = ["go", "test"]
 default_args = ["./..."]
 
+[recipes.build]
+help = "Build a Go package."
+cmd = ["go", "build"]
+default_args = ["{project}"]
+
+[recipes.build.arguments.project]
+help = "Go package to build."
+type = "string"
+position = 1
+default = "./..."
+
 [recipes.tidy]
 help = "Tidy Go module files."
 cmd = ["go", "mod", "tidy"]
@@ -88,6 +99,17 @@ runs:
 ```sh
 go test ./internal/recipe
 ```
+
+Recipes can define typed arguments. Arguments can be passed positionally,
+by name, or with bracket-style syntax:
+
+```sh
+shadowtree build ./cmd/shadowtree
+shadowtree build project=./cmd/shadowtree
+shadowtree 'build[project=./cmd/shadowtree]'
+```
+
+Supported argument types are `string`, `int`, `float`, and `bool`.
 
 ## Built-In Go Recipes
 

@@ -84,6 +84,17 @@ help = "Run Go tests."
 cmd = ["go", "test"]
 default_args = ["./..."]
 
+[recipes.build]
+help = "Build a Go package."
+cmd = ["go", "build"]
+default_args = ["{project}"]
+
+[recipes.build.arguments.project]
+help = "Go package to build."
+type = "string"
+position = 1
+default = "./..."
+
 [recipes.codegen-test]
 help = "Generate code, then run Go tests."
 pre = [["go", "generate", "./..."]]

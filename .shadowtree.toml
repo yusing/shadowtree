@@ -3,9 +3,20 @@ profile = "go"
 [recipes.build]
 help = "Build the shadowtree binary into bin/shadowtree."
 cmd = ["go", "build"]
-args = ["-buildvcs=false", "-o", "bin/shadowtree"]
-default_args = ["./cmd/shadowtree"]
-sync_out = ["bin/shadowtree"]
+args = ["-buildvcs=false", "-o", "bin/{binary}"]
+default_args = ["{project}"]
+sync_out = ["bin/{binary}"]
+
+[recipes.build.arguments.project]
+help = "Go package to build."
+type = "string"
+position = 1
+default = "./cmd/shadowtree"
+
+[recipes.build.arguments.binary]
+help = "Output binary name under bin/."
+type = "string"
+default = "shadowtree"
 
 [recipes.install]
 help = "Install the shadowtree binary and fish completion."

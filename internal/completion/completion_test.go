@@ -9,7 +9,7 @@ import (
 )
 
 func TestCandidatesIncludeRecipesForEmptyCurrentWord(t *testing.T) {
-	candidates := Candidates([]string{"shadowtree", ""}, map[string]recipe.Recipe{
+	candidates := complete(t, []string{"shadowtree", ""}, map[string]recipe.Recipe{
 		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}, DefaultArgs: []string{"./..."}},
 	})
 
@@ -22,7 +22,7 @@ func TestCandidatesIncludeRecipesForEmptyCurrentWord(t *testing.T) {
 }
 
 func TestCandidatesCompleteRecipePrefix(t *testing.T) {
-	candidates := Candidates([]string{"shadowtree", "te"}, map[string]recipe.Recipe{
+	candidates := complete(t, []string{"shadowtree", "te"}, map[string]recipe.Recipe{
 		"build": {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
 		"test":  {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
 	})
@@ -33,7 +33,7 @@ func TestCandidatesCompleteRecipePrefix(t *testing.T) {
 }
 
 func TestCandidatesCompleteProfileValues(t *testing.T) {
-	candidates := Candidates([]string{"shadowtree", "--profile"}, nil)
+	candidates := complete(t, []string{"shadowtree", "--profile"}, nil)
 
 	if !hasCandidate(candidates, "go") {
 		t.Fatalf("candidates = %#v, want go", candidates)
@@ -41,7 +41,7 @@ func TestCandidatesCompleteProfileValues(t *testing.T) {
 }
 
 func TestCandidatesCompleteRecipesAfterHelp(t *testing.T) {
-	candidates := Candidates([]string{"shadowtree", "help", ""}, map[string]recipe.Recipe{
+	candidates := complete(t, []string{"shadowtree", "help", ""}, map[string]recipe.Recipe{
 		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
 	})
 
@@ -50,9 +50,108 @@ func TestCandidatesCompleteRecipesAfterHelp(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteSpacedRecipeArguments(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", ""}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {Help: "Go package to build.", Type: "string", Position: 1},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "project=" {
+		t.Fatalf("candidates = %#v, want project=", candidates)
+	}
+}
+
+func TestCandidatesCompleteBracketRecipeArguments(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build["}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {Help: "Go package to build.", Type: "string", Position: 1},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[project=" {
+		t.Fatalf("candidates = %#v, want build[project=", candidates)
+	}
+}
+
+func TestCandidatesCompleteBracketRecipeArgumentPrefix(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build[proj"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"binary":  {Help: "Output binary name.", Type: "string"},
+				"project": {Help: "Go package to build.", Type: "string", Position: 1},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[project=" {
+		t.Fatalf("candidates = %#v, want build[project=", candidates)
+	}
+}
+
+func TestCandidatesCompleteSplitBracketRecipeArgumentPrefix(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build[", "proj"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"binary":  {Help: "Output binary name.", Type: "string"},
+				"project": {Help: "Go package to build.", Type: "string", Position: 1},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[project=" {
+		t.Fatalf("candidates = %#v, want build[project=", candidates)
+	}
+}
+
+func TestCandidatesCompleteBoolArgumentValues(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "test", "race="}, map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test"},
+			Arguments: map[string]recipe.Argument{
+				"race": {Type: "bool"},
+			},
+		},
+	})
+
+	if len(candidates) != 2 || candidates[0].Value != "race=true" || candidates[1].Value != "race=false" {
+		t.Fatalf("candidates = %#v, want race bool values", candidates)
+	}
+}
+
+func TestCandidatesRejectUnsupportedShell(t *testing.T) {
+	_, err := Candidates("zsh", []string{"shadowtree", ""}, nil)
+	if err == nil {
+		t.Fatal("Candidates succeeded for unsupported shell")
+	}
+}
+
+func TestCandidatesDoNotCompleteParenthesizedArguments(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build(proj"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {Help: "Go package to build.", Type: "string", Position: 1},
+			},
+		},
+	})
+
+	if len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, want no parenthesized completion", candidates)
+	}
+}
+
 func TestFishCandidatesSanitizeNewlines(t *testing.T) {
 	var out bytes.Buffer
-	err := FishCandidates(&out, []Candidate{{
+	err := WriteCandidates(&out, "fish", []Candidate{{
 		Value: "install",
 		Help:  "sh -c set -eu\ninstall -d bin",
 	}})
@@ -67,6 +166,15 @@ func TestFishCandidatesSanitizeNewlines(t *testing.T) {
 	if strings.Contains(out.String(), "set -eu\ninstall") {
 		t.Fatalf("output contains raw newline: %q", out.String())
 	}
+}
+
+func complete(t *testing.T, words []string, recipes map[string]recipe.Recipe) []Candidate {
+	t.Helper()
+	candidates, err := Candidates("fish", words, recipes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return candidates
 }
 
 func hasCandidate(candidates []Candidate, value string) bool {

@@ -15,7 +15,39 @@ type Candidate struct {
 	Help  string
 }
 
-func FishScript(w io.Writer) error {
+type shellSpec struct {
+	name       string
+	groupOpen  string
+	groupClose string
+	normalize  func(string) string
+}
+
+var fishShell = shellSpec{
+	name:       "fish",
+	groupOpen:  "[",
+	groupClose: "]",
+	normalize:  func(word string) string { return word },
+}
+
+func shellFor(name string) (shellSpec, error) {
+	switch name {
+	case "fish":
+		return fishShell, nil
+	default:
+		return shellSpec{}, fmt.Errorf("unsupported shell: %s", name)
+	}
+}
+
+func Script(w io.Writer, shell string) error {
+	switch shell {
+	case "fish":
+		return fishScript(w)
+	default:
+		return fmt.Errorf("unsupported shell: %s", shell)
+	}
+}
+
+func fishScript(w io.Writer) error {
 	_, err := io.WriteString(w, `function __shadowtree_complete
     set -l tokens (commandline -opc)
     set -l current (commandline -ct)
@@ -36,7 +68,16 @@ complete -c shadowtree -l version -d 'Show version'
 	return err
 }
 
-func FishCandidates(w io.Writer, candidates []Candidate) error {
+func WriteCandidates(w io.Writer, shell string, candidates []Candidate) error {
+	switch shell {
+	case "fish":
+		return writeFishCandidates(w, candidates)
+	default:
+		return fmt.Errorf("unsupported shell: %s", shell)
+	}
+}
+
+func writeFishCandidates(w io.Writer, candidates []Candidate) error {
 	for _, candidate := range candidates {
 		value := sanitizeFishField(candidate.Value)
 		desc := sanitizeFishField(candidate.Help)
@@ -51,18 +92,25 @@ func sanitizeFishField(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func Candidates(words []string, recipes map[string]recipe.Recipe) []Candidate {
+func Candidates(shell string, words []string, recipes map[string]recipe.Recipe) ([]Candidate, error) {
+	spec, err := shellFor(shell)
+	if err != nil {
+		return nil, err
+	}
 	if completesProfile(words) {
-		return []Candidate{{Value: "go", Help: "Go project"}}
+		return []Candidate{{Value: "go", Help: "Go project"}}, nil
 	}
 	if completesConfig(words) || completesSyncOut(words) {
-		return nil
+		return nil, nil
 	}
 	if completesHelpRecipe(words) {
-		return recipeCandidates(words, recipes)
+		return recipeCandidates(words, recipes), nil
+	}
+	if candidates, ok := argumentCandidates(spec, words, recipes); ok {
+		return candidates, nil
 	}
 	if commandSelected(words) {
-		return nil
+		return nil, nil
 	}
 	candidates := []Candidate{
 		{Value: "run", Help: "Run an explicit command in a shadow workspace"},
@@ -73,7 +121,146 @@ func Candidates(words []string, recipes map[string]recipe.Recipe) []Candidate {
 		{Value: "completion", Help: "Generate shell completion"},
 	}
 	candidates = append(candidates, recipeCandidates(words, recipes)...)
-	return filterPrefix(candidates, currentWord(words))
+	return filterPrefix(candidates, currentWord(words)), nil
+}
+
+func argumentCandidates(spec shellSpec, words []string, recipes map[string]recipe.Recipe) ([]Candidate, bool) {
+	positionals := normalizedWords(spec, positionalWords(words))
+	if len(positionals) == 0 {
+		return nil, false
+	}
+	name, typedPrefix, grouped := cutGroupedStart(spec, positionals[0])
+	if !grouped {
+		name = positionals[0]
+	}
+	current := spec.normalize(currentWord(words))
+	if strings.Contains(current, spec.groupOpen) {
+		if currentName, currentPrefix, ok := cutGroupedStart(spec, current); ok {
+			name = currentName
+			typedPrefix = currentPrefix
+			grouped = true
+		}
+	}
+	rec, exists := recipes[name]
+	if !exists || len(rec.Arguments) == 0 {
+		return nil, false
+	}
+	if !grouped && len(positionals) == 1 && current == positionals[0] {
+		return nil, false
+	}
+	used := usedArguments(spec, positionals[1:], current, rec)
+	if grouped {
+		prefix := name + spec.groupOpen
+		content := typedPrefix
+		if len(positionals) > 1 && positionals[0] != current {
+			content = strings.Join(append([]string{typedPrefix}, positionals[1:]...), " ")
+		}
+		return groupedArgumentCandidates(spec, prefix, content, rec, used), true
+	}
+	return spacedArgumentCandidates(current, rec, used), true
+}
+
+func groupedArgumentCandidates(spec shellSpec, prefix, content string, rec recipe.Recipe, used map[string]bool) []Candidate {
+	before, active := splitGroupedContent(spec, content)
+	tokenPrefix := prefix + before
+	if key, _, ok := strings.Cut(active, "="); ok {
+		arg, exists := rec.Arguments[key]
+		if !exists {
+			return nil
+		}
+		return valueCandidates(tokenPrefix+key+"=", arg)
+	}
+	return argumentNameCandidates(tokenPrefix, active, rec, used)
+}
+
+func spacedArgumentCandidates(current string, rec recipe.Recipe, used map[string]bool) []Candidate {
+	if key, _, ok := strings.Cut(current, "="); ok {
+		arg, exists := rec.Arguments[key]
+		if !exists {
+			return nil
+		}
+		return valueCandidates(key+"=", arg)
+	}
+	return argumentNameCandidates("", current, rec, used)
+}
+
+func splitGroupedContent(spec shellSpec, content string) (string, string) {
+	content = strings.TrimSuffix(content, spec.groupClose)
+	idx := strings.LastIndexByte(content, ',')
+	if idx < 0 {
+		return "", strings.TrimSpace(content)
+	}
+	before := content[:idx+1]
+	active := strings.TrimSpace(content[idx+1:])
+	if active == "" && !strings.HasSuffix(before, " ") {
+		before += " "
+	}
+	return before, active
+}
+
+func cutGroupedStart(spec shellSpec, text string) (string, string, bool) {
+	open := strings.Index(text, spec.groupOpen)
+	if open < 1 {
+		return "", "", false
+	}
+	return text[:open], text[open+len(spec.groupOpen):], true
+}
+
+func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[string]bool) []Candidate {
+	names := mapsKeys(rec.Arguments)
+	slices.Sort(names)
+	var candidates []Candidate
+	for _, name := range names {
+		if used[name] {
+			continue
+		}
+		value := prefix + name + "="
+		if current != "" && !strings.HasPrefix(name, strings.TrimSuffix(current, "=")) {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Value: value,
+			Help:  recipe.ArgumentHelp(rec.Arguments[name]),
+		})
+	}
+	return candidates
+}
+
+func valueCandidates(prefix string, arg recipe.Argument) []Candidate {
+	if arg.Type != "bool" {
+		return nil
+	}
+	return []Candidate{
+		{Value: prefix + "true", Help: "bool"},
+		{Value: prefix + "false", Help: "bool"},
+	}
+}
+
+func usedArguments(spec shellSpec, tokens []string, current string, rec recipe.Recipe) map[string]bool {
+	used := map[string]bool{}
+	positionals := recipe.PositionalArguments(rec.Arguments)
+	nextPositional := 0
+	for _, token := range tokens {
+		token = strings.TrimSuffix(strings.TrimSpace(token), spec.groupClose)
+		if token == "" || token == current {
+			continue
+		}
+		for part := range strings.SplitSeq(token, ",") {
+			part = strings.TrimSpace(strings.TrimSuffix(part, spec.groupClose))
+			if part == "" || part == current {
+				continue
+			}
+			if key, _, ok := strings.Cut(part, "="); ok {
+				used[key] = true
+				continue
+			}
+			if nextPositional < len(positionals) {
+				used[positionals[nextPositional]] = true
+				nextPositional++
+			}
+		}
+	}
+	return used
 }
 
 func completesProfile(words []string) bool {
@@ -153,6 +340,14 @@ func currentWord(words []string) string {
 		return word
 	}
 	return ""
+}
+
+func normalizedWords(spec shellSpec, words []string) []string {
+	out := make([]string, len(words))
+	for i, word := range words {
+		out[i] = spec.normalize(word)
+	}
+	return out
 }
 
 func filterPrefix(candidates []Candidate, prefix string) []Candidate {
