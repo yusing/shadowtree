@@ -102,6 +102,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 type sandboxWorkspace struct {
 	root               string
 	source             string
+	target             string
 	workDir            string
 	overlayDir         string
 	upper              string

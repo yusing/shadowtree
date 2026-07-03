@@ -40,6 +40,7 @@ func createOverlayWorkspace(source, workDir, workspace string) (*sandboxWorkspac
 	sandbox := &sandboxWorkspace{
 		root:               workspace,
 		source:             source,
+		target:             source,
 		workDir:            workDir,
 		overlayDir:         overlayDir,
 		upper:              upper,
@@ -79,7 +80,7 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []
 		sandbox.source,
 		sandbox.upper,
 		sandbox.work,
-		sandbox.root,
+		sandbox.target,
 		"--",
 	}
 	args = append(args, command...)

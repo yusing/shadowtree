@@ -3,11 +3,16 @@
 package runner
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/yusing/shadowtree/internal/recipe"
 
 	"golang.org/x/sys/unix"
 )
@@ -51,6 +56,76 @@ func TestCreateOverlayWorkspaceHidesSkippedFiles(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("namespace overlay view: %v", err)
+	}
+}
+
+func TestNamespaceCommandUsesStableSourceCWD(t *testing.T) {
+	source := t.TempDir()
+	workDir := t.TempDir()
+	sandbox, err := createOverlayWorkspace(source, workDir, filepath.Join(workDir, "workspace"))
+	if err != nil {
+		t.Skipf("overlayfs unavailable: %v", err)
+	}
+	defer func() {
+		if err := sandbox.Close(false); err != nil {
+			t.Fatalf("close overlay workspace: %v", err)
+		}
+	}()
+
+	var stdout bytes.Buffer
+	err = sandbox.runNamespaceCommand(
+		t.Context(),
+		os.Environ(),
+		[]string{"pwd"},
+		nil,
+		&stdout,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("namespace pwd: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != source {
+		t.Fatalf("pwd = %q, want %q", got, source)
+	}
+}
+
+func TestNamespaceOverlayPreservesGoTestCache(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go tool not available")
+	}
+	source := t.TempDir()
+	cache := filepath.Join(t.TempDir(), "go-build")
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module cache.example\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "cache_test.go"), []byte("package cache\n\nimport \"testing\"\n\nfunc TestCache(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("test", recipe.Recipe{
+		Cmd:         recipe.Command{"go", "test"},
+		DefaultArgs: []string{"./..."},
+		Env:         map[string]string{"GOCACHE": cache},
+	}, nil, nil, nil, "", recipe.GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var firstOut, firstErr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &firstOut, Stderr: &firstErr}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(firstErr.String(), "overlayfs unavailable") {
+		t.Skipf("overlayfs unavailable: %s", firstErr.String())
+	}
+	var secondOut, secondErr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &secondOut, Stderr: &secondErr}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(secondErr.String(), "overlayfs unavailable") {
+		t.Skipf("overlayfs unavailable: %s", secondErr.String())
+	}
+	if !strings.Contains(secondOut.String(), "(cached)") {
+		t.Fatalf("second go test output missing cache marker:\nstdout:\n%s\nstderr:\n%s\nfirst stdout:\n%s\nfirst stderr:\n%s", secondOut.String(), secondErr.String(), firstOut.String(), firstErr.String())
 	}
 }
 
