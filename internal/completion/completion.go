@@ -66,7 +66,6 @@ complete -c shadowtree -l config -r -d 'Use config file'
 complete -c shadowtree -l profile -x -a 'go' -d 'Use profile'
 complete -c shadowtree -l sync-out -r -d 'Copy path back after success'
 complete -c shadowtree -l sync-out-all -d 'Copy entire workspace back after success'
-complete -c shadowtree -l keep -d 'Keep shadow workspace after run'
 complete -c shadowtree -l print -d 'Print resolved plan without running'
 complete -c shadowtree -l verbose -d 'Show commands and workspace paths'
 complete -c shadowtree -l help -d 'Show help'
@@ -363,7 +362,7 @@ func positionalWords(words []string) []string {
 		case "--config", "--profile", "--sync-out":
 			skipValue = true
 			continue
-		case "--sync-out-all", "--keep", "--print", "--verbose", "--help", "--version":
+		case "--sync-out-all", "--print", "--verbose", "--help", "--version":
 			continue
 		}
 		if strings.HasPrefix(word, "-") {

@@ -42,7 +42,7 @@ func TestCreateOverlayWorkspaceHidesSkippedFiles(t *testing.T) {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
 	defer func() {
-		if err := sandbox.Close(false); err != nil {
+		if err := sandbox.Close(); err != nil {
 			t.Fatalf("close overlay workspace: %v", err)
 		}
 	}()
@@ -67,7 +67,7 @@ func TestNamespaceCommandUsesStableSourceCWD(t *testing.T) {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
 	defer func() {
-		if err := sandbox.Close(false); err != nil {
+		if err := sandbox.Close(); err != nil {
 			t.Fatalf("close overlay workspace: %v", err)
 		}
 	}()
@@ -292,7 +292,7 @@ func TestNamespaceCommandPreservesEnvironment(t *testing.T) {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
 	defer func() {
-		if err := sandbox.Close(false); err != nil {
+		if err := sandbox.Close(); err != nil {
 			t.Fatalf("close overlay workspace: %v", err)
 		}
 	}()

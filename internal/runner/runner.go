@@ -19,7 +19,6 @@ import (
 type Options struct {
 	Resolved   recipe.Resolved
 	SourceDir  string
-	Keep       bool
 	PrintOnly  bool
 	Verbose    bool
 	SyncOutAll bool
@@ -64,16 +63,13 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		return err
 	}
 	workspace := filepath.Join(workDir, "workspace")
-	if options.Keep {
-		fmt.Fprintf(stderr, "shadowtree: workspace: %s\n", workspace)
-	}
 	sandbox, err := createSandboxWorkspace(source, workDir, workspace, stderr, options.Verbose)
 	if err != nil {
 		_ = removeAll(workDir)
 		return err
 	}
 	defer func() {
-		if err := sandbox.Close(options.Keep); err != nil && runErr == nil {
+		if err := sandbox.Close(); err != nil && runErr == nil {
 			runErr = err
 		}
 	}()
@@ -150,35 +146,8 @@ func (sandbox *sandboxWorkspace) SyncAll(source string) error {
 	return applyOverlayUpper(sandbox.upper, source, sandbox.protectedWhiteouts)
 }
 
-func (sandbox *sandboxWorkspace) Close(keep bool) error {
-	if !sandbox.overlay {
-		if keep {
-			return nil
-		}
-		return removeAll(sandbox.workDir)
-	}
-	var firstErr error
-	persisted := filepath.Join(sandbox.workDir, "workspace.persisted")
-	if keep && firstErr == nil {
-		if err := sandbox.materialize(persisted); err != nil {
-			firstErr = fmt.Errorf("keep workspace: %w", err)
-		} else if err := removeAll(sandbox.root); err != nil {
-			firstErr = err
-		} else if err := os.Rename(persisted, sandbox.root); err != nil {
-			firstErr = err
-		}
-	}
-	if firstErr == nil {
-		if keep {
-			firstErr = removeAll(sandbox.overlayDir)
-		} else {
-			firstErr = removeAll(sandbox.workDir)
-		}
-	}
-	if firstErr != nil {
-		_ = removeAll(persisted)
-	}
-	return firstErr
+func (sandbox *sandboxWorkspace) Close() error {
+	return removeAll(sandbox.workDir)
 }
 
 func (sandbox *sandboxWorkspace) materialize(dst string) error {

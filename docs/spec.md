@@ -36,16 +36,18 @@ For each sandboxed run, Shadowtree creates a temporary workspace:
 /tmp/shadowtree-*/workspace
 ```
 
-Commands run from the temporary workspace, not from the host checkout. On Linux,
-Shadowtree uses overlayfs inside a user and mount namespace by default and hides
-Shadowtree metadata entries from the lower tree. When namespace overlayfs is
-unavailable, Shadowtree warns and falls back to copying the current source
-directory into the workspace. On filesystems that support it, fallback copy may
-use reflinks as an optimization.
+On Linux, Shadowtree uses overlayfs inside a user and mount namespace by
+default. Commands run at the source checkout path inside that namespace, so
+tools such as `go test` see a stable working directory while writes land in the
+overlay upperdir instead of the host checkout. Shadowtree hides metadata entries
+from the lower tree. When namespace overlayfs is unavailable, Shadowtree warns
+and falls back to copying the current source directory into the temporary
+workspace and running commands there. On filesystems that support it, fallback
+copy may use reflinks as an optimization.
 
 By default:
 
-- Files written by commands stay in the temporary workspace.
+- Files written by commands stay in the sandbox workspace.
 - The temporary workspace is removed after the run.
 - The host checkout is not changed.
 
@@ -54,11 +56,10 @@ Exceptions for sandboxed runs:
 - `--sync-out PATH` mirrors selected paths back after a successful recipe.
 - Recipe-level `sync_out` mirrors selected paths back after a successful recipe.
 - `--sync-out-all` copies the whole workspace back after a successful recipe.
-- `--keep` keeps the temporary workspace for debugging.
 
 Unsandboxed recipes set `sandboxed = false` and run directly in the host
-checkout. `--keep`, `--sync-out`, `sync_out`, and `--sync-out-all` only apply to
-sandboxed execution.
+checkout. `--sync-out`, `sync_out`, and `--sync-out-all` only apply to sandboxed
+execution.
 
 Shadowtree intentionally skips `.git`, `.shadowtree`, and `.shadowtree.*` while
 preparing sandboxed workspaces. Because `.git` is skipped, Go build recipes that
@@ -86,7 +87,6 @@ shadowtree __complete fish <words...>
 --profile PROFILE   use a profile, initially only go is supported
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
---keep              keep the temporary workspace
 --print             print the resolved plan without running
 --verbose           show workspace and command details
 --help              show basic CLI help
@@ -394,7 +394,7 @@ For a sandboxed recipe:
 3. Run the resolved main command.
 4. Run `post` commands in order.
 5. If all phases succeeded, sync configured/requested paths back.
-6. Remove the temporary workspace unless `--keep` is set.
+6. Remove the temporary workspace.
 
 Failure behavior:
 
@@ -403,7 +403,9 @@ Failure behavior:
 - Sync-out does not run after failure.
 - The process exits with the first failing command's exit code when available.
 
-All commands run from the temporary workspace root.
+With namespace overlayfs, commands run from the source checkout path inside the
+namespace. With copy fallback, commands run from the copied temporary workspace
+root.
 
 For an unsandboxed recipe, Shadowtree skips the temporary workspace and runs
 `pre`, main, and `post` commands directly from the source checkout. Sync-out is

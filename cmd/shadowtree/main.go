@@ -30,7 +30,6 @@ type options struct {
 	profile    string
 	syncOut    multiFlag
 	syncOutAll bool
-	keep       bool
 	printOnly  bool
 	verbose    bool
 	help       bool
@@ -138,7 +137,6 @@ func run(ctx context.Context, args []string) error {
 		return runner.Run(ctx, runner.Options{
 			Resolved:   resolved,
 			SourceDir:  mustGetwd(),
-			Keep:       opts.keep,
 			PrintOnly:  opts.printOnly,
 			Verbose:    opts.verbose,
 			SyncOutAll: opts.syncOutAll,
@@ -159,7 +157,6 @@ func run(ctx context.Context, args []string) error {
 		return runner.Run(ctx, runner.Options{
 			Resolved:   resolved,
 			SourceDir:  mustGetwd(),
-			Keep:       opts.keep,
 			PrintOnly:  opts.printOnly,
 			Verbose:    opts.verbose,
 			SyncOutAll: opts.syncOutAll,
@@ -178,7 +175,6 @@ func parseGlobal(args []string) (options, []string, error) {
 	flags.StringVar(&opts.profile, "profile", "", "use profile")
 	flags.Var(&opts.syncOut, "sync-out", "copy path back after success")
 	flags.BoolVar(&opts.syncOutAll, "sync-out-all", false, "copy entire workspace back after success")
-	flags.BoolVar(&opts.keep, "keep", false, "keep shadow workspace")
 	flags.BoolVar(&opts.printOnly, "print", false, "print resolved plan without running")
 	flags.BoolVar(&opts.verbose, "verbose", false, "show commands and workspace paths")
 	flags.BoolVar(&opts.help, "help", false, "show help")
@@ -481,7 +477,6 @@ flags:
   --profile PROFILE   use detected/profile built-ins, initially: go
   --sync-out PATH     copy path back after success; repeatable or comma-separated
   --sync-out-all      copy entire workspace back after success
-  --keep              keep shadow workspace
   --print             print resolved plan without running
   --verbose           show commands and workspace paths
 `)

@@ -15,10 +15,9 @@ shadowtree lint
 shadowtree run -- go test ./...
 ```
 
-By default, recipe writes stay inside the temporary workspace. On hosts that do
-not support namespace overlayfs, Shadowtree warns and uses the same sandbox
-contract with a copied workspace. Recipes that should edit the checkout
-directly can opt out:
+By default, recipe writes stay inside the sandbox. On hosts that do not support
+namespace overlayfs, Shadowtree warns and uses the same sandbox contract with a
+copied workspace. Recipes that should edit the checkout directly can opt out:
 
 ```toml
 [recipes.tidy]
