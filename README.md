@@ -1,8 +1,10 @@
 # Shadowtree
 
-Shadowtree runs development recipes in a disposable copy of the current project.
-It is intended for codegen, tests, builds, and linting without mutating the host
-checkout by default.
+Shadowtree runs development recipes in a disposable workspace for the current
+project. On Linux it uses overlayfs in a user and mount namespace by default,
+and falls back to a copied workspace when namespace overlayfs is unavailable.
+It is intended for codegen, tests, builds, and linting without mutating the
+host checkout by default.
 
 ## Usage
 
@@ -13,8 +15,10 @@ shadowtree lint
 shadowtree run -- go test ./...
 ```
 
-By default, recipe writes stay inside the temporary workspace. Recipes that
-should edit the checkout directly can opt out:
+By default, recipe writes stay inside the temporary workspace. On hosts that do
+not support namespace overlayfs, Shadowtree warns and uses the same sandbox
+contract with a copied workspace. Recipes that should edit the checkout
+directly can opt out:
 
 ```toml
 [recipes.tidy]

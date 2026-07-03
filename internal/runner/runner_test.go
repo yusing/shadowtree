@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,65 @@ func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	}
 	if string(data) != "host" {
 		t.Fatalf("source mutated: %q", data)
+	}
+}
+
+func TestRunWarnsAndFallsBackWhenOverlayUnavailable(t *testing.T) {
+	original := newOverlayWorkspace
+	newOverlayWorkspace = func(_, _, _ string) (*sandboxWorkspace, error) {
+		return nil, errors.New("forced overlay failure")
+	}
+	t.Cleanup(func() {
+		newOverlayWorkspace = original
+	})
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "file.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("run", recipe.Recipe{Cmd: recipe.Command{"sh", "-c", "printf shadow > file.txt"}}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "host" {
+		t.Fatalf("source mutated: %q", data)
+	}
+	if !strings.Contains(stderr.String(), "overlayfs unavailable (forced overlay failure); falling back to copied workspace") {
+		t.Fatalf("stderr missing fallback warning:\n%s", stderr.String())
+	}
+}
+
+func TestOverlaySyncRootMaterializesRequestedPaths(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "file.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "file.txt"), []byte("shadow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &sandboxWorkspace{source: source, root: filepath.Join(workDir, "workspace"), upper: upper, workDir: workDir, overlay: true}
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	data, err := os.ReadFile(filepath.Join(syncRoot, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("materialized data = %q", data)
 	}
 }
 
@@ -81,6 +141,170 @@ func TestRunSyncsExplicitPath(t *testing.T) {
 	}
 	if string(data) != "shadow" {
 		t.Fatalf("synced data = %q", data)
+	}
+}
+
+func TestRunSyncsExplicitPathDeletion(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "out.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("run", recipe.Recipe{Cmd: recipe.Command{"rm", "out.txt"}}, nil, []string{"out.txt"}, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = os.Stat(filepath.Join(source, "out.txt"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("out.txt err = %v, want not exist", err)
+	}
+}
+
+func TestSyncPathDeletesMissingWorkspacePath(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "out.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SyncPath(workspace, source, "out.txt"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(source, "out.txt"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("out.txt err = %v, want not exist", err)
+	}
+}
+
+func TestSyncPathMissingWorkspacePathDoesNotCreateParent(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+
+	if err := SyncPath(workspace, source, "missing/out.txt"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(source, "missing"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing parent err = %v, want not exist", err)
+	}
+}
+
+func TestSyncPathReplacesLeafSymlink(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(filepath.Join(workspace, "out.txt"), []byte("shadow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(source, "out.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SyncPath(workspace, source, "out.txt"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("synced data = %q", data)
+	}
+	victimData, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(victimData) != "victim" {
+		t.Fatalf("victim data = %q", victimData)
+	}
+}
+
+func TestSyncPathDeletesThroughParentSymlinkWithoutMutatingTarget(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "file.txt"), []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(source, "out")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SyncPath(workspace, source, "out/file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	victimData, err := os.ReadFile(filepath.Join(real, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(victimData) != "victim" {
+		t.Fatalf("victim data = %q", victimData)
+	}
+	info, err := os.Lstat(filepath.Join(source, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Type() == os.ModeSymlink {
+		t.Fatal("source out is still a symlink")
+	}
+	_, err = os.Stat(filepath.Join(source, "out", "file.txt"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source out/file.txt err = %v, want not exist", err)
+	}
+}
+
+func TestSyncPathReplacesParentSymlink(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(filepath.Join(workspace, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "out", "file.txt"), []byte("shadow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "file.txt"), []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(source, "out")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SyncPath(workspace, source, "out/file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "out", "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("synced data = %q", data)
+	}
+	victimData, err := os.ReadFile(filepath.Join(real, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(victimData) != "victim" {
+		t.Fatalf("victim data = %q", victimData)
+	}
+	info, err := os.Lstat(filepath.Join(source, "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Type() == os.ModeSymlink {
+		t.Fatal("source out is still a symlink")
 	}
 }
 

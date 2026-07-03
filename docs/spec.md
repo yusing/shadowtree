@@ -1,9 +1,9 @@
 # Shadowtree Spec
 
 Shadowtree is a small development recipe runner that executes commands in a
-disposable copy of the current project. Its primary goal is to let codegen,
-tests, builds, linting, and cleanup run without mutating the host checkout by
-default.
+disposable sandbox workspace for the current project. Its primary goal is to let
+codegen, tests, builds, linting, and cleanup run without mutating the host
+checkout by default.
 
 This document describes the behavior currently implemented by the project.
 
@@ -20,8 +20,8 @@ This document describes the behavior currently implemented by the project.
 
 ## Non-Goals
 
-- Shadowtree is not currently a security sandbox.
-- Shadowtree does not currently use Linux namespaces, overlayfs, or reflinks.
+- Shadowtree is not a complete untrusted-code security sandbox.
+- Shadowtree does not require reflinks.
 - Shadowtree does not currently provide Docker, remote execution, matrix jobs,
   watch mode, or persistent named sessions.
 - Shadowtree does not provide built-in language-aware argument completion.
@@ -36,8 +36,12 @@ For each sandboxed run, Shadowtree creates a temporary workspace:
 /tmp/shadowtree-*/workspace
 ```
 
-The current source directory is copied into that workspace. Commands run from
-the temporary workspace, not from the host checkout.
+Commands run from the temporary workspace, not from the host checkout. On Linux,
+Shadowtree uses overlayfs inside a user and mount namespace by default and hides
+Shadowtree metadata entries from the lower tree. When namespace overlayfs is
+unavailable, Shadowtree warns and falls back to copying the current source
+directory into the workspace. On filesystems that support it, fallback copy may
+use reflinks as an optimization.
 
 By default:
 
@@ -47,8 +51,8 @@ By default:
 
 Exceptions for sandboxed runs:
 
-- `--sync-out PATH` copies selected paths back after a successful recipe.
-- Recipe-level `sync_out` copies selected paths back after a successful recipe.
+- `--sync-out PATH` mirrors selected paths back after a successful recipe.
+- Recipe-level `sync_out` mirrors selected paths back after a successful recipe.
 - `--sync-out-all` copies the whole workspace back after a successful recipe.
 - `--keep` keeps the temporary workspace for debugging.
 
@@ -57,8 +61,8 @@ checkout. `--keep`, `--sync-out`, `sync_out`, and `--sync-out-all` only apply to
 sandboxed execution.
 
 Shadowtree intentionally skips `.git`, `.shadowtree`, and `.shadowtree.*` while
-copying workspaces. Because `.git` is skipped, Go build recipes that require VCS
-stamping should use `-buildvcs=false`.
+preparing sandboxed workspaces. Because `.git` is skipped, Go build recipes that
+require VCS stamping should use `-buildvcs=false`.
 
 ## CLI
 
@@ -238,8 +242,9 @@ top-level vars.
 : Recipe-specific environment overrides.
 
 `sync_out`
-: Paths copied back to the host checkout after a successful sandboxed recipe.
-  Ignored when `sandboxed = false`.
+: Paths mirrored back to the host checkout after a successful sandboxed recipe.
+  If a selected path is deleted in the sandbox, it is deleted from the host
+  checkout. Ignored when `sandboxed = false`.
 
 ## Recipe Arguments
 
@@ -383,7 +388,8 @@ such as `{project}`.
 
 For a sandboxed recipe:
 
-1. Copy the source tree into a temporary workspace.
+1. Create a temporary workspace with namespace overlayfs, or copy the source
+   tree if namespace overlayfs is unavailable.
 2. Run `pre` commands in order.
 3. Run the resolved main command.
 4. Run `post` commands in order.
@@ -564,8 +570,8 @@ tidy
 
 ## Known Limits
 
-- Workspace isolation is implemented by copying files into a temp directory.
-- Large repositories may be slower than an overlay/reflink implementation.
+- Workspace isolation uses namespace overlayfs only when the host supports it.
+- Large repositories may be slower when Shadowtree falls back to copying files.
 - Commands can still intentionally read or write absolute host paths.
 - Shell script strings are supported for recipes that need shell workflows;
   argv arrays remain preferred for direct process execution.
