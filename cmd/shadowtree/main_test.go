@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -95,12 +96,12 @@ func TestPrintRecipesAlignsLongRecipeNames(t *testing.T) {
 
 func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	var out bytes.Buffer
-	err := printRecipeHelp(&out, "install", recipe.Recipe{
+	err := printRecipeHelp(t.Context(), &out, "install", recipe.Recipe{
 		Help:    "Install Shadowtree.",
 		Pre:     []recipe.Command{{"go", "build"}},
 		Cmd:     recipe.Command{"sh", "-c", "set -eu\ninstall -d bin\n"},
 		SyncOut: []string{"bin/shadowtree"},
-	})
+	}, recipeHelpOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,12 +121,12 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 
 func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	var out bytes.Buffer
-	err := printRecipeHelp(&out, "tidy", recipe.Recipe{
+	err := printRecipeHelp(t.Context(), &out, "tidy", recipe.Recipe{
 		Help:      "Tidy module files.",
 		Cmd:       recipe.Command{"go", "mod", "tidy"},
 		Sandboxed: new(false),
 		SyncOut:   []string{"go.mod", "go.sum"},
-	})
+	}, recipeHelpOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +137,111 @@ func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	}
 	if strings.Contains(text, "sync_out:") {
 		t.Fatalf("recipe help output shows ignored sync_out:\n%s", text)
+	}
+}
+
+func TestPrintRecipeHelpIncludesDynamicArgumentValues(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Help:   "Go main package.",
+				Type:   "string",
+				Values: recipe.ScriptCommand("printf 'cmd/api\\tAPI server\\ncmd/worker\\tWorker service\\n'"),
+			},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"arg project:string",
+		"  values:",
+		"    cmd/api     API server",
+		"    cmd/worker  Worker service",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrintRecipeHelpDynamicValuesUseDirEnvAndPrelude(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help:         "Build binary.",
+		ShellPrelude: "project_values() { printf '%s/%s/%s\\tfrom command\\n' \"$ROOT_VALUE\" \"$RECIPE_VALUE\" \"${PWD##*/}\"; }",
+		Cmd:          recipe.Command{"go", "build"},
+		Env:          map[string]string{"RECIPE_VALUE": "recipe"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Type:   "string",
+				Values: recipe.ScriptCommand("project_values"),
+			},
+		},
+	}, recipeHelpOptions{
+		Dir: dir,
+		Env: map[string]string{"ROOT_VALUE": "root"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "    root/recipe/" + filepath.Base(dir) + "  from command"
+	if text := out.String(); !strings.Contains(text, want) {
+		t.Fatalf("recipe help output missing %q:\n%s", want, text)
+	}
+}
+
+func TestPrintRecipeHelpReportsUnavailableDynamicValues(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Type:   "string",
+				Values: recipe.ScriptCommand("exit 7"),
+			},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "values: <unavailable:") {
+		t.Fatalf("recipe help output missing unavailable marker:\n%s", text)
+	}
+}
+
+func TestPrintRecipeHelpIncludesBoolArgumentValues(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "test", recipe.Recipe{
+		Help: "Run tests.",
+		Cmd:  recipe.Command{"go", "test"},
+		Arguments: map[string]recipe.Argument{
+			"race": {Type: "bool"},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"  values:",
+		"    true   bool",
+		"    false  bool",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
 	}
 }
 

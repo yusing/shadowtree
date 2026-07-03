@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
@@ -22,6 +23,7 @@ import (
 )
 
 const version = "0.1.0"
+const argumentValuesTimeout = 5 * time.Second
 
 type options struct {
 	configPath string
@@ -36,6 +38,11 @@ type options struct {
 }
 
 type multiFlag []string
+
+type recipeHelpOptions struct {
+	Dir string
+	Env map[string]string
+}
 
 func (flag *multiFlag) String() string {
 	return strings.Join(*flag, ",")
@@ -102,7 +109,10 @@ func run(ctx context.Context, args []string) error {
 			if !ok {
 				return fmt.Errorf("unknown recipe: %s", rest[1])
 			}
-			return printRecipeHelp(os.Stdout, rest[1], rec)
+			return printRecipeHelp(ctx, os.Stdout, rest[1], rec, recipeHelpOptions{
+				Dir: mustGetwd(),
+				Env: loaded.Config.Env,
+			})
 		}
 		return printHelp(os.Stdout, loaded, profile, resolvedSet)
 	case "recipes":
@@ -340,7 +350,7 @@ func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes ma
 	return printRecipes(w, recipes)
 }
 
-func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
+func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.Recipe, opts recipeHelpOptions) error {
 	fmt.Fprintf(w, "%s\n", name)
 	fmt.Fprintf(w, "  %s\n", recipe.Help(rec))
 	fmt.Fprintf(w, "\ncommand: %s\n", recipe.CommandSummary(rec))
@@ -373,6 +383,9 @@ func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
 			fmt.Fprintf(w, " default=%v", arg.Default)
 		}
 		fmt.Fprintf(w, "  %s\n", recipe.ArgumentHelp(arg))
+		if err := printArgumentValues(ctx, w, arg, rec, opts); err != nil {
+			return fmt.Errorf("arg %s values: %w", argName, err)
+		}
 	}
 	if recipe.RecipeSandboxed(rec) {
 		for _, path := range rec.SyncOut {
@@ -380,6 +393,76 @@ func printRecipeHelp(w io.Writer, name string, rec recipe.Recipe) error {
 		}
 	}
 	return nil
+}
+
+func printArgumentValues(ctx context.Context, w io.Writer, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) error {
+	values, err := argumentValues(ctx, arg, rec, opts)
+	if err != nil {
+		fmt.Fprintf(w, "  values: <unavailable: %v>\n", err)
+		return nil
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	fmt.Fprintln(w, "  values:")
+	valueColumn := argumentValueColumn(values)
+	for _, value := range values {
+		if value.Help == "" {
+			fmt.Fprintf(w, "    %s\n", value.Value)
+			continue
+		}
+		fmt.Fprintf(w, "    %-*s%s\n", valueColumn, value.Value, value.Help)
+	}
+	return nil
+}
+
+func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) ([]completion.Candidate, error) {
+	if len(arg.Values) > 0 {
+		command := recipe.CommandWithShell(arg.Values, rec.Shell, rec.ShellPrelude)
+		env := maps.Clone(opts.Env)
+		if env == nil {
+			env = map[string]string{}
+		}
+		maps.Copy(env, rec.Env)
+		valueCtx, cancel := context.WithTimeout(ctx, argumentValuesTimeout)
+		defer cancel()
+		output, err := recipe.CommandOutput(valueCtx, opts.Dir, env, command)
+		if err != nil {
+			return nil, err
+		}
+		return parseArgumentValues(output), nil
+	}
+	if arg.Type != "bool" {
+		return nil, nil
+	}
+	return []completion.Candidate{
+		{Value: "true", Help: "bool"},
+		{Value: "false", Help: "bool"},
+	}, nil
+}
+
+func parseArgumentValues(output string) []completion.Candidate {
+	var values []completion.Candidate
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		value, help, _ := strings.Cut(line, "\t")
+		values = append(values, completion.Candidate{
+			Value: value,
+			Help:  help,
+		})
+	}
+	return values
+}
+
+func argumentValueColumn(values []completion.Candidate) int {
+	column := 0
+	for _, value := range values {
+		column = max(column, len(value.Value)+2)
+	}
+	return column
 }
 
 func printBasicHelp(w io.Writer) {
