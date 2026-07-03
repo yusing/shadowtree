@@ -1,4 +1,5 @@
 profile = "go"
+shell = "sh"
 
 [recipes.build]
 help = "Build the shadowtree binary into bin/shadowtree."
@@ -21,7 +22,7 @@ default = "shadowtree"
 [recipes.install]
 help = "Install the shadowtree binary and fish completion."
 pre = [["go", "build", "-buildvcs=false", "-ldflags=-s -w", "-o", "bin/shadowtree", "./cmd/shadowtree"]]
-cmd = ["sh", "-c", '''
+cmd = '''
 set -eu
 destdir=${DESTDIR:-}
 prefix=${PREFIX:-"$HOME/.local"}
@@ -38,7 +39,7 @@ if [ -d "$destdir$fish_config_dir" ]; then
 	bin/shadowtree completion fish > "$destdir$fish_completions_dir/shadowtree.fish"
 	chmod 0644 "$destdir$fish_completions_dir/shadowtree.fish"
 fi
-''']
+'''
 
 [recipes.test]
 help = "Run the test suite."
