@@ -1,0 +1,57 @@
+profile = "go"
+
+[recipes.build]
+help = "Build the shadowtree binary into bin/shadowtree."
+cmd = ["go", "build"]
+args = ["-buildvcs=false", "-o", "bin/shadowtree"]
+default_args = ["./cmd/shadowtree"]
+sync_out = ["bin/shadowtree"]
+
+[recipes.install]
+help = "Install the shadowtree binary and fish completion."
+pre = [["go", "build", "-buildvcs=false", "-ldflags=-s -w", "-o", "bin/shadowtree", "./cmd/shadowtree"]]
+cmd = ["sh", "-c", '''
+set -eu
+destdir=${DESTDIR:-}
+prefix=${PREFIX:-"$HOME/.local"}
+bindir=${BINDIR:-"$prefix/bin"}
+xdg_config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
+fish_config_dir=${FISH_CONFIG_DIR:-"$xdg_config_home/fish"}
+fish_completions_dir=${FISH_COMPLETIONS_DIR:-"$fish_config_dir/completions"}
+
+install -d "$destdir$bindir"
+install -m 0755 bin/shadowtree "$destdir$bindir/shadowtree"
+
+if [ -d "$destdir$fish_config_dir" ]; then
+	install -d "$destdir$fish_completions_dir"
+	bin/shadowtree completion fish > "$destdir$fish_completions_dir/shadowtree.fish"
+	chmod 0644 "$destdir$fish_completions_dir/shadowtree.fish"
+fi
+''']
+
+[recipes.test]
+help = "Run the test suite."
+cmd = ["go", "test"]
+default_args = ["./..."]
+
+[recipes.vet]
+help = "Run go vet."
+cmd = ["go", "vet"]
+default_args = ["./..."]
+
+[recipes.check]
+help = "Run vet and tests."
+pre = [["go", "vet", "./..."]]
+cmd = ["go", "test"]
+default_args = ["./..."]
+
+[recipes.fmt]
+help = "Format Go source files."
+cmd = ["gofmt", "-w"]
+default_args = ["cmd", "internal"]
+sync_out = ["cmd", "internal"]
+
+[recipes.tidy]
+help = "Tidy module dependencies."
+cmd = ["go", "mod", "tidy"]
+sync_out = ["go.mod", "go.sum"]

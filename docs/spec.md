@@ -1,0 +1,406 @@
+# Shadowtree Spec
+
+Shadowtree is a small development recipe runner that executes commands in a
+disposable copy of the current project. Its primary goal is to let codegen,
+tests, builds, linting, and cleanup run without mutating the host checkout by
+default.
+
+This document describes the behavior currently implemented by the project.
+
+## Goals
+
+- Run common development tasks through a simple recipe interface.
+- Keep command writes isolated from the host checkout unless explicitly synced.
+- Avoid triggering editor/LSP reindexing for generated or temporary files.
+- Provide useful defaults for Go projects.
+- Keep configuration small and exact, using argv arrays rather than shell-like
+  command strings.
+- Support dynamic fish completion from resolved recipes.
+- Let the project use Shadowtree for its own development tasks.
+
+## Non-Goals
+
+- Shadowtree is not currently a security sandbox.
+- Shadowtree does not currently use Linux namespaces, overlayfs, or reflinks.
+- Shadowtree does not currently provide Docker, remote execution, matrix jobs,
+  watch mode, or persistent named sessions.
+- Shadowtree does not currently perform deep language-aware argument completion
+  such as `go list ./...` package completion.
+
+## Isolation Model
+
+For each run, Shadowtree creates a temporary workspace:
+
+```text
+/tmp/shadowtree-*/workspace
+```
+
+The current source directory is copied into that workspace. Commands run from
+the temporary workspace, not from the host checkout.
+
+By default:
+
+- Files written by commands stay in the temporary workspace.
+- The temporary workspace is removed after the run.
+- The host checkout is not changed.
+
+Exceptions:
+
+- `--sync-out PATH` copies selected paths back after a successful recipe.
+- Recipe-level `sync_out` copies selected paths back after a successful recipe.
+- `--sync-out-all` copies the whole workspace back after a successful recipe.
+- `--keep` keeps the temporary workspace for debugging.
+
+Shadowtree intentionally skips `.git`, `.shadowtree`, and `.shadowtree.*` while
+copying workspaces. Because `.git` is skipped, Go build recipes that require VCS
+stamping should use `-buildvcs=false`.
+
+## CLI
+
+```sh
+shadowtree [flags] <recipe> [args...]
+shadowtree [flags] run -- <cmd> [args...]
+shadowtree help [recipe]
+shadowtree recipes
+shadowtree config
+shadowtree init [path]
+shadowtree completion fish
+shadowtree __complete fish <words...>
+```
+
+`__complete` is internal and used by generated fish completion.
+
+## Global Flags
+
+```text
+--config PATH       use an explicit config file
+--profile PROFILE   use a profile, initially only go is supported
+--sync-out PATH     copy path back after success; repeatable or comma-separated
+--sync-out-all      copy the entire workspace back after success
+--keep              keep the temporary workspace
+--print             print the resolved plan without running
+--verbose           show workspace and command details
+--help              show basic CLI help
+--version           print the version
+```
+
+Global flags are parsed before the command or recipe name. Arguments after the
+recipe name are passed to the recipe's main command.
+
+## Config Discovery
+
+Shadowtree discovers config upward from the current directory until the git root
+or filesystem root.
+
+Discovery order:
+
+```text
+.shadowtree.toml
+.shadowtree.yaml
+.shadowtree.yml
+```
+
+An explicit `--config PATH` bypasses discovery.
+
+`shadowtree init` writes `.shadowtree.toml` by default. A custom path can be
+provided:
+
+```sh
+shadowtree init ./ci/shadowtree.toml
+```
+
+## Config Schema
+
+Top-level fields:
+
+```toml
+profile = "go"
+sync_out = ["path/from/project/root"]
+
+[env]
+KEY = "value"
+
+[recipes.<name>]
+help = "Short recipe help text."
+pre = [["cmd", "arg"]]
+cmd = ["cmd", "arg"]
+args = ["fixed", "args"]
+default_args = ["args", "used", "when", "cli", "args", "are", "empty"]
+post = [["cmd", "arg"]]
+sync_out = ["path/from/project/root"]
+
+[recipes.<name>.env]
+KEY = "value"
+```
+
+YAML uses the same field names:
+
+```yaml
+profile: go
+recipes:
+  test:
+    help: Run the test suite.
+    cmd: [go, test]
+    default_args: [./...]
+```
+
+## Recipe Fields
+
+`help`
+: Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
+  and shell completion.
+
+`cmd`
+: Required argv prefix for the main command. Commands are argv arrays, not shell
+  strings.
+
+`args`
+: Fixed arguments always inserted after `cmd`.
+
+`default_args`
+: Arguments used only when the user does not provide recipe CLI args.
+
+`pre`
+: Commands run before the main command, in order.
+
+`post`
+: Commands run after the main command, in order.
+
+`env`
+: Recipe-specific environment overrides.
+
+`sync_out`
+: Paths copied back to the host checkout after a successful recipe.
+
+## Recipe Resolution
+
+Recipe resolution order:
+
+```text
+built-in recipes for the selected/detected profile
+then config recipe overrides
+then CLI flags
+then trailing recipe args
+```
+
+Config recipes with the same name as a built-in recipe override only specified
+fields. Unspecified built-in fields remain intact.
+
+Example:
+
+```toml
+[recipes.test]
+help = "Run generated-code tests."
+pre = [["go", "generate", "./..."]]
+args = ["-count=1"]
+```
+
+The built-in `test` command and defaults remain:
+
+```text
+cmd = ["go", "test"]
+default_args = ["./..."]
+```
+
+Resolved without CLI args:
+
+```sh
+go generate ./...
+go test -count=1 ./...
+```
+
+Resolved with CLI args:
+
+```sh
+shadowtree test ./internal/recipe
+```
+
+runs:
+
+```sh
+go generate ./...
+go test -count=1 ./internal/recipe
+```
+
+CLI args replace `default_args`; they do not append to them.
+
+## Execution Semantics
+
+For a recipe:
+
+1. Copy the source tree into a temporary workspace.
+2. Run `pre` commands in order.
+3. Run the resolved main command.
+4. Run `post` commands in order.
+5. If all phases succeeded, sync configured/requested paths back.
+6. Remove the temporary workspace unless `--keep` is set.
+
+Failure behavior:
+
+- If a `pre` command fails, the main command is skipped.
+- `post` commands still run after a `pre` or main command failure.
+- Sync-out does not run after failure.
+- The process exits with the first failing command's exit code when available.
+
+All commands run from the temporary workspace root.
+
+## Reserved Recipe Names
+
+The following names are reserved and cannot be used as recipes:
+
+```text
+run
+recipes
+init
+config
+completion
+help
+version
+__complete
+```
+
+## Built-In Go Profile
+
+The Go profile is selected when:
+
+- `--profile go` is provided, or
+- config has `profile = "go"`, or
+- Shadowtree detects `go.mod` or `go.work` upward from the current directory.
+
+Only the `go` profile is supported currently.
+
+Built-in Go recipes:
+
+```text
+test       go test ./...
+test-race  go test -race ./...
+vet        go vet ./...
+lint       golangci-lint run ./... if available, otherwise go vet ./...
+build      go build ./...
+generate   go generate ./...
+tidy       go mod tidy
+```
+
+Built-in `tidy` syncs out:
+
+```text
+go.mod
+go.sum
+```
+
+## Help
+
+`shadowtree help` prints CLI usage, active config/profile, and resolved recipes
+with their `help` text.
+
+`shadowtree help <recipe>` prints:
+
+- recipe name
+- recipe help text
+- command summary
+- pre commands
+- post commands
+- sync-out paths
+
+Multi-line command arguments are summarized as `<script>` in help and completion
+output.
+
+## Recipe Listing
+
+`shadowtree recipes` prints resolved recipe names and help text. If a recipe has
+no `help`, Shadowtree falls back to a compact command summary.
+
+## Plan Printing
+
+`--print` prints the resolved execution plan without running it:
+
+```sh
+shadowtree --print test ./internal/runner
+```
+
+The plan includes:
+
+- recipe name
+- profile
+- config path
+- pre commands
+- main command
+- post commands
+- sync-out paths
+
+## Fish Completion
+
+Shadowtree can generate fish completion:
+
+```sh
+shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+```
+
+The generated fish script calls back into Shadowtree:
+
+```sh
+shadowtree __complete fish <words...>
+```
+
+Completion is dynamic and uses:
+
+- configured recipes
+- built-in recipes from the detected or specified profile
+- recipe `help` text
+
+Supported completion behavior:
+
+- `shadowtree <TAB>` completes core commands and resolved recipes.
+- `shadowtree te<TAB>` completes matching recipe names such as `test`.
+- `shadowtree help <TAB>` completes recipe names.
+- `shadowtree --profile <TAB>` completes `go`.
+
+Completion is intentionally cheap. It parses config and checks profile markers;
+it does not run project commands like `go list`, `go test`, or codegen.
+
+## Install Recipe Convention
+
+This repository's own `.shadowtree.toml` includes an `install` recipe modeled
+after `git-agent`.
+
+It:
+
+- builds `bin/shadowtree` with `-buildvcs=false` and stripped ldflags
+- installs the binary to `${PREFIX:-$HOME/.local}/bin`
+- honors `DESTDIR`
+- honors `BINDIR`
+- honors `XDG_CONFIG_HOME`
+- honors `FISH_CONFIG_DIR`
+- honors `FISH_COMPLETIONS_DIR`
+- installs fish completion only when the fish config directory exists
+
+## Current Project Recipes
+
+Shadowtree currently uses itself for development through `.shadowtree.toml`.
+
+```text
+build    Build the shadowtree binary into bin/shadowtree.
+install  Install the shadowtree binary and fish completion.
+test     Run the test suite.
+vet      Run go vet.
+check    Run vet and tests.
+fmt      Format Go source files.
+tidy     Tidy module dependencies.
+```
+
+Recipes that intentionally mutate the host checkout declare `sync_out`:
+
+```text
+build  -> bin/shadowtree
+fmt    -> cmd, internal
+tidy   -> go.mod, go.sum
+```
+
+## Known Limits
+
+- Workspace isolation is implemented by copying files into a temp directory.
+- Large repositories may be slower than an overlay/reflink implementation.
+- Commands can still intentionally read or write absolute host paths.
+- No shell-string recipe shorthand exists; use argv arrays.
+- Fish is the only shell completion target currently implemented.
+- Go is the only language profile currently implemented.
