@@ -273,7 +273,7 @@ func completionResultWithOptions(text string, position lspPosition, opts complet
 			out["textEdit"] = quotedValueTextEdit(text, bytePosition, item.Label)
 		case item.Detail == "Shadowtree placeholder":
 			out["textEdit"] = placeholderTextEdit(text, bytePosition, item.Label)
-		case item.Detail == "Shadowtree recipe reference":
+		case item.RecipeReference:
 			out["textEdit"] = recipeReferenceTextEdit(text, bytePosition, item.InsertText)
 		case inTableHeader(text, bytePosition):
 			out["textEdit"] = tableTextEdit(text, bytePosition, item.InsertText)

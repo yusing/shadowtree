@@ -415,7 +415,7 @@ func writeLSPTargetConfig(t *testing.T, root, recipeName string) {
 	if err := os.Mkdir(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	text := "[recipes." + recipeName + "]\ncmd = [\"true\"]\n"
+	text := "[recipes." + recipeName + "]\nhelp = \"Target recipe help.\"\ncmd = [\"true\"]\n"
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}

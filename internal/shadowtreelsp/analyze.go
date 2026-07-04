@@ -23,12 +23,13 @@ type documentAnalysis struct {
 }
 
 type completion struct {
-	Label      string
-	InsertText string
-	Kind       int
-	Detail     string
-	Quote      bool
-	Edit       *completionEdit
+	Label           string
+	InsertText      string
+	Kind            int
+	Detail          string
+	Quote           bool
+	RecipeReference bool
+	Edit            *completionEdit
 }
 
 type completionEdit struct {
@@ -168,7 +169,7 @@ func completionsAtWithOptions(text string, pos lspPosition, opts completionOptio
 		return items
 	}
 	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
-		return recipeReferenceCompletionsWithOptions(analysis, recipePrefix, opts)
+		return recipeReferenceCompletionsWithOptions(text, analysis, recipePrefix, opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
@@ -319,13 +320,14 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 }
 
 func recipeReferenceCompletions(analysis documentAnalysis, prefix string) []completion {
-	return recipeReferenceCompletionsWithOptions(analysis, prefix, completionOptions{})
+	return recipeReferenceCompletionsWithOptions("", analysis, prefix, completionOptions{})
 }
 
-func recipeReferenceCompletionsWithOptions(analysis documentAnalysis, prefix string, opts completionOptions) []completion {
+func recipeReferenceCompletionsWithOptions(text string, analysis documentAnalysis, prefix string, opts completionOptions) []completion {
 	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
 		return crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix, opts)
 	}
+	recipes, _ := completionRecipes(text)
 	names := slices.Clone(analysis.Recipes)
 	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
 		names = appendUnique(names, name)
@@ -337,10 +339,11 @@ func recipeReferenceCompletionsWithOptions(analysis documentAnalysis, prefix str
 			continue
 		}
 		items = append(items, completion{
-			Label:      "@" + name,
-			InsertText: name,
-			Kind:       completionKindFunction,
-			Detail:     "Shadowtree recipe reference",
+			Label:           "@" + name,
+			InsertText:      name,
+			Kind:            completionKindFunction,
+			Detail:          recipeReferenceDetail(recipes, name),
+			RecipeReference: true,
 		})
 	}
 	items = append(items, crossConfigDirectoryCompletions(prefix, opts)...)
@@ -396,13 +399,21 @@ func crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix string, opts
 		}
 		value := pathPrefix + ":" + name
 		items = append(items, completion{
-			Label:      "@" + value,
-			InsertText: value,
-			Kind:       completionKindFunction,
-			Detail:     "Shadowtree recipe reference",
+			Label:           "@" + value,
+			InsertText:      value,
+			Kind:            completionKindFunction,
+			Detail:          recipeReferenceDetail(recipes, name),
+			RecipeReference: true,
 		})
 	}
 	return items
+}
+
+func recipeReferenceDetail(recipes map[string]recipe.Recipe, name string) string {
+	if rec, ok := recipes[name]; ok && rec.Help != "" {
+		return rec.Help
+	}
+	return "Shadowtree recipe reference"
 }
 
 func crossConfigCompletionRecipe(ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {

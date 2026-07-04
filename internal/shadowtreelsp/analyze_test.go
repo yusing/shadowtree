@@ -52,6 +52,7 @@ cmd = '''go build {'''
 
 func TestCompletionsIncludeRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
+help = "Generate Swagger docs."
 cmd = ["go", "generate", "./..."]
 
 [recipes.vet]
@@ -60,11 +61,34 @@ cmd = ["go", "vet"]
 [recipes.test]
 pre = ["echo 123", "@gen"]
 `
-	items := completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["echo 123", "@`)})
+	items := completionsAt(text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@`)})
 	assertLabels(t, items, "@gen-swagger", "@vet")
+	assertCompletionDetail(t, items, "@gen-swagger", "Generate Swagger docs.")
 
-	items = completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["echo 123", "@gen`)})
+	items = completionsAt(text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@gen`)})
 	assertLabels(t, items, "@gen-swagger")
+}
+
+func TestRecipeReferenceCompletionUsesRecipeHelpAndTextEdit(t *testing.T) {
+	text := `[recipes.gen-swagger]
+help = "Generate Swagger docs."
+cmd = ["go", "generate", "./..."]
+
+[recipes.test]
+pre = [["@gen"]]
+`
+	result := completionResult(text, lspPosition{Line: 5, Character: len(`pre = [["@gen`)})
+	item := completionItem(t, result, "@gen-swagger")
+	if item["detail"] != "Generate Swagger docs." {
+		t.Fatalf("detail = %#v, want recipe help", item["detail"])
+	}
+	edit, ok := item["textEdit"].(map[string]any)
+	if !ok {
+		t.Fatalf("textEdit has type %T", item["textEdit"])
+	}
+	if edit["newText"] != "gen-swagger" {
+		t.Fatalf("newText = %#v, want recipe name", edit["newText"])
+	}
 }
 
 func TestCompletionsFilterRecipeReferencePrefix(t *testing.T) {
@@ -146,6 +170,7 @@ cmd = ["@webui:g"]
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "@webui:gen-schema")
+	assertCompletionDetail(t, items, "@webui:gen-schema", "Target recipe help.")
 }
 
 func TestCompletionsIncludeCrossConfigRecipeReferenceArguments(t *testing.T) {
@@ -488,6 +513,16 @@ func assertEditRange(t *testing.T, edit map[string]any, start, end int) {
 
 func completionTextEdit(t *testing.T, result map[string]any, label string) map[string]any {
 	t.Helper()
+	item := completionItem(t, result, label)
+	edit, ok := item["textEdit"].(map[string]any)
+	if !ok {
+		t.Fatalf("textEdit has type %T", item["textEdit"])
+	}
+	return edit
+}
+
+func completionItem(t *testing.T, result map[string]any, label string) map[string]any {
+	t.Helper()
 	items, ok := result["items"].([]map[string]any)
 	if !ok {
 		t.Fatalf("items has type %T", result["items"])
@@ -496,11 +531,7 @@ func completionTextEdit(t *testing.T, result map[string]any, label string) map[s
 		if item["label"] != label {
 			continue
 		}
-		edit, ok := item["textEdit"].(map[string]any)
-		if !ok {
-			t.Fatalf("textEdit has type %T", item["textEdit"])
-		}
-		return edit
+		return item
 	}
 	t.Fatalf("missing completion %q in %#v", label, items)
 	return nil
@@ -517,6 +548,20 @@ func assertLabels(t *testing.T, items []completion, labels ...string) {
 			t.Fatalf("missing label %q in %#v", label, got)
 		}
 	}
+}
+
+func assertCompletionDetail(t *testing.T, items []completion, label, detail string) {
+	t.Helper()
+	for _, item := range items {
+		if item.Label != label {
+			continue
+		}
+		if item.Detail != detail {
+			t.Fatalf("%s detail = %q, want %q", label, item.Detail, detail)
+		}
+		return
+	}
+	t.Fatalf("missing label %q in %#v", label, items)
 }
 
 func decodeSemanticTokens(data []uint32) []semanticToken {
