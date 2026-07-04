@@ -16,6 +16,7 @@ import (
 
 const GoProfile = "go"
 const scriptCommand = "__shadowtree_script__"
+const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
 
 var ReservedNames = map[string]bool{
@@ -534,11 +535,21 @@ func ValidateCommand(command Command) error {
 		return errors.New("empty command")
 	}
 	if IsScriptCommand(command) {
-		if len(command) != 2 {
-			return errors.New("script command must have one body")
-		}
-		if strings.TrimSpace(command[1]) == "" {
-			return errors.New("empty script")
+		switch len(command) {
+		case 2:
+			if strings.TrimSpace(command[1]) == "" {
+				return errors.New("empty script")
+			}
+		default:
+			if len(command) < 4 {
+				return errors.New("script command must have shell, body, and name")
+			}
+			if strings.TrimSpace(command[1]) == "" {
+				return errors.New("empty shell")
+			}
+			if strings.TrimSpace(command[2]) == "" {
+				return errors.New("empty script")
+			}
 		}
 		return nil
 	}
@@ -802,7 +813,10 @@ func expandPlaceholders(text string, values map[string]string) (string, error) {
 func CommandWithShell(command Command, shell, shellPrelude string) Command {
 	shell = defaultShell(shell)
 	if IsScriptCommand(command) {
-		return Command{shell, "-c", joinShell(shellPrelude, command[1]), "shadowtree"}
+		if len(command) >= 4 {
+			return command
+		}
+		return Command{scriptCommand, shell, joinShell(shellPrelude, command[1]), scriptArg0}
 	}
 	if strings.TrimSpace(shellPrelude) == "" || !isShellScriptCommand(command) {
 		return command
@@ -825,6 +839,33 @@ func IsScriptCommand(command Command) bool {
 
 func ScriptCommand(script string) Command {
 	return Command{scriptCommand, script}
+}
+
+func ScriptShell(command Command) string {
+	if len(command) >= 4 && IsScriptCommand(command) {
+		return command[1]
+	}
+	return ""
+}
+
+func ScriptBody(command Command) string {
+	if len(command) >= 4 && IsScriptCommand(command) {
+		return command[2]
+	}
+	if len(command) == 2 && IsScriptCommand(command) {
+		return command[1]
+	}
+	return ""
+}
+
+func ShellCommand(command Command) Command {
+	if len(command) >= 4 && IsScriptCommand(command) {
+		return append(Command{command[1], "-c", command[2]}, command[3:]...)
+	}
+	if len(command) == 2 && IsScriptCommand(command) {
+		return Command{defaultShell(""), "-c", command[1], scriptArg0}
+	}
+	return command
 }
 
 func isShellScriptCommand(command Command) bool {
@@ -852,6 +893,7 @@ func commandOutput(ctx context.Context, dir string, env map[string]string, comma
 		return "", err
 	}
 	command = CommandWithShell(command, "", "")
+	command = ShellCommand(command)
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = dir
 	cmd.Env = mergedEnv(os.Environ(), env)

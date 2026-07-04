@@ -62,11 +62,11 @@ func (flag *multiFlag) Set(value string) error {
 
 func main() {
 	log.SetFlags(0)
-	if len(os.Args) > 1 && os.Args[1] == runner.OverlayHelperCommand {
-		os.Exit(runner.OverlayHelperMain(os.Args[2:]))
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) > 1 && os.Args[1] == runner.OverlayHelperCommand {
+		os.Exit(runner.OverlayHelperMain(ctx, os.Args[2:]))
+	}
 	if err := run(ctx, os.Args[1:]); err != nil {
 		if exitErr, ok := errors.AsType[runner.ExitError](err); ok {
 			os.Exit(exitErr.Code)

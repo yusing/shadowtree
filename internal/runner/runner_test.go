@@ -202,6 +202,226 @@ func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
 	}
 }
 
+func TestRunInvokesLiteralScriptRecipeReferenceWithArguments(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("@gen value=shadow\ncat out.txt"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"gen": {
+				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
+				DefaultArgs: []string{"{value}"},
+				Arguments: map[string]recipe.Argument{
+					"value": {Required: true},
+				},
+			},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunInvokesLiteralScriptRecipeReferenceInConditional(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("if @check; then printf ok; else printf fail; fi"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"check": {Cmd: recipe.Command{"true"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "ok" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunInvokesLiteralScriptRecipeReferenceWithBracketArguments(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("@gen[value=shadow]\ncat out.txt"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"gen": {
+				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
+				DefaultArgs: []string{"{value}"},
+				Arguments: map[string]recipe.Argument{
+					"value": {Required: true},
+				},
+			},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunPreservesScriptArgsWithLiteralRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:         recipe.ScriptCommand("@noop\nprintf %s \"$1\""),
+			DefaultArgs: []string{"shadow"},
+			Sandboxed:   new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"noop": {Cmd: recipe.Command{"true"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunPreservesDashPrefixedScriptArgsWithLiteralRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:         recipe.ScriptCommand("@noop\nprintf '%s:%s' \"$1\" \"$2\""),
+			DefaultArgs: []string{"-n", "shadow"},
+			Sandboxed:   new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"noop": {Cmd: recipe.Command{"true"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "-n:shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunDoesNotDispatchVariableExpandedScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("FOO=@gen\n$FOO 2>/dev/null || printf no-dispatch"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"gen": {Cmd: recipe.Command{"sh", "-c", "printf shadow > out.txt"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "no-dispatch" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	_, err = os.Stat(filepath.Join(source, "out.txt"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("out.txt err = %v, want not exist", err)
+	}
+}
+
 func TestRunInvokesCrossConfigRecipeReferenceFromTargetDir(t *testing.T) {
 	source := t.TempDir()
 	target := filepath.Join(source, "webui")

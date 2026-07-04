@@ -98,7 +98,7 @@ cmd = ["true"]
 	if len(pre) != 2 {
 		t.Fatalf("pre = %#v, want two commands", pre)
 	}
-	if len(pre[0]) != 4 || pre[0][0] != "sh" || pre[0][2] != "echo 123" {
+	if len(pre[0]) != 4 || pre[0][0] != "__shadowtree_script__" || pre[0][1] != "sh" || pre[0][2] != "echo 123" {
 		t.Fatalf("pre[0] = %#v, want shell-wrapped script command", pre[0])
 	}
 	if len(pre[1]) != 1 || pre[1][0] != "@foo" {

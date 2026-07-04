@@ -144,6 +144,213 @@ pre = ["@build[mode="]
 	assertLabels(t, items, "true", "false")
 }
 
+func TestCompletionsIncludeScriptRecipeReferences(t *testing.T) {
+	text := `[recipes.gen-swagger]
+help = "Generate Swagger docs."
+cmd = ["go", "generate", "./..."]
+
+[recipes.vet]
+cmd = ["go", "vet"]
+
+[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+  @gen
+fi
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`  @gen`)})
+	assertLabels(t, items, "@gen-swagger")
+	assertCompletionDetail(t, items, "@gen-swagger", "Generate Swagger docs.")
+}
+
+func TestCompletionsIncludeShellPreludeRecipeReferences(t *testing.T) {
+	text := `shell_prelude = '''
+@g
+'''
+
+[recipes.gen-swagger]
+help = "Generate Swagger docs."
+cmd = ["go", "generate", "./..."]
+
+[recipes.test]
+cmd = ["go", "test"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@g`)})
+	assertLabels(t, items, "@gen-swagger")
+	assertCompletionDetail(t, items, "@gen-swagger", "Generate Swagger docs.")
+}
+
+func TestCompletionsIncludeRecipeShellPreludeRecipeReferences(t *testing.T) {
+	text := `[recipes.gen-swagger]
+help = "Generate Swagger docs."
+cmd = ["go", "generate", "./..."]
+
+[recipes.test]
+shell_prelude = '''
+@g
+'''
+cmd = ["go", "test"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`@g`)})
+	assertLabels(t, items, "@gen-swagger")
+	assertCompletionDetail(t, items, "@gen-swagger", "Generate Swagger docs.")
+}
+
+func TestCompletionsIncludeScriptRecipeReferenceArguments(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+cmd = '''
+@build[
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 11, Character: len(`@build[`)})
+	assertLabels(t, items, "component=", "mode=")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 11, Character: len(`@build[`)})
+	edit := completionTextEdit(t, result, "component=")
+	if edit["newText"] != "build[component=" {
+		t.Fatalf("newText = %#v, want grouped recipe argument", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`@`), len(`@build[`))
+}
+
+func TestCompletionsIncludeScriptRecipeReferenceArgumentValues(t *testing.T) {
+	text := `[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+cmd = '''
+@build[mode=
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`@build[mode=`)})
+	assertLabels(t, items, "true", "false")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 8, Character: len(`@build[mode=`)})
+	edit := completionTextEdit(t, result, "true")
+	if edit["newText"] != "build[mode=true" {
+		t.Fatalf("newText = %#v, want grouped recipe argument value", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`@`), len(`@build[mode=`))
+}
+
+func TestCompletionsIncludeScriptRecipeReferenceSpacedArguments(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+cmd = '''
+@build m
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 11, Character: len(`@build m`)})
+	assertLabels(t, items, "mode=")
+}
+
+func TestCompletionsIncludeScriptRecipeReferenceSpacedArgumentValues(t *testing.T) {
+	text := `[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+cmd = '''
+@build mode=
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`@build mode=`)})
+	assertLabels(t, items, "true", "false")
+}
+
+func TestCompletionsIncludeShellPreludeRecipeReferenceArguments(t *testing.T) {
+	text := `shell_prelude = '''
+@build[
+'''
+
+[recipes.build.arguments.component]
+type = "string"
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@build[`)})
+	assertLabels(t, items, "component=", "mode=")
+}
+
+func TestCompletionsIncludeShellPreludeRecipeReferenceArgumentValues(t *testing.T) {
+	text := `shell_prelude = '''
+@build mode=
+'''
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@build mode=`)})
+	assertLabels(t, items, "true", "false")
+}
+
+func TestCompletionsIncludePrePostScriptRecipeReferenceArguments(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+pre = ["@build["]
+post = ["@build mode="]
+cmd = ["true"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`pre = ["@build[`)})
+	assertLabels(t, items, "component=", "mode=")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 11, Character: len(`post = ["@build mode=`)})
+	assertLabels(t, items, "true", "false")
+}
+
+func TestCompletionsIgnoreScriptRecipeReferenceArguments(t *testing.T) {
+	text := `[recipes.gen]
+cmd = ["true"]
+
+[recipes.test]
+cmd = '''
+echo @g
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 5, Character: len(`echo @g`)})
+	if len(items) != 0 {
+		t.Fatalf("items = %#v, want none", items)
+	}
+}
+
 func TestCompletionsIncludeCrossConfigDirectories(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")
@@ -211,6 +418,24 @@ cmd = ["@webui:gen-schema[mode="]
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "true", "false")
+}
+
+func TestCompletionsIncludeScriptCrossConfigRecipeReferences(t *testing.T) {
+	root := t.TempDir()
+	writeLSPTargetConfig(t, root, "gen-schema")
+	text := `[recipes.test]
+cmd = '''
+@webui:g
+'''
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 2, Character: len(`@webui:g`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@webui:gen-schema")
+	assertCompletionDetail(t, items, "@webui:gen-schema", "Target recipe help.")
 }
 
 func TestRecipeReferenceArgumentTextEditReplacesActiveFragment(t *testing.T) {
@@ -378,6 +603,84 @@ pre = ["@build[project=internal/, binary=abc]"]
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project=internal/, binary="), len("abc"), semanticTokenString)
 }
 
+func TestSemanticTokensHighlightScriptRecipeReferences(t *testing.T) {
+	text := `[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+  @build[project=internal/,binary=abc]
+  @build project=internal/ binary=abc
+fi
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	linePrefix := len("  ")
+	assertSemanticToken(t, tokens, 3, linePrefix, len("@build"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 3, linePrefix+len("@build["), len("project"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 3, linePrefix+len("@build[project="), len("internal/"), semanticTokenString)
+	assertSemanticToken(t, tokens, 3, linePrefix+len("@build[project=internal/,"), len("binary"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 3, linePrefix+len("@build[project=internal/,binary="), len("abc"), semanticTokenString)
+
+	refStart := linePrefix
+	refEnd := linePrefix + len("@build[project=internal/,binary=abc]")
+	for _, token := range tokens {
+		if token.Line != 3 || token.Start >= refEnd || token.Start+token.Length <= refStart {
+			continue
+		}
+		switch {
+		case token.Start == linePrefix && token.Length == len("@build") && token.Type == semanticTokenFunction:
+		case token.Start == linePrefix+len("@build[") && token.Length == len("project") && token.Type == semanticTokenParameter:
+		case token.Start == linePrefix+len("@build[project=") && token.Length == len("internal/") && token.Type == semanticTokenString:
+		case token.Start == linePrefix+len("@build[project=internal/,") && token.Length == len("binary") && token.Type == semanticTokenParameter:
+		case token.Start == linePrefix+len("@build[project=internal/,binary=") && token.Length == len("abc") && token.Type == semanticTokenString:
+		default:
+			t.Fatalf("unexpected token overlapping script recipe reference: %#v in %#v", token, tokens)
+		}
+	}
+
+	assertSemanticToken(t, tokens, 4, linePrefix, len("@build"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, linePrefix+len("@build "), len("project"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 4, linePrefix+len("@build project="), len("internal/"), semanticTokenString)
+	assertSemanticToken(t, tokens, 4, linePrefix+len("@build project=internal/ "), len("binary"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 4, linePrefix+len("@build project=internal/ binary="), len("abc"), semanticTokenString)
+
+	spacedRefStart := linePrefix
+	spacedRefEnd := linePrefix + len("@build project=internal/ binary=abc")
+	for _, token := range tokens {
+		if token.Line != 4 || token.Start >= spacedRefEnd || token.Start+token.Length <= spacedRefStart {
+			continue
+		}
+		switch {
+		case token.Start == linePrefix && token.Length == len("@build") && token.Type == semanticTokenFunction:
+		case token.Start == linePrefix+len("@build ") && token.Length == len("project") && token.Type == semanticTokenParameter:
+		case token.Start == linePrefix+len("@build project=") && token.Length == len("internal/") && token.Type == semanticTokenString:
+		case token.Start == linePrefix+len("@build project=internal/ ") && token.Length == len("binary") && token.Type == semanticTokenParameter:
+		case token.Start == linePrefix+len("@build project=internal/ binary=") && token.Length == len("abc") && token.Type == semanticTokenString:
+		default:
+			t.Fatalf("unexpected token overlapping spaced script recipe reference: %#v in %#v", token, tokens)
+		}
+	}
+}
+
+func TestSemanticTokensIgnoreScriptRecipeReferenceText(t *testing.T) {
+	text := `[recipes.test]
+cmd = '''
+FOO="@missing"
+echo "@also_missing"
+# @comment
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	if hasSemanticToken(tokens, 2, len(`FOO="`), len("@missing"), semanticTokenFunction) {
+		t.Fatalf("assignment was highlighted as recipe reference in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 3, len(`echo "`), len("@also_missing"), semanticTokenFunction) {
+		t.Fatalf("quoted text was highlighted as recipe reference in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 4, len(`# `), len("@comment"), semanticTokenFunction) {
+		t.Fatalf("comment was highlighted as recipe reference in %#v", tokens)
+	}
+}
+
 func TestSemanticTokensHighlightCrossConfigRecipeReferences(t *testing.T) {
 	text := `[recipes.test]
 cmd = ["@webui:gen-schema[mode=dev]"]
@@ -457,6 +760,32 @@ fi
 	assertSemanticToken(t, tokens, 7, strings.Index(textLine(text, 7), ";"), 1, semanticTokenOperator)
 	assertSemanticToken(t, tokens, 7, strings.Index(textLine(text, 7), "then"), len("then"), semanticTokenKeyword)
 	assertSemanticToken(t, tokens, 9, 0, len("fi"), semanticTokenKeyword)
+}
+
+func TestSemanticTokensHighlightPrePostScriptBodies(t *testing.T) {
+	text := `[recipes.install]
+pre = ['''
+echo pre
+''']
+post = ['''
+echo post
+''']
+cmd = ["true"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 2, 0, len("echo"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 5, 0, len("echo"), semanticTokenFunction)
+}
+
+func TestSemanticTokensHighlightInlinePrePostScriptBodies(t *testing.T) {
+	text := `[recipes.install]
+pre = ["echo pre"]
+post = ["echo post"]
+cmd = ["true"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("echo"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 2, len(`post = ["`), len("echo"), semanticTokenFunction)
 }
 
 func TestSemanticTokensUseRecipeFishShell(t *testing.T) {

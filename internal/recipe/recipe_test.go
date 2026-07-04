@@ -325,7 +325,7 @@ func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Main, Command{"sh", "-c", "say_hi() { printf hi; }\nsay_hi", "shadowtree"}) {
+	if !slices.Equal(got.Main, Command{scriptCommand, "sh", "say_hi() { printf hi; }\nsay_hi", "shadowtree"}) {
 		t.Fatalf("Main = %#v", got.Main)
 	}
 }
@@ -341,7 +341,7 @@ func TestResolveShellScriptUsesConfiguredShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Main, Command{"bash", "-c", "printf ok", "shadowtree"}) {
+	if !slices.Equal(got.Main, Command{scriptCommand, "bash", "printf ok", "shadowtree"}) {
 		t.Fatalf("Main = %#v", got.Main)
 	}
 }

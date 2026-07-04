@@ -207,6 +207,29 @@ passed to that recipe as CLI arguments:
 pre = [["@build-api", "service=public"]]
 ```
 
+For `sh` and `bash` script commands, including `cmd`, `pre`, `post`, argument
+`values`, and `shell_prelude`, a literal `@recipe` command word also invokes
+the referenced recipe directly. This works anywhere a normal shell command can
+run, including conditionals:
+
+```toml
+[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+	@generate mode=dev
+fi
+'''
+```
+
+Only literal command-position references dispatch recipes. Assignments,
+expanded variables, quoted text, and ordinary command arguments do not:
+
+```sh
+FOO="@generate"   # assignment only
+$FOO              # normal shell command lookup, not a recipe dispatch
+echo @generate    # normal argument text
+```
+
 Use `@path:recipe` to invoke a recipe from another Shadowtree config. The path
 is resolved relative to the directory containing the referencing
 `.shadowtree.toml`, and the target config is loaded from
@@ -223,6 +246,13 @@ scripts:
 
 ```toml
 pre = ["echo 123", "@gen-swagger"]
+```
+
+Because non-reference strings in `pre` and `post` are shell scripts, a literal
+command-position `@recipe` inside those strings also dispatches a recipe:
+
+```toml
+post = ["if [ -f schema.json ]; then @publish-schema; fi"]
 ```
 
 String and argv recipe references can use bracket-style arguments. Comma
@@ -624,8 +654,11 @@ The Zed extension defines a `Shadowtree TOML` language backed by the pinned
 
 - base TOML highlighting
 - Shadowtree-specific key, recipe, argument, and variable highlighting
-- semantic shell highlighting for script-valued `cmd`, `shell_prelude`, and
-  `values` strings
+- semantic shell highlighting for script-valued `cmd`, `pre`, `post`,
+  `shell_prelude`, and `values` strings
+- recipe-reference completion, diagnostics, and semantic tokens for literal
+  command-position `@recipe` in `sh`/`bash` script strings, including
+  `shell_prelude` and `pre`/`post`
 
 Shell semantic highlighting supports `shell = "bash"`, `shell = "sh"`, and
 `shell = "fish"` without hardcoding a single Zed shell language name.

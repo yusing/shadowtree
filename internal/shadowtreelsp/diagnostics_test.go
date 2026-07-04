@@ -239,6 +239,73 @@ cmd = "@missing"
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "`), len(`cmd = "@missing`))
 }
 
+func TestDocumentDiagnosticsRejectUnknownScriptRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+  @missing value=shadow
+fi
+'''
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 3, len(`  `), len(`  @missing`))
+}
+
+func TestDocumentDiagnosticsAcceptKnownScriptRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+  @gen value=shadow
+fi
+'''
+
+[recipes.gen]
+cmd = ["true"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsIgnoreScriptRecipeReferenceText(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+FOO="@missing"
+echo "@also_missing"
+# @comment
+'''
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsIgnoreScriptHereDocBody(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+cat <<EOF
+@missing
+EOF
+'''
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsIgnoreMultilineScriptString(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+printf "%s
+@missing
+"
+'''
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsRejectUnknownScalarValuesRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@missing"
@@ -265,17 +332,13 @@ cmd = ["go", "test"]
 	}
 }
 
-func TestDocumentDiagnosticsIgnoreShellStringStartingWithAt(t *testing.T) {
+func TestDocumentDiagnosticsRejectUnknownScriptCommandStartingWithAt(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@echo hi"]
 cmd = ["go", "test"]
 `)
-	if diagnostics == nil {
-		t.Fatalf("diagnostics = nil, want empty slice")
-	}
-	if len(diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none", diagnostics)
-	}
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @echo")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["`), len(`pre = ["@echo`))
 }
 
 func TestDocumentDiagnosticsAcceptDynamicRecipeReference(t *testing.T) {

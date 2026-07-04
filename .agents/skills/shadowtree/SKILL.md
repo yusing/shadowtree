@@ -95,10 +95,19 @@ target recipe from that path. Recipe references do not spawn another
 sync-out. Remaining argv items are passed as that recipe's CLI args. Recursive
 references fail with a cycle error.
 
+In `sh` and `bash` script commands, including `cmd`, `pre`, `post`, argument
+`values`, and `shell_prelude`, a literal command-position `@recipe` also invokes
+the referenced recipe directly, including inside conditionals. For example,
+`if @generate; then ...; fi` dispatches `generate`, and `@build mode=dev` passes
+`mode=dev` as a recipe CLI arg. Assignments and expanded variables do not
+dispatch recipes: `FOO="@build"` is just a shell assignment, and `$FOO` uses
+normal shell command lookup.
+
 In command-list fields such as `pre` and `post`, a string command that is
 exactly `@recipe` is also a recipe reference. Other string commands remain shell
 scripts, so `pre = ["echo 123", "@foo"]` runs `echo 123` as a script and then
-invokes recipe `foo`.
+invokes recipe `foo`. A literal command-position `@recipe` inside those script
+strings also dispatches directly, e.g. `post = ["if @check; then @publish; fi"]`.
 
 Completion criterion: cleanup or reporting that must run after failure belongs in `post`; generated outputs are copied back only on success.
 
@@ -194,8 +203,26 @@ install -m 0755 bin/tool "$HOME/.local/bin/tool"
 ```
 
 Script strings run as `<shell> -c <script> shadowtree`; `$0` is `shadowtree`. `shell_prelude` is joined before script bodies and before `sh -c` array commands. Empty commands and empty script bodies are invalid.
+In `sh` and `bash` script strings, including `shell_prelude`, a literal
+command-position `@recipe` invokes that recipe directly without a Shadowtree
+subprocess or nested sandbox:
+
+```toml
+[recipes.test]
+cmd = '''
+if [ -f schema.json ]; then
+	@generate mode=dev
+fi
+'''
+```
 
 Completion criterion: argv arrays are used unless shell syntax is actually needed.
+
+Editor support: Shadowtree LSP provides shell highlighting for script-valued
+`cmd`, `pre`, `post`, `shell_prelude`, and argument `values`, plus the same
+recipe-reference completion and diagnostics for literal command-position
+`@recipe` in those `sh`/`bash` script strings as it provides for `pre`,
+`post`, and `values` recipe references.
 
 ## Placeholders And Vars
 

@@ -15,12 +15,13 @@ import (
 )
 
 type documentAnalysis struct {
-	Lines        []string
-	Recipes      []string
-	GlobalVars   []string
-	RecipeVars   map[string][]string
-	Arguments    map[string][]string
-	CurrentTable string
+	Lines         []string
+	Recipes       []string
+	GlobalVars    []string
+	RecipeVars    map[string][]string
+	Arguments     map[string][]string
+	ScriptRegions []scriptRegion
+	CurrentTable  string
 }
 
 type completion struct {
@@ -152,6 +153,7 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	for name := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[name])
 	}
+	analysis.ScriptRegions = scriptRegions(lines, shellSettings(lines))
 	return analysis
 }
 
@@ -169,6 +171,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
 		return items
 	}
+	if items, ok := scriptRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
+		return items
+	}
 	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
 		return recipeReferenceCompletionsWithOptions(ctx, text, analysis, recipePrefix, opts)
 	}
@@ -177,6 +182,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	}
 	if key, ok := keyBeforeValue(prefix); ok {
 		return valueCompletions(key)
+	}
+	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
+		return nil
 	}
 	return keyCompletions(analysis.CurrentTable)
 }
@@ -217,6 +225,90 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		rec,
 		recipecompletion.Options{Dir: opts.Dir},
 	)
+	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character), true
+}
+
+func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
+	region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos)
+	if !ok || !recipeScriptReferenceRegion(region) || (region.Shell != "" && region.Shell != "sh" && region.Shell != "bash") {
+		return nil, false
+	}
+	line := lineAt(analysis.Lines, pos.Line)
+	start, prefix, ok := scriptRecipeReferencePrefixAt(line, pos, region)
+	if !ok {
+		return nil, false
+	}
+	if strings.Contains(prefix, "[") {
+		items := groupedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, opts)
+		return items, true
+	}
+	if strings.ContainsAny(prefix, " \t") {
+		items := spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, opts)
+		return items, true
+	}
+	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis, prefix, opts)
+	for i := range items {
+		items[i].Edit = &completionEdit{Start: start + 1, End: pos.Character}
+	}
+	return items, true
+}
+
+func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
+	fakePrefix := `cmd = "@` + prefix
+	fakeBase := len(`cmd = "@`)
+	fakePos := lspPosition{Line: pos.Line, Character: len(fakePrefix)}
+	items, ok := recipeArgumentReferenceCompletions(ctx, text, "recipes.__script", fakePrefix, fakePos, opts)
+	if !ok {
+		return nil
+	}
+	for i := range items {
+		if items[i].Edit == nil {
+			continue
+		}
+		items[i].Edit = &completionEdit{
+			Start: start + 1 + max(items[i].Edit.Start-fakeBase, 0),
+			End:   pos.Character,
+		}
+	}
+	return items
+}
+
+func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
+	name, argsText, ok := strings.Cut(prefix, " ")
+	if !ok {
+		name, argsText, ok = strings.Cut(prefix, "\t")
+	}
+	if !ok || strings.TrimSpace(name) == "" {
+		return nil
+	}
+	recipes, ok := completionRecipes(text)
+	if !ok {
+		return nil
+	}
+	ref := recipeReferenceForCompletion(name)
+	rec, ok := recipes[ref.Name]
+	if ref.Path != "" {
+		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
+	}
+	if !ok || len(rec.Arguments) == 0 {
+		return nil
+	}
+	currentStart := len(argsText)
+	for currentStart > 0 && !isShellSpace(argsText[currentStart-1]) {
+		currentStart--
+	}
+	before := strings.TrimSpace(argsText[:currentStart])
+	active := argsText[currentStart:]
+	content := active
+	if before != "" {
+		content = strings.Join(strings.Fields(before), ", ") + ", " + active
+	}
+	candidates := recipecompletion.GroupedArgumentCandidates("", content, rec, recipecompletion.Options{Dir: opts.Dir})
+	editStart := start + 1 + len(name) + 1 + currentStart
+	return recipeArgumentCompletions(candidates, editStart, pos.Character)
+}
+
+func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStart, editEnd int) []completion {
 	items := make([]completion, 0, len(candidates))
 	for _, candidate := range candidates {
 		label := recipeArgumentCompletionLabel(candidate.Value)
@@ -229,10 +321,109 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 			InsertText: candidate.Value,
 			Kind:       kind,
 			Detail:     candidate.Help,
-			Edit:       &completionEdit{Start: quote + len("@") + 1, End: pos.Character},
+			Edit:       &completionEdit{Start: editStart, End: editEnd},
 		})
 	}
-	return items, true
+	return items
+}
+
+func scriptRegionAt(lines []string, regions []scriptRegion, pos lspPosition) (scriptRegion, bool) {
+	for _, region := range regions {
+		if pos.Line < region.StartLine || pos.Line > region.EndLine {
+			continue
+		}
+		line := lineAt(lines, pos.Line)
+		character := min(pos.Character, len(line))
+		if pos.Line == region.StartLine && character < region.StartCol {
+			continue
+		}
+		if pos.Line == region.EndLine && character > region.EndCol {
+			continue
+		}
+		return region, true
+	}
+	return scriptRegion{}, false
+}
+
+func inScriptRegion(lines []string, regions []scriptRegion, pos lspPosition) bool {
+	_, ok := scriptRegionAt(lines, regions, pos)
+	return ok
+}
+
+func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRegion) (int, string, bool) {
+	character := min(pos.Character, len(line))
+	end := character
+	start := 0
+	if pos.Line == region.StartLine {
+		start = region.StartCol
+	}
+	if pos.Line == region.EndLine {
+		end = min(end, region.EndCol)
+	}
+	commandPosition := true
+	activeStart := -1
+	for col := start; col < end; {
+		ch := line[col]
+		if ch == '#' {
+			break
+		}
+		if isShellSpace(ch) {
+			col++
+			continue
+		}
+		if ch == '\'' || ch == '"' {
+			next := skipShellString(line, col, end, ch)
+			if character <= next {
+				return 0, "", false
+			}
+			col = next
+			commandPosition = false
+			continue
+		}
+		if commandPosition {
+			if next, ok := scanShellAssignment(line, col, end); ok {
+				if character <= next {
+					return 0, "", false
+				}
+				col = next
+				continue
+			}
+			if ch == '@' {
+				activeStart = col
+				break
+			}
+		}
+		if ch == '$' {
+			if token, ok := shellVariableToken(line, 0, col, end, "sh"); ok {
+				col += token.Length
+				commandPosition = false
+				continue
+			}
+		}
+		if isShellOperator(ch) {
+			commandPosition = true
+			col++
+			continue
+		}
+		if isShellWordStart(ch) {
+			wordStart := col
+			for col < end && isShellWordPart(line[col]) {
+				col++
+			}
+			word := line[wordStart:col]
+			commandPosition = shellKeyword("sh", word) && commandContinuesAfterKeyword("sh", word)
+			continue
+		}
+		col++
+	}
+	if activeStart < 0 || activeStart >= end {
+		return 0, "", false
+	}
+	prefix := line[activeStart+1 : end]
+	if strings.ContainsAny(prefix, "\r\n;|&()<>\"'") {
+		return 0, "", false
+	}
+	return activeStart, prefix, true
 }
 
 func completionRecipes(text string) (map[string]recipe.Recipe, bool) {
@@ -528,7 +719,9 @@ func semanticTokens(text string) []uint32 {
 	var tokens []semanticToken
 	table := ""
 	shells := shellSettings(lines)
-	references := commandReferenceSpans(lines)
+	regions := scriptRegions(lines, shells)
+	references := commandReferenceSpansWithScriptRegions(lines, regions)
+	referenceOverlaps := commandReferenceOverlapIndex(references)
 	for _, ref := range references {
 		tokens = append(tokens, recipeReferenceSemanticTokens(lines, ref)...)
 	}
@@ -542,14 +735,19 @@ func semanticTokens(text string) []uint32 {
 			tokens = append(tokens, semanticToken{Line: lineNo, Start: col, Length: len(key), Type: semanticTokenVariable})
 		}
 		for _, span := range placeholderSpans(raw) {
-			if overlapsCommandReference(references, lineNo, span) {
+			if overlapsCommandReference(referenceOverlaps, lineNo, span) {
 				continue
 			}
 			tokens = append(tokens, semanticToken{Line: lineNo, Start: span.Start, Length: span.Length, Type: semanticTokenVariable})
 		}
 	}
-	for _, region := range scriptRegions(lines, shells) {
-		tokens = append(tokens, shellSemanticTokens(lines, region)...)
+	for _, region := range regions {
+		for _, token := range shellSemanticTokens(lines, region) {
+			if overlapsCommandReference(referenceOverlaps, token.Line, span{Start: token.Start, Length: token.Length}) {
+				continue
+			}
+			tokens = append(tokens, token)
+		}
 	}
 	slices.SortFunc(tokens, func(a, b semanticToken) int {
 		if a.Line != b.Line {
@@ -562,6 +760,8 @@ func semanticTokens(text string) []uint32 {
 
 type scriptRegion struct {
 	Shell     string
+	Table     string
+	Key       string
 	StartLine int
 	StartCol  int
 	EndLine   int
@@ -603,23 +803,29 @@ func scriptRegions(lines []string, shells map[string]string) []scriptRegion {
 		if !ok || !scriptKey(key) {
 			continue
 		}
+		shell := shellForTable(shells, table)
+		if key == "pre" || key == "post" {
+			listRegions, endLine := commandListScriptRegions(lines, lineNo, table, key, shell)
+			regions = append(regions, listRegions...)
+			lineNo = endLine
+			continue
+		}
 		start, quote, ok := stringStart(raw)
 		if !ok {
 			continue
 		}
-		shell := shellForTable(shells, table)
 		if quote.Triple {
 			bodyStart := start + len(quote.Delimiter)
 			if end := strings.Index(raw[bodyStart:], quote.Delimiter); end >= 0 {
 				regions = append(regions, scriptRegion{
-					Shell: shell, StartLine: lineNo, StartCol: bodyStart,
+					Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
 					EndLine: lineNo, EndCol: bodyStart + end,
 				})
 				continue
 			}
 			endLine, endCol := findTripleStringEnd(lines, lineNo+1, quote.Delimiter)
 			regions = append(regions, scriptRegion{
-				Shell: shell, StartLine: lineNo, StartCol: bodyStart,
+				Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
 				EndLine: endLine, EndCol: endCol,
 			})
 			lineNo = endLine
@@ -628,11 +834,104 @@ func scriptRegions(lines []string, shells map[string]string) []scriptRegion {
 		bodyStart := start + 1
 		bodyEnd := findStringEnd(raw, bodyStart, quote.Delimiter[0])
 		regions = append(regions, scriptRegion{
-			Shell: shell, StartLine: lineNo, StartCol: bodyStart,
+			Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
 			EndLine: lineNo, EndCol: bodyEnd,
 		})
 	}
 	return regions
+}
+
+func commandListScriptRegions(lines []string, startLine int, table, key, shell string) ([]scriptRegion, int) {
+	var regions []scriptRegion
+	depth := 0
+	started := false
+	for lineNo := startLine; lineNo < len(lines); lineNo++ {
+		raw := lines[lineNo]
+		col := 0
+		if lineNo == startLine {
+			_, value, ok := strings.Cut(raw, "=")
+			if !ok {
+				return nil, startLine
+			}
+			col = len(raw) - len(value)
+		}
+		for col < len(raw) {
+			switch raw[col] {
+			case '#':
+				col = len(raw)
+			case '[':
+				depth++
+				started = true
+				col++
+			case ']':
+				if depth > 0 {
+					depth--
+				}
+				col++
+				if started && depth == 0 {
+					return regions, lineNo
+				}
+			case '\'', '"':
+				quote := quoteAt(raw, col)
+				if quote.Delimiter == "" {
+					col++
+					continue
+				}
+				bodyStart := col + len(quote.Delimiter)
+				if quote.Triple {
+					if end := strings.Index(raw[bodyStart:], quote.Delimiter); end >= 0 {
+						bodyEnd := bodyStart + end
+						if depth == 1 && !recipe.IsRecipeReferenceString(raw[bodyStart:bodyEnd]) {
+							regions = append(regions, scriptRegion{
+								Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+								EndLine: lineNo, EndCol: bodyEnd,
+							})
+						}
+						col = bodyEnd + len(quote.Delimiter)
+						continue
+					}
+					endLine, endCol := findTripleStringEnd(lines, lineNo+1, quote.Delimiter)
+					if depth == 1 {
+						regions = append(regions, scriptRegion{
+							Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+							EndLine: endLine, EndCol: endCol,
+						})
+					}
+					lineNo = endLine
+					raw = lineAt(lines, lineNo)
+					col = min(endCol+len(quote.Delimiter), len(raw))
+					continue
+				}
+				bodyEnd := findStringEnd(raw, bodyStart, quote.Delimiter[0])
+				if depth == 1 && !recipe.IsRecipeReferenceString(raw[bodyStart:bodyEnd]) {
+					regions = append(regions, scriptRegion{
+						Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+						EndLine: lineNo, EndCol: bodyEnd,
+					})
+				}
+				col = min(bodyEnd+1, len(raw))
+			default:
+				col++
+			}
+		}
+		if started && depth == 0 {
+			return regions, lineNo
+		}
+	}
+	return regions, len(lines) - 1
+}
+
+func quoteAt(line string, col int) quoteInfo {
+	switch {
+	case strings.HasPrefix(line[col:], `'''`):
+		return quoteInfo{Delimiter: `'''`, Triple: true}
+	case strings.HasPrefix(line[col:], `"""`):
+		return quoteInfo{Delimiter: `"""`, Triple: true}
+	case line[col] == '\'' || line[col] == '"':
+		return quoteInfo{Delimiter: line[col : col+1]}
+	default:
+		return quoteInfo{}
+	}
 }
 
 type quoteInfo struct {
@@ -717,7 +1016,7 @@ func supportedShell(shell string) bool {
 }
 
 func scriptKey(key string) bool {
-	return key == "cmd" || key == "shell_prelude" || key == "values"
+	return key == "cmd" || key == "pre" || key == "post" || key == "shell_prelude" || key == "values"
 }
 
 func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
@@ -972,11 +1271,19 @@ func placeholderSpans(line string) []span {
 	return spans
 }
 
-func overlapsCommandReference(references []commandReferenceSpan, lineNo int, item span) bool {
+func commandReferenceOverlapIndex(references []commandReferenceSpan) map[int][]span {
+	overlaps := map[int][]span{}
+	for _, ref := range references {
+		overlaps[ref.Line] = append(overlaps[ref.Line], span{Start: ref.Start, Length: ref.End - ref.Start})
+	}
+	return overlaps
+}
+
+func overlapsCommandReference(references map[int][]span, lineNo int, item span) bool {
 	start := item.Start
 	end := item.Start + item.Length
-	for _, ref := range references {
-		if ref.Line == lineNo && start < ref.End && ref.Start < end {
+	for _, ref := range references[lineNo] {
+		if start < ref.Start+ref.Length && ref.Start < end {
 			return true
 		}
 	}
@@ -984,11 +1291,12 @@ func overlapsCommandReference(references []commandReferenceSpan, lineNo int, ite
 }
 
 type commandReferenceSpan struct {
-	Path  string
-	Name  string
-	Line  int
-	Start int
-	End   int
+	Path      string
+	Name      string
+	Line      int
+	Start     int
+	End       int
+	TargetEnd int
 }
 
 func (ref commandReferenceSpan) Target() string {
@@ -1005,6 +1313,10 @@ type commandReferenceScan struct {
 }
 
 func commandReferenceSpans(lines []string) []commandReferenceSpan {
+	return commandReferenceSpansWithScriptRegions(lines, scriptRegions(lines, shellSettings(lines)))
+}
+
+func commandReferenceSpansWithScriptRegions(lines []string, regions []scriptRegion) []commandReferenceSpan {
 	var spans []commandReferenceSpan
 	table := ""
 	scan := commandReferenceScan{}
@@ -1033,7 +1345,21 @@ func commandReferenceSpans(lines []string) []commandReferenceSpan {
 			scan = commandReferenceScan{}
 		}
 	}
-	return spans
+	spans = append(spans, scriptCommandReferenceSpans(lines, regions)...)
+	return uniqueCommandReferenceSpans(spans)
+}
+
+func uniqueCommandReferenceSpans(spans []commandReferenceSpan) []commandReferenceSpan {
+	seen := map[commandReferenceSpan]bool{}
+	out := make([]commandReferenceSpan, 0, len(spans))
+	for _, span := range spans {
+		if seen[span] {
+			continue
+		}
+		seen[span] = true
+		out = append(out, span)
+	}
+	return out
 }
 
 func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandReferenceScan) []commandReferenceSpan {
@@ -1083,17 +1409,278 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 }
 
 func commandReferenceSpanFromString(value string, lineNo, start, end int) commandReferenceSpan {
-	ref, ok := recipe.ParseRecipeReference(recipe.Command{value})
+	lookup := recipeReferenceLookupValue(value)
+	ref, ok := recipe.ParseRecipeReference(recipe.Command{lookup})
 	if !ok {
-		ref.Name = strings.TrimPrefix(value, "@")
+		ref.Name = strings.TrimPrefix(lookup, "@")
 	}
 	return commandReferenceSpan{
-		Path:  ref.Path,
-		Name:  ref.Name,
-		Line:  lineNo,
-		Start: start,
-		End:   end,
+		Path:      ref.Path,
+		Name:      ref.Name,
+		Line:      lineNo,
+		Start:     start,
+		End:       end,
+		TargetEnd: start + len(lookup),
 	}
+}
+
+func recipeReferenceLookupValue(value string) string {
+	target := strings.TrimPrefix(value, "@")
+	open := strings.IndexByte(target, '[')
+	space := strings.IndexAny(target, " \t")
+	if space >= 0 && (open < 0 || space < open) {
+		return value[:1+space]
+	}
+	return value
+}
+
+func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []commandReferenceSpan {
+	var spans []commandReferenceSpan
+	for _, region := range regions {
+		if !recipeScriptReferenceRegion(region) {
+			continue
+		}
+		if region.Shell != "" && region.Shell != "sh" && region.Shell != "bash" {
+			continue
+		}
+		var state scriptCommandScanState
+		for lineNo := region.StartLine; lineNo <= region.EndLine && lineNo < len(lines); lineNo++ {
+			line := lines[lineNo]
+			start, end := 0, len(line)
+			if lineNo == region.StartLine {
+				start = region.StartCol
+			}
+			if lineNo == region.EndLine {
+				end = region.EndCol
+			}
+			spans = append(spans, scriptLineCommandReferenceSpans(line, lineNo, start, end, &state)...)
+		}
+	}
+	return spans
+}
+
+func recipeScriptReferenceRegion(region scriptRegion) bool {
+	if region.Key == "shell_prelude" {
+		return region.Table == "" || recipeTable(region.Table)
+	}
+	if recipeTable(region.Table) {
+		return region.Key == "cmd" || region.Key == "pre" || region.Key == "post"
+	}
+	if recipeArgumentTable(region.Table) {
+		return region.Key == "values"
+	}
+	return false
+}
+
+type scriptCommandScanState struct {
+	quote    byte
+	heredocs []string
+}
+
+func scriptLineCommandReferenceSpans(line string, lineNo, start, end int, state *scriptCommandScanState) []commandReferenceSpan {
+	var spans []commandReferenceSpan
+	commandPosition := true
+	if state.quote != 0 {
+		next, closed := skipShellStringBody(line, start, end, state.quote)
+		if !closed {
+			return nil
+		}
+		state.quote = 0
+		commandPosition = false
+		start = next
+	}
+	if len(state.heredocs) > 0 {
+		if strings.TrimSpace(line[start:end]) == state.heredocs[0] {
+			state.heredocs = state.heredocs[1:]
+		}
+		return nil
+	}
+	for col := start; col < end; {
+		ch := line[col]
+		if ch == '#' {
+			break
+		}
+		if isShellSpace(ch) {
+			col++
+			continue
+		}
+		if ch == '\'' || ch == '"' {
+			next, closed := skipShellStringWithClose(line, col, end, ch)
+			if !closed {
+				state.quote = ch
+				return spans
+			}
+			col = next
+			commandPosition = false
+			continue
+		}
+		if commandPosition {
+			if next, ok := scanShellAssignment(line, col, end); ok {
+				col = next
+				continue
+			}
+			if ch == '@' {
+				refEnd := shellRecipeReferenceEnd(line, col, end)
+				if refEnd > col+1 {
+					spans = append(spans, commandReferenceSpanFromString(line[col:refEnd], lineNo, col, refEnd))
+				}
+				col = refEnd
+				commandPosition = false
+				continue
+			}
+		}
+		if ch == '<' && col+1 < end && line[col+1] == '<' {
+			if delimiter, next, ok := scanHereDocDelimiter(line, col+2, end); ok {
+				state.heredocs = append(state.heredocs, delimiter)
+				col = next
+				commandPosition = false
+				continue
+			}
+		}
+		if ch == '$' {
+			if token, ok := shellVariableToken(line, lineNo, col, end, "sh"); ok {
+				col += token.Length
+				commandPosition = false
+				continue
+			}
+		}
+		if isShellOperator(ch) {
+			commandPosition = true
+			col++
+			continue
+		}
+		if isShellWordStart(ch) {
+			wordStart := col
+			for col < end && isShellWordPart(line[col]) {
+				col++
+			}
+			word := line[wordStart:col]
+			commandPosition = shellKeyword("sh", word) && commandContinuesAfterKeyword("sh", word)
+			continue
+		}
+		col++
+	}
+	return spans
+}
+
+func skipShellStringWithClose(line string, start, end int, quote byte) (int, bool) {
+	for col := start + 1; col < end; col++ {
+		if quote == '"' && line[col] == '\\' {
+			col++
+			continue
+		}
+		if line[col] == quote {
+			return col + 1, true
+		}
+	}
+	return end, false
+}
+
+func skipShellStringBody(line string, start, end int, quote byte) (int, bool) {
+	for col := start; col < end; col++ {
+		if quote == '"' && line[col] == '\\' {
+			col++
+			continue
+		}
+		if line[col] == quote {
+			return col + 1, true
+		}
+	}
+	return end, false
+}
+
+func scanHereDocDelimiter(line string, start, end int) (string, int, bool) {
+	col := start
+	if col < end && line[col] == '-' {
+		col++
+	}
+	for col < end && isShellSpace(line[col]) {
+		col++
+	}
+	if col >= end {
+		return "", col, false
+	}
+	delimiterStart := col
+	for col < end && !isShellSpace(line[col]) && !isShellOperator(line[col]) {
+		col++
+	}
+	delimiter := strings.Trim(line[delimiterStart:col], `'"`)
+	return delimiter, col, delimiter != ""
+}
+
+func scanShellAssignment(line string, start, end int) (int, bool) {
+	if start >= end || !isIdentStart(line[start]) {
+		return start, false
+	}
+	col := start + 1
+	for col < end && isIdentPart(line[col]) {
+		col++
+	}
+	if col >= end || line[col] != '=' {
+		return start, false
+	}
+	col++
+	for col < end {
+		ch := line[col]
+		if isShellSpace(ch) || isShellOperator(ch) || ch == '#' {
+			break
+		}
+		if ch == '\'' || ch == '"' {
+			col = skipShellString(line, col, end, ch)
+			continue
+		}
+		col++
+	}
+	return col, true
+}
+
+func shellRecipeReferenceEnd(line string, start, end int) int {
+	col := start
+	bracket := false
+	for col < end {
+		ch := line[col]
+		if ch == '[' {
+			bracket = true
+			col++
+			continue
+		}
+		if ch == ']' {
+			col++
+			break
+		}
+		if !bracket && (isShellSpace(ch) || isShellOperator(ch) || ch == '\'' || ch == '"' || ch == '#') {
+			break
+		}
+		if bracket && (ch == '\'' || ch == '"' || ch == '#') {
+			break
+		}
+		col++
+	}
+	if bracket {
+		return col
+	}
+	refEnd := col
+	for col < end {
+		for col < end && isShellSpace(line[col]) {
+			col++
+		}
+		if col >= end || line[col] == '#' || isShellOperator(line[col]) {
+			return refEnd
+		}
+		for col < end {
+			ch := line[col]
+			if isShellSpace(ch) || isShellOperator(ch) || ch == '#' {
+				break
+			}
+			if ch == '\'' || ch == '"' {
+				col = skipShellString(line, col, end, ch)
+				continue
+			}
+			col++
+		}
+		refEnd = col
+	}
+	return refEnd
 }
 
 func recipeReferenceSemanticTokens(lines []string, ref commandReferenceSpan) []semanticToken {
@@ -1109,6 +1696,14 @@ func recipeReferenceSemanticTokens(lines []string, ref commandReferenceSpan) []s
 	nameStart := ref.Start + 1
 	open := strings.IndexByte(target, '[')
 	if open < 0 {
+		if space := strings.IndexAny(target, " \t"); space >= 0 {
+			var tokens []semanticToken
+			if space > 0 {
+				tokens = append(tokens, semanticToken{Line: ref.Line, Start: ref.Start, Length: space + 1, Type: semanticTokenFunction})
+			}
+			tokens = append(tokens, recipeReferenceSpacedArgumentTokens(line, ref.Line, nameStart+space, ref.End)...)
+			return tokens
+		}
 		if target == "" {
 			return []semanticToken{{Line: ref.Line, Start: ref.Start, Length: ref.End - ref.Start, Type: semanticTokenRecipeReference}}
 		}
@@ -1124,6 +1719,26 @@ func recipeReferenceSemanticTokens(lines []string, ref commandReferenceSpan) []s
 		contentEnd--
 	}
 	tokens = append(tokens, recipeReferenceArgumentTokens(line, ref.Line, contentStart, contentEnd)...)
+	return tokens
+}
+
+func recipeReferenceSpacedArgumentTokens(line string, lineNo, start, end int) []semanticToken {
+	var tokens []semanticToken
+	for start < end {
+		for start < end && isShellSpace(line[start]) {
+			start++
+		}
+		partEnd := start
+		for partEnd < end && !isShellSpace(line[partEnd]) {
+			if line[partEnd] == '\'' || line[partEnd] == '"' {
+				partEnd = skipShellString(line, partEnd, end, line[partEnd])
+				continue
+			}
+			partEnd++
+		}
+		tokens = append(tokens, recipeReferenceArgumentPartTokens(line, lineNo, start, partEnd)...)
+		start = partEnd
+	}
 	return tokens
 }
 

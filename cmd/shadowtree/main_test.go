@@ -221,6 +221,39 @@ func TestPrintRecipeHelpDynamicValuesUseDirEnvAndPrelude(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpDynamicValuesUseScriptRecipeReference(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Type:   "string",
+				Values: recipe.ScriptCommand("@projects"),
+			},
+		},
+	}, recipeHelpOptions{
+		Recipes: map[string]recipe.Recipe{
+			"projects": {
+				Cmd: recipe.Command{"printf", "api\tAPI service\nweb\tWeb service\n"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"    api  API service",
+		"    web  Web service",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpReportsUnavailableDynamicValues(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{

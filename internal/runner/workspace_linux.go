@@ -5,6 +5,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/yusing/shadowtree/internal/recipe"
 	"golang.org/x/sys/unix"
 )
 
@@ -71,10 +73,6 @@ func (sandbox *sandboxWorkspace) probeNamespaceOverlay(ctx context.Context) erro
 }
 
 func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []string, dir string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	helper, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	args := []string{
 		OverlayHelperCommand,
 		sandbox.source,
@@ -85,6 +83,60 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []
 		"--",
 	}
 	args = append(args, command...)
+	return runNamespaceHelper(ctx, env, args, stdin, stdout, stderr)
+}
+
+type namespaceScriptPayload struct {
+	Command   recipe.Command
+	Env       []string
+	Resolved  recipe.Resolved
+	Recipes   map[string]recipe.Recipe
+	SourceDir string
+	Verbose   bool
+	Stack     []string
+}
+
+func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, env []string, dir string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
+	payload := namespaceScriptPayload{
+		Command:   command,
+		Env:       env,
+		Resolved:  options.Resolved,
+		Recipes:   options.Recipes,
+		SourceDir: options.SourceDir,
+		Verbose:   options.Verbose,
+		Stack:     stack,
+	}
+	file, err := os.CreateTemp(sandbox.workDir, "script-*.json")
+	if err != nil {
+		return err
+	}
+	path := file.Name()
+	defer func() { _ = os.Remove(path) }()
+	if err := json.NewEncoder(file).Encode(payload); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	args := []string{
+		OverlayHelperCommand,
+		sandbox.source,
+		sandbox.upper,
+		sandbox.work,
+		sandbox.target,
+		dir,
+		"--script",
+		path,
+	}
+	return runNamespaceHelper(ctx, env, args, stdin, stdout, stderr)
+}
+
+func runNamespaceHelper(ctx context.Context, env, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	helper, err := os.Executable()
+	if err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, helper, args...)
 	cmd.Dir = "/"
 	cmd.Env = env
@@ -115,8 +167,8 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []
 	return nil
 }
 
-func OverlayHelperMain(argv []string) int {
-	if len(argv) < 7 || argv[5] != "--" {
+func OverlayHelperMain(ctx context.Context, argv []string) int {
+	if len(argv) < 7 || (argv[5] != "--" && argv[5] != "--script") {
 		fmt.Fprintln(os.Stderr, "shadowtree overlay helper: missing command")
 		return 125
 	}
@@ -139,6 +191,9 @@ func OverlayHelperMain(argv []string) int {
 		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: chdir: %v\n", err)
 		return 125
 	}
+	if argv[5] == "--script" {
+		return overlayHelperScriptMain(ctx, dir, argv[6])
+	}
 	executable := command[0]
 	if !strings.Contains(executable, "/") {
 		path, err := exec.LookPath(executable)
@@ -153,6 +208,36 @@ func OverlayHelperMain(argv []string) int {
 		return 127
 	}
 	return 127
+}
+
+func overlayHelperScriptMain(ctx context.Context, dir, path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: open script payload: %v\n", err)
+		return 125
+	}
+	defer file.Close()
+	var payload namespaceScriptPayload
+	if err := json.NewDecoder(file).Decode(&payload); err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: decode script payload: %v\n", err)
+		return 125
+	}
+	options := Options{
+		Resolved:  payload.Resolved,
+		Recipes:   payload.Recipes,
+		SourceDir: payload.SourceDir,
+		Verbose:   payload.Verbose,
+	}
+	err = runScriptCommand(ctx, nil, dir, payload.Env, payload.Command, os.Stdin, os.Stdout, os.Stderr, options, payload.Stack)
+	if err == nil {
+		return 0
+	}
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+	fmt.Fprintf(os.Stderr, "shadowtree overlay helper: script: %v\n", err)
+	return 125
 }
 
 func createSkipWhiteouts(source, upper string) (map[string]struct{}, error) {

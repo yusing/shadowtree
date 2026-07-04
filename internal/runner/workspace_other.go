@@ -8,6 +8,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+
+	"github.com/yusing/shadowtree/internal/recipe"
 )
 
 func createOverlayWorkspace(context.Context, string, string, string) (*sandboxWorkspace, error) {
@@ -18,7 +20,11 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(context.Context, []string, 
 	return errors.New("overlay namespace requires linux")
 }
 
-func OverlayHelperMain([]string) int {
+func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(context.Context, []string, string, recipe.Command, io.Reader, io.Writer, io.Writer, Options, []string) error {
+	return errors.New("overlay namespace requires linux")
+}
+
+func OverlayHelperMain(context.Context, []string) int {
 	return 125
 }
 

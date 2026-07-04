@@ -21,7 +21,7 @@
     },
     "shell_prelude": {
       "$ref": "#/definitions/shellScript",
-      "description": "Shell code prepended to every script command and every sh -c command."
+      "description": "Shell code prepended to every script command and every sh -c command. In sh/bash, a literal command-position @recipe invokes that recipe directly."
     },
     "sync_out": {
       "$ref": "#/definitions/syncOut"
@@ -99,7 +99,7 @@
         },
         "shell_prelude": {
           "$ref": "#/definitions/shellScript",
-          "description": "Recipe-local shell code appended after the top-level shell_prelude."
+          "description": "Recipe-local shell code appended after the top-level shell_prelude. In sh/bash, a literal command-position @recipe invokes that recipe directly."
         },
         "sandboxed": {
           "type": "boolean",
@@ -108,7 +108,7 @@
         },
         "cmd": {
           "$ref": "#/definitions/command",
-          "description": "Required main command. Use an argv array for direct execution, an @recipe or @path:recipe marker for another Shadowtree recipe, or a string for a shell script."
+          "description": "Required main command. Use an argv array for direct execution, an @recipe or @path:recipe marker for another Shadowtree recipe, or a string for a shell script. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly."
         },
         "args": {
           "$ref": "#/definitions/stringArray",
@@ -120,11 +120,11 @@
         },
         "pre": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run before the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace."
+          "description": "Commands run before the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
         },
         "post": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run after the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace."
+          "description": "Commands run after the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
         },
         "env": {
           "$ref": "#/definitions/env"
@@ -195,7 +195,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
         }
       },
       "x-taplo": {
@@ -203,7 +203,7 @@
       }
     },
     "command": {
-      "description": "Command as a shell script string or an argv array. Script strings run through the configured shell unless the whole string is exactly @recipe or @path:recipe. A string @recipe/@path:recipe or argv array whose first item is @recipe/@path:recipe invokes another Shadowtree recipe directly.",
+      "description": "Command as a shell script string or an argv array. Script strings run through the configured shell unless the whole string is exactly @recipe or @path:recipe. A string @recipe/@path:recipe, an argv array whose first item is @recipe/@path:recipe, or a literal command-position @recipe inside a sh/bash script, including pre/post and shell_prelude scripts, invokes another Shadowtree recipe directly.",
       "oneOf": [
         {
           "$ref": "#/definitions/shellScript"
@@ -246,7 +246,7 @@
     "shellScript": {
       "type": "string",
       "minLength": 1,
-      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe."
+      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly; assignments such as FOO=\"@recipe\" and expanded variables do not."
     },
     "stringArray": {
       "type": "array",

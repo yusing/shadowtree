@@ -77,7 +77,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 	for _, ref := range commandReferenceSpans(lines) {
 		if ref.Name == "" {
 			diagnostics = append(diagnostics, lspDiagnostic{
-				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
 				Severity: diagnosticSeverityError,
 				Source:   "shadowtree",
 				Message:  "empty recipe reference",
@@ -93,7 +93,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 			}
 			if err := validateCrossConfigReference(ctx, ref, opts); err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
-					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
 					Severity: diagnosticSeverityError,
 					Source:   "shadowtree",
 					Message:  err.Error(),
@@ -103,7 +103,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 		}
 		if !valid[ref.Name] {
 			diagnostics = append(diagnostics, lspDiagnostic{
-				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
 				Severity: diagnosticSeverityError,
 				Source:   "shadowtree",
 				Message:  "unknown recipe reference @" + ref.Name,

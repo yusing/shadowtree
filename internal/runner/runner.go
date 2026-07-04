@@ -212,9 +212,19 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 	if _, ok := recipe.ParseRecipeReference(command); ok && options.Recipes != nil {
 		return runRecipeReference(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, stack)
 	}
+	if recipe.IsScriptCommand(command) {
+		if sandbox != nil && sandbox.overlay {
+			return sandbox.runNamespaceScriptCommand(ctx, env, sandbox.namespaceDir(dir), command, stdin, stdout, stderr, options, stack)
+		}
+		return runScriptCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, stack)
+	}
 	if sandbox != nil && sandbox.overlay {
 		return sandbox.runNamespaceCommand(ctx, env, sandbox.namespaceDir(dir), command, stdin, stdout, stderr)
 	}
+	return runExternalCommand(ctx, dir, env, command, stdin, stdout, stderr)
+}
+
+func runExternalCommand(ctx context.Context, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = dir
 	cmd.Env = env
@@ -285,6 +295,18 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 }
 
 func CommandOutput(ctx context.Context, dir string, env map[string]string, command recipe.Command, opts CommandOutputOptions) (string, error) {
+	if recipe.IsScriptCommand(command) && opts.Recipes != nil {
+		var stdout bytes.Buffer
+		err := runScriptCommand(ctx, nil, dir, mergedEnv(os.Environ(), env), command, nil, &stdout, io.Discard, Options{
+			Resolved:  recipe.Resolved{ConfigPath: opts.ConfigPath},
+			Recipes:   opts.Recipes,
+			SourceDir: cmpSourceDir(opts.SourceDir, dir),
+		}, nil)
+		if err != nil {
+			return "", err
+		}
+		return stdout.String(), nil
+	}
 	ref, ok := recipe.ParseRecipeReference(command)
 	if !ok || opts.Recipes == nil {
 		return recipe.CommandOutput(ctx, dir, env, command)
@@ -440,11 +462,11 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 		fmt.Fprintln(w, "sandboxed: false")
 	}
 	for i, command := range resolved.Recipe.Pre {
-		fmt.Fprintf(w, "pre[%d]: %s\n", i, strings.Join(command, " "))
+		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.CommandHelpText(command))
 	}
-	fmt.Fprintf(w, "main: %s\n", strings.Join(resolved.Main, " "))
+	fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
 	for i, command := range resolved.Recipe.Post {
-		fmt.Fprintf(w, "post[%d]: %s\n", i, strings.Join(command, " "))
+		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.CommandHelpText(command))
 	}
 	for _, path := range resolved.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)

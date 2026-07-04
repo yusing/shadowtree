@@ -201,6 +201,27 @@ func TestCandidatesCompleteDynamicArgumentValuesFromRecipeReference(t *testing.T
 	}
 }
 
+func TestCandidatesCompleteDynamicArgumentValuesFromScriptRecipeReference(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "project=api"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("@projects"),
+				},
+			},
+		},
+		"projects": {
+			Cmd: recipe.Command{"printf", "api\tAPI service\nweb\tWeb service\n"},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "project=api" || candidates[0].Help != "API service" {
+		t.Fatalf("candidates = %#v, want api value from script recipe reference", candidates)
+	}
+}
+
 func TestCandidatesCompleteSpacedDynamicArgumentValuesContainingSlash(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build", "project=sip/"}, map[string]recipe.Recipe{
 		"build": {
