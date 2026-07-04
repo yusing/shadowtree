@@ -191,6 +191,13 @@ recipe reference. Other strings remain shell scripts:
 pre = ["echo 123", "@gen-swagger"]
 ```
 
+Use bracket-style arguments to pass named or positional arguments from a string
+recipe reference:
+
+```toml
+pre = ["@build[component=godoxy, mode=dev]"]
+```
+
 Use shell script strings when a workflow needs shared shell logic, conditionals,
 pipes, or multiple statements.
 

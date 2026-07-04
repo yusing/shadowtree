@@ -217,6 +217,14 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 	return argumentNameCandidates(tokenPrefix, active, rec, used)
 }
 
+// GroupedArgumentCandidates completes bracket-style recipe arguments without
+// evaluating dynamic values commands.
+func GroupedArgumentCandidates(prefix, content string, rec recipe.Recipe, opts Options) []Candidate {
+	before, _ := splitGroupedContent(fishShell, content)
+	used := usedArguments(fishShell, []string{before}, "", rec)
+	return groupedArgumentCandidates(nil, fishShell, prefix, content, rec, nil, used, opts)
+}
+
 func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	if key, valuePrefix, ok := strings.Cut(current, "="); ok {
 		arg, exists := rec.Arguments[key]
@@ -277,6 +285,9 @@ func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[
 
 func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
 	if len(arg.Values) > 0 {
+		if ctx == nil || recipes == nil {
+			return nil
+		}
 		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	switch argumentType(arg) {

@@ -87,6 +87,55 @@ cmd = "@t"
 	assertLabels(t, items, "@test")
 }
 
+func TestCompletionsIncludeRecipeReferenceArguments(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+pre = ["@build["]
+`
+	items := completionsAt(text, lspPosition{Line: 10, Character: len(`pre = ["@build[`)})
+	assertLabels(t, items, "component=", "mode=")
+}
+
+func TestCompletionsIncludeRecipeReferenceArgumentValues(t *testing.T) {
+	text := `[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+pre = ["@build[mode="]
+`
+	items := completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["@build[mode=`)})
+	assertLabels(t, items, "true", "false")
+}
+
+func TestRecipeReferenceArgumentTextEditReplacesActiveFragment(t *testing.T) {
+	text := `[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+pre = ["@build[m"]
+`
+	result := completionResult(text, lspPosition{Line: 7, Character: len(`pre = ["@build[m`)})
+	edit := completionTextEdit(t, result, "mode=")
+	if edit["newText"] != "build[mode=" {
+		t.Fatalf("newText = %#v, want grouped recipe argument", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`pre = ["@`), len(`pre = ["@build[m`))
+}
+
 func TestCompletionsIgnoreRecipeReferencesOutsideRecipeTables(t *testing.T) {
 	text := `[recipes.test]
 cmd = ["go", "test"]
@@ -205,8 +254,8 @@ cmd = ["@test"]
 default_args = ["./..."]
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
-	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("@vet"), semanticTokenRecipeReference)
-	assertSemanticToken(t, tokens, 2, len(`cmd = ["`), len("@test"), semanticTokenRecipeReference)
+	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("@vet"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 2, len(`cmd = ["`), len("@test"), semanticTokenFunction)
 }
 
 func TestSemanticTokensHighlightScalarRecipeReferences(t *testing.T) {
@@ -217,8 +266,21 @@ cmd = "@test"
 values = "@targets"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
-	assertSemanticToken(t, tokens, 1, len(`cmd = "`), len("@test"), semanticTokenRecipeReference)
-	assertSemanticToken(t, tokens, 4, len(`values = "`), len("@targets"), semanticTokenRecipeReference)
+	assertSemanticToken(t, tokens, 1, len(`cmd = "`), len("@test"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, len(`values = "`), len("@targets"), semanticTokenFunction)
+}
+
+func TestSemanticTokensHighlightRecipeReferenceArguments(t *testing.T) {
+	text := `[recipes.test]
+pre = ["@build[project=internal/, binary=abc]"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	linePrefix := len(`pre = ["`)
+	assertSemanticToken(t, tokens, 1, linePrefix, len("@build"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@build["), len("project"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project="), len("internal/"), semanticTokenString)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project=internal/, "), len("binary"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project=internal/, binary="), len("abc"), semanticTokenString)
 }
 
 func TestSemanticTokensIgnoreShellStringStartingWithAt(t *testing.T) {

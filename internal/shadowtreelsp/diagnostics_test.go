@@ -193,6 +193,28 @@ cmd = ["go", "test"]
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["echo 123", "`), len(`pre = ["echo 123", "@missing`))
 }
 
+func TestDocumentDiagnosticsAcceptKnownBracketRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = ["@build[component=godoxy, mode=dev]"]
+cmd = ["go", "test"]
+
+[recipes.build]
+cmd = ["go", "build"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectUnknownBracketRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = ["@missing[component=godoxy]"]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["`), len(`pre = ["@missing[component=godoxy]`))
+}
+
 func TestDocumentDiagnosticsRejectUnknownMultilineRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(`[recipes.test]
 pre = [

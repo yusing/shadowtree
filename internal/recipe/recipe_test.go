@@ -1,7 +1,6 @@
 package recipe
 
 import (
-	"context"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -66,9 +65,28 @@ func TestRecipeReferenceSplitsNameAndArgs(t *testing.T) {
 	}
 }
 
+func TestRecipeReferenceSplitsBracketStyleArguments(t *testing.T) {
+	name, args, ok := RecipeReference(Command{"@build[component=godoxy, mode=dev]"})
+	if !ok {
+		t.Fatal("RecipeReference did not detect @ command")
+	}
+	if name != "build" {
+		t.Fatalf("name = %q", name)
+	}
+	if !slices.Equal(args, []string{"component=godoxy", "mode=dev"}) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
 func TestValidateCommandRejectsEmptyRecipeReference(t *testing.T) {
 	if err := ValidateCommand(Command{"@"}); err == nil {
 		t.Fatal("ValidateCommand accepted empty recipe reference")
+	}
+}
+
+func TestValidateCommandAcceptsBracketStyleRecipeReference(t *testing.T) {
+	if err := ValidateCommand(Command{"@build[component=godoxy, mode=dev]"}); err != nil {
+		t.Fatalf("ValidateCommand rejected bracket-style recipe reference: %v", err)
 	}
 }
 
@@ -314,7 +332,7 @@ func TestValidateConfigRejectsInvalidVarKeys(t *testing.T) {
 
 func TestEvalVarCommandsUsesConfiguredShellAndPrelude(t *testing.T) {
 	got, err := EvalVarCommands(
-		context.Background(),
+		t.Context(),
 		"",
 		nil,
 		map[string]Command{"value": ScriptCommand("print_value")},

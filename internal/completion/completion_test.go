@@ -2,7 +2,6 @@ package completion
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,7 +351,7 @@ func TestCandidatesFilterPathArgumentValuesByKind(t *testing.T) {
 }
 
 func TestCandidatesRejectUnsupportedShell(t *testing.T) {
-	_, err := Candidates(context.Background(), "zsh", []string{"shadowtree", ""}, nil, Options{})
+	_, err := Candidates(t.Context(), "zsh", []string{"shadowtree", ""}, nil, Options{})
 	if err == nil {
 		t.Fatal("Candidates succeeded for unsupported shell")
 	}

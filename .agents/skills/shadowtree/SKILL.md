@@ -166,7 +166,13 @@ Use `["@build-api", "service=public"]` to pass args to the referenced recipe.
 Use `@{NAME}` only when the recipe name must come from a placeholder; static
 `@recipe` references are easier for LSP diagnostics and completion to validate.
 In `pre` and `post`, `["@recipe"]` and `"@recipe"` both invoke the referenced
-recipe; use the argv form when passing args.
+recipe; use the argv form when passing args. It also supports bracket-style arguments:
+
+```toml
+[recipes.test]
+pre = ["@build[component=godoxy, mode=dev]"]
+cmd = ["go", "test"]
+```
 
 Use script strings for shell workflows:
 

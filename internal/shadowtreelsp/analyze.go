@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/BurntSushi/toml"
+	recipecompletion "github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -23,6 +25,16 @@ type completion struct {
 	Kind       int
 	Detail     string
 	Quote      bool
+	Edit       *completionEdit
+}
+
+type completionEdit struct {
+	Start int
+	End   int
+}
+
+type completionOptions struct {
+	Dir string
 }
 
 const (
@@ -138,11 +150,18 @@ func analyzeDocument(text string, line int) documentAnalysis {
 }
 
 func completionsAt(text string, pos lspPosition) []completion {
+	return completionsAtWithOptions(text, pos, completionOptions{})
+}
+
+func completionsAtWithOptions(text string, pos lspPosition, opts completionOptions) []completion {
 	analysis := analyzeDocument(text, pos.Line)
 	line := lineAt(analysis.Lines, pos.Line)
 	prefix := linePrefix(line, pos.Character)
 	if tablePrefix, ok := openTablePrefix(prefix); ok {
 		return tableCompletions(analysis, tablePrefix)
+	}
+	if items, ok := recipeArgumentReferenceCompletions(text, analysis.CurrentTable, prefix, pos, opts); ok {
+		return items
 	}
 	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
 		return recipeReferenceCompletions(analysis, recipePrefix)
@@ -154,6 +173,94 @@ func completionsAt(text string, pos lspPosition) []completion {
 		return valueCompletions(key)
 	}
 	return keyCompletions(analysis.CurrentTable)
+}
+
+func recipeArgumentReferenceCompletions(text, table, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
+	key, ok := keyBeforeValue(prefix)
+	if !ok || !recipeReferenceKey(table, key) {
+		return nil, false
+	}
+	quote := lastOpenQuote(prefix)
+	if quote < 0 {
+		return nil, false
+	}
+	value := prefix[quote+1:]
+	if !strings.HasPrefix(value, "@") || !strings.Contains(value, "[") {
+		return nil, false
+	}
+	fragment := strings.TrimPrefix(value, "@")
+	recipes, ok := completionRecipes(text)
+	if !ok {
+		return nil, true
+	}
+	name, content, ok := cutReferenceGroup(fragment)
+	if !ok {
+		return nil, true
+	}
+	rec, ok := recipes[name]
+	if !ok || len(rec.Arguments) == 0 {
+		return nil, true
+	}
+	candidates := recipecompletion.GroupedArgumentCandidates(
+		name+"[",
+		content,
+		rec,
+		recipecompletion.Options{Dir: opts.Dir},
+	)
+	items := make([]completion, 0, len(candidates))
+	for _, candidate := range candidates {
+		label := recipeArgumentCompletionLabel(candidate.Value)
+		kind := completionKindValue
+		if strings.HasSuffix(label, "=") {
+			kind = completionKindVariable
+		}
+		items = append(items, completion{
+			Label:      label,
+			InsertText: candidate.Value,
+			Kind:       kind,
+			Detail:     candidate.Help,
+			Edit:       &completionEdit{Start: quote + len("@") + 1, End: pos.Character},
+		})
+	}
+	return items, true
+}
+
+func completionRecipes(text string) (map[string]recipe.Recipe, bool) {
+	var cfg recipe.Config
+	if _, err := toml.Decode(text, &cfg); err != nil {
+		return nil, false
+	}
+	profile := cfg.Profile
+	if profile == "" {
+		profile = recipe.GoProfile
+	}
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), cfg.Recipes)
+	if err != nil {
+		return nil, false
+	}
+	return recipe.ApplyGlobals(recipes, cfg.Vars, cfg.Shell, cfg.ShellPrelude), true
+}
+
+func cutReferenceGroup(value string) (string, string, bool) {
+	open := strings.IndexByte(value, '[')
+	if open < 1 {
+		return "", "", false
+	}
+	return value[:open], value[open+1:], true
+}
+
+func recipeArgumentCompletionLabel(value string) string {
+	if open := strings.IndexByte(value, '['); open >= 0 {
+		value = value[open+1:]
+	}
+	if comma := strings.LastIndexByte(value, ','); comma >= 0 {
+		value = value[comma+1:]
+	}
+	value = strings.TrimSpace(strings.TrimSuffix(value, "]"))
+	if _, suffix, ok := strings.Cut(value, "="); ok && suffix != "" {
+		return suffix
+	}
+	return value
 }
 
 func tableCompletions(analysis documentAnalysis, prefix string) []completion {
@@ -297,7 +404,7 @@ func semanticTokens(text string) []uint32 {
 	shells := shellSettings(lines)
 	references := commandReferenceSpans(lines)
 	for _, ref := range references {
-		tokens = append(tokens, semanticToken{Line: ref.Line, Start: ref.Start, Length: ref.End - ref.Start, Type: semanticTokenRecipeReference})
+		tokens = append(tokens, recipeReferenceSemanticTokens(lines, ref)...)
 	}
 	for lineNo, raw := range lines {
 		if parsed, ok := completeTableHeader(raw); ok {
@@ -842,12 +949,87 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 }
 
 func commandReferenceSpanFromString(value string, lineNo, start, end int) commandReferenceSpan {
+	name, _, ok := recipe.RecipeReference(recipe.Command{value})
+	if !ok {
+		name = strings.TrimPrefix(value, "@")
+	}
 	return commandReferenceSpan{
-		Name:  strings.TrimPrefix(value, "@"),
+		Name:  name,
 		Line:  lineNo,
 		Start: start,
 		End:   end,
 	}
+}
+
+func recipeReferenceSemanticTokens(lines []string, ref commandReferenceSpan) []semanticToken {
+	line := lineAt(lines, ref.Line)
+	if ref.Start >= len(line) || ref.End > len(line) || !strings.HasPrefix(line[ref.Start:ref.End], "@") {
+		return nil
+	}
+	value := line[ref.Start:ref.End]
+	target := strings.TrimPrefix(value, "@")
+	if strings.HasPrefix(target, "{") {
+		return []semanticToken{{Line: ref.Line, Start: ref.Start, Length: ref.End - ref.Start, Type: semanticTokenRecipeReference}}
+	}
+	nameStart := ref.Start + 1
+	open := strings.IndexByte(target, '[')
+	if open < 0 {
+		if target == "" {
+			return []semanticToken{{Line: ref.Line, Start: ref.Start, Length: ref.End - ref.Start, Type: semanticTokenRecipeReference}}
+		}
+		return []semanticToken{{Line: ref.Line, Start: ref.Start, Length: len(value), Type: semanticTokenFunction}}
+	}
+	var tokens []semanticToken
+	if open > 0 {
+		tokens = append(tokens, semanticToken{Line: ref.Line, Start: ref.Start, Length: open + 1, Type: semanticTokenFunction})
+	}
+	contentStart := nameStart + open + 1
+	contentEnd := ref.End
+	if strings.HasSuffix(value, "]") {
+		contentEnd--
+	}
+	tokens = append(tokens, recipeReferenceArgumentTokens(line, ref.Line, contentStart, contentEnd)...)
+	return tokens
+}
+
+func recipeReferenceArgumentTokens(line string, lineNo, start, end int) []semanticToken {
+	var tokens []semanticToken
+	partStart := start
+	for partStart <= end {
+		partEnd := partStart
+		for partEnd < end && line[partEnd] != ',' {
+			partEnd++
+		}
+		tokens = append(tokens, recipeReferenceArgumentPartTokens(line, lineNo, partStart, partEnd)...)
+		partStart = partEnd + 1
+		if partStart > end {
+			break
+		}
+	}
+	return tokens
+}
+
+func recipeReferenceArgumentPartTokens(line string, lineNo, start, end int) []semanticToken {
+	for start < end && (line[start] == ' ' || line[start] == '\t') {
+		start++
+	}
+	for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
+		end--
+	}
+	if start >= end {
+		return nil
+	}
+	eq := strings.IndexByte(line[start:end], '=')
+	if eq < 0 {
+		return []semanticToken{{Line: lineNo, Start: start, Length: end - start, Type: semanticTokenString}}
+	}
+	eq += start
+	tokens := []semanticToken{{Line: lineNo, Start: start, Length: eq - start, Type: semanticTokenParameter}}
+	valueStart := eq + 1
+	if valueStart < end {
+		tokens = append(tokens, semanticToken{Line: lineNo, Start: valueStart, Length: end - valueStart, Type: semanticTokenString})
+	}
+	return tokens
 }
 
 func recipeReferencePrefix(table, prefix string) (string, bool) {
@@ -950,6 +1132,7 @@ const (
 	semanticTokenOperator
 	semanticTokenComment
 	semanticTokenRecipeReference
+	semanticTokenString
 )
 
 func lineAt(lines []string, line int) string {

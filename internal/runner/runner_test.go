@@ -159,6 +159,48 @@ func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 	}
 }
 
+func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"cat", "out.txt"},
+			Pre:       []recipe.Command{recipe.ScriptCommand("@gen[value=shadow]")},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"gen": {
+				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
+				DefaultArgs: []string{"{value}"},
+				Arguments: map[string]recipe.Argument{
+					"value": {Required: true},
+				},
+			},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestRunRejectsRecipeReferenceCycle(t *testing.T) {
 	resolved, err := recipe.Resolve("a", recipe.Recipe{Cmd: recipe.Command{"@b"}, Sandboxed: new(false)}, nil, nil, nil, "", "")
 	if err != nil {

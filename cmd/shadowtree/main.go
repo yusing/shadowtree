@@ -22,8 +22,10 @@ import (
 	"github.com/yusing/shadowtree/internal/runner"
 )
 
-const version = "0.1.0"
-const argumentValuesTimeout = 5 * time.Second
+const (
+	version               = "0.1.0"
+	argumentValuesTimeout = 5 * time.Second
+)
 
 type options struct {
 	configPath string

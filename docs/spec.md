@@ -215,6 +215,14 @@ scripts:
 pre = ["echo 123", "@gen-swagger"]
 ```
 
+String and argv recipe references can use bracket-style arguments. Comma
+separators split the argument list, and surrounding whitespace is ignored:
+
+```toml
+pre = ["@build[component=godoxy, mode=dev]"]
+cmd = ["@test[package=./internal/recipe]"]
+```
+
 Placeholders can be used in recipe references. Static references such as
 `@gen-swagger` can be validated by the editor; dynamic references such as
 `@{target}` are resolved at run time after placeholder expansion.

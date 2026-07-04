@@ -581,7 +581,12 @@ func RecipeReference(command Command) (string, []string, bool) {
 	if len(command) == 0 || !strings.HasPrefix(command[0], recipeReferencePrefix) {
 		return "", nil, false
 	}
-	return strings.TrimPrefix(command[0], recipeReferencePrefix), slices.Clone(command[1:]), true
+	target := strings.TrimPrefix(command[0], recipeReferencePrefix)
+	name, args, ok := parseGroupedInvocation([]string{target})
+	if ok {
+		return name, slices.Concat(args, command[1:]), true
+	}
+	return target, slices.Clone(command[1:]), true
 }
 
 func SingleLine(text string) string {
@@ -606,9 +611,11 @@ func parseGroupedInvocation(rest []string) (string, []string, bool) {
 		return "", nil, false
 	}
 	name := first[:open]
-	text := strings.Join(rest, " ")
-	content := text[open+1:]
-	content = strings.TrimSuffix(content, "]")
+	text := strings.TrimSpace(strings.Join(rest, " "))
+	if !strings.HasSuffix(text, "]") {
+		return "", nil, false
+	}
+	content := text[open+1 : len(text)-1]
 	if strings.TrimSpace(content) == "" {
 		return name, nil, true
 	}
@@ -854,9 +861,19 @@ func decodeCommand(value any) (Command, error) {
 
 // IsRecipeReferenceString reports whether value is exactly an @recipe script string.
 func IsRecipeReferenceString(value string) bool {
-	return strings.HasPrefix(value, recipeReferencePrefix) &&
-		strings.TrimSpace(value) == value &&
-		!strings.ContainsAny(value, " \t\r\n")
+	if !strings.HasPrefix(value, recipeReferencePrefix) ||
+		strings.TrimSpace(value) != value ||
+		strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	target := strings.TrimPrefix(value, recipeReferencePrefix)
+	if !strings.ContainsAny(value, " \t") {
+		return true
+	}
+	open := strings.IndexByte(target, '[')
+	return open > 0 &&
+		!strings.ContainsAny(target[:open], " \t") &&
+		strings.HasSuffix(target, "]")
 }
 
 func mergeStringMaps(base, override map[string]string) map[string]string {

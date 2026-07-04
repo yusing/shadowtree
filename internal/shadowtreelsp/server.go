@@ -157,11 +157,11 @@ func initializeResult() map[string]any {
 				"change":    2,
 			},
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@"},
+				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@", ","},
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
-					"tokenTypes":     []string{"variable", "keyword", "function", "parameter", "operator", "comment", "recipeReference"},
+					"tokenTypes":     []string{"variable", "keyword", "function", "parameter", "operator", "comment", "recipeReference", "string"},
 					"tokenModifiers": []string{},
 				},
 				"full": true,
@@ -232,6 +232,10 @@ func completionResult(text string, position lspPosition) map[string]any {
 			"insertText": item.InsertText,
 		}
 		switch {
+		case item.Edit != nil:
+			lines := strings.Split(text, "\n")
+			line := lineAt(lines, bytePosition.Line)
+			out["textEdit"] = textEdit(line, bytePosition.Line, item.Edit.Start, item.Edit.End, item.InsertText)
 		case item.Quote:
 			out["textEdit"] = quotedValueTextEdit(text, bytePosition, item.Label)
 		case item.Detail == "Shadowtree placeholder":
