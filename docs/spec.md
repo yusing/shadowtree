@@ -250,8 +250,15 @@ Argument fields:
 : Short help text used by `shadowtree help <recipe>` and shell completion.
 
 `type`
-: Optional type. Supported values are `string`, `int`, `float`, and `bool`.
-  The default is `string`.
+: Optional type. Supported values are `string`, `int`, `float`, `bool`, `path`,
+  and `rel_path`. The default is `string`. `path` accepts absolute and relative
+  paths. `rel_path` accepts relative paths only and rejects absolute paths and
+  `~` home paths.
+
+`path_kind`
+: Optional completion filter for `path` and `rel_path` arguments. Supported
+  values are `any`, `file`, `dir`, and `executable`. The default is `any`.
+  `file` and `executable` still include directories as traversal candidates.
 
 `position`
 : Optional 1-based positional index. Arguments with a position can be supplied
@@ -517,6 +524,9 @@ Supported completion behavior:
   `build[project=`.
 - `shadowtree test race=<TAB>` completes `true` and `false` for bool
   arguments.
+- `path` arguments complete relative paths, absolute paths, and `~/` paths.
+  `rel_path` arguments complete relative paths only. `path_kind` filters path
+  candidates to files, directories, or executable files.
 - Arguments with `values` complete dynamic values produced by the configured
   command.
 

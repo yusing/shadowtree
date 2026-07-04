@@ -49,6 +49,7 @@
     "pre"
     "post"
     "type"
+    "path_kind"
     "position"
     "required"
     "default"

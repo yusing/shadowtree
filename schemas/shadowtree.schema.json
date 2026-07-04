@@ -157,7 +157,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["string", "int", "float", "bool"],
+          "enum": ["string", "int", "float", "bool", "path", "rel_path"],
           "description": "Argument type. Defaults to string.",
           "default": "string",
           "x-taplo": {
@@ -166,10 +166,18 @@
                 "Arbitrary text.",
                 "Base-10 integer parsed by Go strconv.ParseInt.",
                 "Floating-point number parsed by Go strconv.ParseFloat.",
-                "Boolean parsed by Go strconv.ParseBool, such as true or false."
+                "Boolean parsed by Go strconv.ParseBool, such as true or false.",
+                "Path string with absolute, relative, and ~/ fish completion.",
+                "Relative path string with relative fish completion."
               ]
             }
           }
+        },
+        "path_kind": {
+          "type": "string",
+          "enum": ["any", "file", "dir", "executable"],
+          "description": "Completion filter for path and rel_path arguments. Defaults to any.",
+          "default": "any"
         },
         "position": {
           "type": "integer",

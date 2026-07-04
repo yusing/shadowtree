@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -68,6 +69,7 @@ type Recipe struct {
 type Argument struct {
 	Help     string  `toml:"help"`
 	Type     string  `toml:"type"`
+	PathKind string  `toml:"path_kind"`
 	Position int     `toml:"position"`
 	Required bool    `toml:"required"`
 	Default  any     `toml:"default"`
@@ -342,6 +344,10 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 			if err := validateArgumentValue(name, arg, value); err != nil {
 				return nil, nil, err
 			}
+			value, err = expandPathArgumentValue(arg, value)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", name, err)
+			}
 			values[name] = value
 		}
 	}
@@ -359,7 +365,11 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 			if err := validateArgumentValue(key, arg, value); err != nil {
 				return nil, nil, err
 			}
-			values[key] = value
+			expanded, err := expandPathArgumentValue(arg, value)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %w", key, err)
+			}
+			values[key] = expanded
 			continue
 		}
 		if nextPositional >= len(positionals) {
@@ -371,7 +381,11 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 		if err := validateArgumentValue(name, arg, token); err != nil {
 			return nil, nil, err
 		}
-		values[name] = token
+		expanded, err := expandPathArgumentValue(arg, token)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		values[name] = expanded
 	}
 	for name, arg := range rec.Arguments {
 		if arg.Required {
@@ -415,6 +429,9 @@ func ValidateArguments(args map[string]Argument) error {
 		}
 		if err := validateArgumentType(arg.Type); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
+		}
+		if err := validateArgumentPathKind(name, arg); err != nil {
+			return err
 		}
 		if arg.Position < 0 {
 			return fmt.Errorf("%s: position must be positive", name)
@@ -594,6 +611,9 @@ func MergeArgument(base, override Argument) Argument {
 	}
 	if override.Type != "" {
 		out.Type = override.Type
+	}
+	if override.PathKind != "" {
+		out.PathKind = override.PathKind
 	}
 	if override.Position != 0 {
 		out.Position = override.Position
@@ -807,17 +827,38 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 
 func validateArgumentType(value string) error {
 	switch argumentType(Argument{Type: value}) {
-	case "string", "int", "float", "bool":
+	case "string", "int", "float", "bool", "path", "rel_path":
 		return nil
 	default:
 		return fmt.Errorf("unsupported type %q", value)
 	}
 }
 
+func validateArgumentPathKind(name string, arg Argument) error {
+	if arg.PathKind == "" {
+		return nil
+	}
+	switch argumentType(arg) {
+	case "path", "rel_path":
+	default:
+		return fmt.Errorf("%s: path_kind requires type path or rel_path", name)
+	}
+	switch arg.PathKind {
+	case "any", "file", "dir", "executable":
+		return nil
+	default:
+		return fmt.Errorf("%s: unsupported path_kind %q", name, arg.PathKind)
+	}
+}
+
 func validateArgumentValue(name string, arg Argument, value string) error {
 	switch argumentType(arg) {
-	case "string":
+	case "string", "path":
 		return nil
+	case "rel_path":
+		if filepath.IsAbs(value) || strings.HasPrefix(value, "~") {
+			return fmt.Errorf("%s: want relative path, got %q", name, value)
+		}
 	case "int":
 		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
 			return fmt.Errorf("%s: want int, got %q", name, value)
@@ -832,6 +873,20 @@ func validateArgumentValue(name string, arg Argument, value string) error {
 		}
 	}
 	return nil
+}
+
+func expandPathArgumentValue(arg Argument, value string) (string, error) {
+	if argumentType(arg) != "path" || value != "~" && !strings.HasPrefix(value, "~/") {
+		return value, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if value == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(value, "~/")), nil
 }
 
 func argumentType(arg Argument) string {

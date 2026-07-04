@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -85,13 +86,37 @@ func WriteCandidates(w io.Writer, shell string, candidates []Candidate) error {
 
 func writeFishCandidates(w io.Writer, candidates []Candidate) error {
 	for _, candidate := range candidates {
-		value := sanitizeFishField(candidate.Value)
+		value := escapeFishValue(candidate.Value)
 		desc := sanitizeFishField(candidate.Help)
 		if _, err := fmt.Fprintf(w, "%s\t%s\n", value, desc); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func escapeFishValue(value string) string {
+	if !strings.ContainsAny(value, "\\ \t\r\n") {
+		return value
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		switch r {
+		case '\\', ' ':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\t':
+			b.WriteString("\\t")
+		case '\r':
+			b.WriteString("\\r")
+		case '\n':
+			b.WriteString("\\n")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func sanitizeFishField(value string) string {
@@ -155,6 +180,9 @@ func argumentCandidates(ctx context.Context, spec shellSpec, words []string, rec
 	if !exists || len(rec.Arguments) == 0 {
 		return nil, false
 	}
+	if current == "" && rawCurrent != "" {
+		current = rawCurrent
+	}
 	if !grouped && len(positionals) == 1 && current == positionals[0] {
 		return nil, false
 	}
@@ -180,6 +208,11 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 		}
 		return valueCandidates(ctx, tokenPrefix+key+"=", valuePrefix, arg, rec, opts)
 	}
+	if active != "" {
+		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
+			return candidates
+		}
+	}
 	return argumentNameCandidates(tokenPrefix, active, rec, used)
 }
 
@@ -190,6 +223,11 @@ func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Re
 			return nil
 		}
 		return valueCandidates(ctx, key+"=", valuePrefix, arg, rec, opts)
+	}
+	if current != "" {
+		if candidates := positionalValueCandidates("", current, rec, used, opts); len(candidates) > 0 {
+			return candidates
+		}
 	}
 	return argumentNameCandidates("", current, rec, used)
 }
@@ -240,13 +278,17 @@ func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe
 	if len(arg.Values) > 0 {
 		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, opts)
 	}
-	if arg.Type != "bool" {
+	switch argumentType(arg) {
+	case "bool":
+		return filterPrefix([]Candidate{
+			{Value: prefix + "true", Help: "bool"},
+			{Value: prefix + "false", Help: "bool"},
+		}, prefix+valuePrefix)
+	case "path", "rel_path":
+		return pathValueCandidates(prefix, valuePrefix, arg, opts)
+	default:
 		return nil
 	}
-	return filterPrefix([]Candidate{
-		{Value: prefix + "true", Help: "bool"},
-		{Value: prefix + "false", Help: "bool"},
-	}, prefix+valuePrefix)
 }
 
 func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, opts Options) []Candidate {
@@ -303,6 +345,121 @@ func usedArguments(spec shellSpec, tokens []string, current string, rec recipe.R
 		}
 	}
 	return used
+}
+
+func positionalValueCandidates(prefix, valuePrefix string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
+	for _, name := range recipe.PositionalArguments(rec.Arguments) {
+		if used[name] {
+			continue
+		}
+		arg := rec.Arguments[name]
+		if argumentType(arg) != "path" && argumentType(arg) != "rel_path" {
+			return nil
+		}
+		return pathValueCandidates(prefix, valuePrefix, arg, opts)
+	}
+	return nil
+}
+
+func pathValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts Options) []Candidate {
+	argType := argumentType(arg)
+	if argType == "path" && valuePrefix == "~" {
+		return []Candidate{{Value: prefix + "~/", Help: "home"}}
+	}
+	dir, valueDir, entryPrefix, ok := pathCompletionDir(valuePrefix, argType, opts.Dir)
+	if !ok {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
+	var candidates []Candidate
+	showHidden := strings.HasPrefix(entryPrefix, ".")
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") && !showHidden {
+			continue
+		}
+		if !strings.HasPrefix(name, entryPrefix) {
+			continue
+		}
+		if !includePathEntry(entry, arg.PathKind) {
+			continue
+		}
+		value := valueDir + name
+		help := "file"
+		if entry.IsDir() {
+			value += "/"
+			help = "directory"
+		}
+		candidates = append(candidates, Candidate{Value: prefix + value, Help: help})
+	}
+	return candidates
+}
+
+func includePathEntry(entry os.DirEntry, kind string) bool {
+	if entry.IsDir() {
+		return true
+	}
+	switch pathKind(kind) {
+	case "any":
+		return true
+	case "file":
+		info, err := entry.Info()
+		return err == nil && info.Mode().IsRegular()
+	case "dir":
+		return false
+	case "executable":
+		info, err := entry.Info()
+		return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+	default:
+		return true
+	}
+}
+
+func pathKind(kind string) string {
+	if kind == "" {
+		return "any"
+	}
+	return kind
+}
+
+func pathCompletionDir(valuePrefix, argType, cwd string) (string, string, string, bool) {
+	if cwd == "" {
+		cwd = "."
+	}
+	switch {
+	case strings.HasPrefix(valuePrefix, "~"):
+		if argType != "path" || !strings.HasPrefix(valuePrefix, "~/") {
+			return "", "", "", false
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", "", false
+		}
+		dirPart, entryPrefix := filepath.Split(strings.TrimPrefix(valuePrefix, "~/"))
+		return filepath.Join(home, dirPart), "~/" + dirPart, entryPrefix, true
+	case filepath.IsAbs(valuePrefix):
+		if argType != "path" {
+			return "", "", "", false
+		}
+		dirPart, entryPrefix := filepath.Split(valuePrefix)
+		return dirPart, dirPart, entryPrefix, true
+	default:
+		dirPart, entryPrefix := filepath.Split(valuePrefix)
+		return filepath.Join(cwd, dirPart), dirPart, entryPrefix, true
+	}
+}
+
+func argumentType(arg recipe.Argument) string {
+	if arg.Type == "" {
+		return "string"
+	}
+	return arg.Type
 }
 
 func completesProfile(words []string) bool {

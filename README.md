@@ -179,7 +179,12 @@ shadowtree build project=./cmd/shadowtree
 shadowtree 'build[project=./cmd/shadowtree]'
 ```
 
-Supported argument types are `string`, `int`, `float`, and `bool`.
+Supported argument types are `string`, `int`, `float`, `bool`, `path`, and
+`rel_path`. `path` accepts absolute and relative paths and provides fish-style
+path completion for relative paths, absolute paths, and `~/`. `rel_path`
+accepts relative paths only and completes relative checkout paths. Path
+arguments can set `path_kind` to `any`, `file`, `dir`, or `executable` to
+filter completion candidates.
 
 ## Built-In Go Recipes
 

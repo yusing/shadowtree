@@ -54,6 +54,7 @@ var recipeKeys = []completion{
 var argumentKeys = []completion{
 	{Label: "help", InsertText: `help = ""`, Kind: completionKindKeyword, Detail: "Argument help text"},
 	{Label: "type", InsertText: `type = "string"`, Kind: completionKindKeyword, Detail: "Argument type"},
+	{Label: "path_kind", InsertText: `path_kind = "any"`, Kind: completionKindKeyword, Detail: "Path completion filter"},
 	{Label: "position", InsertText: "position = 1", Kind: completionKindKeyword, Detail: "1-based positional index"},
 	{Label: "required", InsertText: "required = false", Kind: completionKindKeyword, Detail: "Whether the argument is required"},
 	{Label: "default", InsertText: `default = ""`, Kind: completionKindKeyword, Detail: "Default value"},
@@ -71,6 +72,15 @@ var argumentTypeValues = []completion{
 	{Label: "int", InsertText: "int", Kind: completionKindValue, Detail: "Integer argument", Quote: true},
 	{Label: "float", InsertText: "float", Kind: completionKindValue, Detail: "Float argument", Quote: true},
 	{Label: "bool", InsertText: "bool", Kind: completionKindValue, Detail: "Boolean argument", Quote: true},
+	{Label: "path", InsertText: "path", Kind: completionKindValue, Detail: "Absolute or relative path argument", Quote: true},
+	{Label: "rel_path", InsertText: "rel_path", Kind: completionKindValue, Detail: "Relative path argument", Quote: true},
+}
+
+var pathKindValues = []completion{
+	{Label: "any", InsertText: "any", Kind: completionKindValue, Detail: "Files and directories", Quote: true},
+	{Label: "file", InsertText: "file", Kind: completionKindValue, Detail: "Files with directory traversal", Quote: true},
+	{Label: "dir", InsertText: "dir", Kind: completionKindValue, Detail: "Directories", Quote: true},
+	{Label: "executable", InsertText: "executable", Kind: completionKindValue, Detail: "Executable files with directory traversal", Quote: true},
 }
 
 var boolValues = []completion{
@@ -220,6 +230,8 @@ func valueCompletions(key string) []completion {
 		return shellValues
 	case "type":
 		return argumentTypeValues
+	case "path_kind":
+		return pathKindValues
 	case "sandboxed", "required":
 		return boolValues
 	default:

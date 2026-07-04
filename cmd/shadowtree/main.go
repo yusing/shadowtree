@@ -372,6 +372,9 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		} else {
 			fmt.Fprint(w, ":string")
 		}
+		if arg.PathKind != "" {
+			fmt.Fprintf(w, " path_kind=%s", arg.PathKind)
+		}
 		if arg.Position > 0 {
 			fmt.Fprintf(w, " position=%d", arg.Position)
 		}

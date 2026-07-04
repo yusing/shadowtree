@@ -10,7 +10,8 @@ sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.project]
 help = "Go package to build."
-type = "string"
+type = "rel_path"
+path_kind = "dir"
 position = 1
 default = "./cmd/shadowtree"
 

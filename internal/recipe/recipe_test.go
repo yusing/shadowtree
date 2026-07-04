@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -328,6 +329,70 @@ func TestResolveTypedArgumentsValidatesTypes(t *testing.T) {
 	}
 	if !slices.Equal(got.Main, Command{"echo", "3", "false"}) {
 		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolvePathArgumentsValidatesRelativePath(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"echo"},
+		DefaultArgs: []string{"{source}", "{target}"},
+		Arguments: map[string]Argument{
+			"source": {Type: "path", Required: true},
+			"target": {Type: "rel_path", Required: true},
+		},
+	}
+
+	got, err := Resolve("copy", rec, []string{"source=/tmp/input", "target=cmd/shadowtree"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"echo", "/tmp/input", "cmd/shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+	if _, err := Resolve("copy", rec, []string{"source=cmd", "target=/tmp/output"}, nil, nil, "", ""); err == nil {
+		t.Fatal("Resolve succeeded with absolute rel_path")
+	}
+	if _, err := Resolve("copy", rec, []string{"source=cmd", "target=~/output"}, nil, nil, "", ""); err == nil {
+		t.Fatal("Resolve succeeded with home rel_path")
+	}
+}
+
+func TestResolvePathArgumentExpandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	rec := Recipe{
+		Cmd:         Command{"echo"},
+		DefaultArgs: []string{"{source}"},
+		Arguments: map[string]Argument{
+			"source": {Type: "path", Required: true},
+		},
+	}
+
+	got, err := Resolve("open", rec, []string{"source=~/project"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"echo", filepath.Join(home, "project")}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestValidateArgumentsValidatesPathKind(t *testing.T) {
+	if err := ValidateArguments(map[string]Argument{
+		"target": {Type: "path", PathKind: "file"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateArguments(map[string]Argument{
+		"target": {Type: "string", PathKind: "file"},
+	}); err == nil {
+		t.Fatal("ValidateArguments succeeded with path_kind on string argument")
+	}
+	if err := ValidateArguments(map[string]Argument{
+		"target": {Type: "path", PathKind: "socket"},
+	}); err == nil {
+		t.Fatal("ValidateArguments succeeded with invalid path_kind")
 	}
 }
 
