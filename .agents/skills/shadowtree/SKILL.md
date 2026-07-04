@@ -146,7 +146,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
 
-Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `help`, `version`, `__complete`. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
+Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses `args` for fixed args versus `default_args` for caller-replaceable args.
 
@@ -252,6 +252,7 @@ Use fields under `[recipes.<name>.arguments.<arg>]`:
 - `required`: true when user must supply the argument.
 - `default`: string, integer, number, or boolean default; converted to string then type-validated.
 - `values`: command that prints completion/help candidates, one per line as `value` or `value<TAB>help`.
+  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@recipes`, and `@vars`.
 
 Call forms:
 

@@ -317,6 +317,36 @@ cmd = ["go", "test"]
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`values = "`), len(`values = "@missing`))
 }
 
+func TestDocumentDiagnosticsAcceptEnumArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = "@enum api worker \"admin ui\""
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectInvalidArgumentValuesBuiltin(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = "@glob"
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: @glob requires one argument`)
+}
+
+func TestDocumentDiagnosticsRejectEnumOutsideArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "@enum api worker"
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @enum")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "`), len(`cmd = "@enum`))
+}
+
 func TestDocumentDiagnosticsRejectUnknownValuesScriptRecipeReferenceWithQuotedArgument(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = '''

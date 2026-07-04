@@ -161,6 +161,106 @@ func TestCandidatesCompleteDynamicArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteEnumArgumentValues(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "project=a"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand(`@enum api worker "admin ui"`),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 2 || candidates[0].Value != "project=api" || candidates[1].Value != "project=admin ui" {
+		t.Fatalf("candidates = %#v, want filtered enum values", candidates)
+	}
+}
+
+func TestCandidatesCompleteRecipeBuiltinArgumentValues(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "run", "target=b"}, map[string]recipe.Recipe{
+		"build": {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
+		"run": {
+			Cmd: recipe.Command{"shadowtree"},
+			Arguments: map[string]recipe.Argument{
+				"target": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("@recipes"),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "target=build" || candidates[0].Help != "Build binary." {
+		t.Fatalf("candidates = %#v, want build recipe value", candidates)
+	}
+}
+
+func TestCandidatesCompleteVarsBuiltinArgumentValues(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "target=m"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd:  recipe.Command{"go", "build"},
+			Vars: map[string]string{"project": "api"},
+			Arguments: map[string]recipe.Argument{
+				"mode": {Help: "Build mode.", Type: "string"},
+				"target": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("@vars"),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "target=mode" || candidates[0].Help != "Build mode." {
+		t.Fatalf("candidates = %#v, want mode argument value", candidates)
+	}
+}
+
+func TestCandidatesCompleteLinesBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "targets.txt"), []byte("api\tAPI service\nworker\tWorker service\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project=a"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("@lines targets.txt"),
+				},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0].Value != "project=api" || candidates[0].Help != "API service" {
+		t.Fatalf("candidates = %#v, want api line value", candidates)
+	}
+}
+
+func TestCandidatesCompleteGlobBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeFile(t, filepath.Join(dir, "cmd", "worker"))
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project=cmd/a"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand(`@glob "cmd/*"`),
+				},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0].Value != "project=cmd/api/" || candidates[0].Help != "directory" {
+		t.Fatalf("candidates = %#v, want cmd/api directory value", candidates)
+	}
+}
+
 func TestCandidatesCompleteDynamicArgumentValuesWithRecipeEnv(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build", "project=api"}, map[string]recipe.Recipe{
 		"build": {

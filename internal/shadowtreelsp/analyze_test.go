@@ -125,6 +125,40 @@ cmd = "@t"
 	assertLabels(t, items, "@test")
 }
 
+func TestCompletionsIncludeEnumInArgumentValuesReferences(t *testing.T) {
+	text := `[recipes.test.arguments.target]
+values = "@"
+
+[recipes.test]
+cmd = ["go", "test"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
+	assertLabels(t, items, "@enum", "@glob", "@lines", "@recipes", "@test", "@vars")
+	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
+}
+
+func TestCompletionsIncludeEnumInScriptArgumentValuesReferences(t *testing.T) {
+	text := `[recipes.test.arguments.target]
+values = '''
+@e
+'''
+
+[recipes.test]
+cmd = ["go", "test"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`@e`)})
+	assertLabels(t, items, "@enum")
+	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
+}
+
+func TestCompletionsExcludeEnumOutsideArgumentValuesReferences(t *testing.T) {
+	text := `[recipes.test]
+cmd = "@"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "@`)})
+	assertLabels(t, items, "@test")
+}
+
 func TestCompletionsIncludeRecipeReferenceArguments(t *testing.T) {
 	text := `[recipes.build.arguments.component]
 type = "string"

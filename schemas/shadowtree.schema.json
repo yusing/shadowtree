@@ -70,7 +70,7 @@
     },
     "recipes": {
       "type": "object",
-      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, help, version, and __complete are not valid recipe names.",
+      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, help, lines, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
       "additionalProperties": {
         "$ref": "#/definitions/recipe"
       },
@@ -195,7 +195,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @recipes, and @vars. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
         }
       },
       "x-taplo": {

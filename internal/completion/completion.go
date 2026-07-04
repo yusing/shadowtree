@@ -294,9 +294,6 @@ func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[
 
 func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
 	if len(arg.Values) > 0 {
-		if recipes == nil {
-			return nil
-		}
 		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	return staticValueCandidates(prefix, valuePrefix, arg, opts)
@@ -317,6 +314,25 @@ func staticValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts
 }
 
 func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
+	if values, ok, err := recipe.BuiltinValues(arg.Values, recipe.ValueBuiltinOptions{
+		Dir:         opts.Dir,
+		ConfigPath:  opts.ConfigPath,
+		Recipe:      rec,
+		Recipes:     recipes,
+		ValuePrefix: valuePrefix,
+	}); ok {
+		if err != nil {
+			return nil
+		}
+		candidates := make([]Candidate, 0, len(values))
+		for _, value := range values {
+			candidates = append(candidates, Candidate{Value: prefix + value.Value, Help: value.Help})
+		}
+		return candidates
+	}
+	if recipes == nil {
+		return nil
+	}
 	command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)
 	env := maps.Clone(opts.Env)
 	if env == nil {
@@ -331,19 +347,15 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 	if err != nil {
 		return nil
 	}
+	values := recipe.ParseValueCandidates(output)
 	var candidates []Candidate
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		value, help, _ := strings.Cut(line, "\t")
-		if valuePrefix != "" && !strings.HasPrefix(value, valuePrefix) {
+	for _, value := range values {
+		if valuePrefix != "" && !strings.HasPrefix(value.Value, valuePrefix) {
 			continue
 		}
 		candidates = append(candidates, Candidate{
-			Value: prefix + value,
-			Help:  help,
+			Value: prefix + value.Value,
+			Help:  value.Help,
 		})
 	}
 	return candidates

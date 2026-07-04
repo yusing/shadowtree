@@ -193,6 +193,34 @@ func TestPrintRecipeHelpIncludesDynamicArgumentValues(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpIncludesEnumArgumentValues(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Type:   "string",
+				Values: recipe.ScriptCommand(`@enum api worker "admin ui"`),
+			},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"    api",
+		"    worker",
+		"    admin ui",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpDynamicValuesUseDirEnvAndPrelude(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer

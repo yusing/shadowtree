@@ -359,7 +359,21 @@ positionally.
 `values`
 : Optional command that produces completion candidates for this argument. Each
 output line is a value, optionally followed by a tab and help text. The
-command can be an `@recipe` reference.
+command can be an `@recipe` reference, or an argument-values builtin:
+
+```toml
+values = '@enum api worker "admin ui"'
+values = '@lines config/targets.txt'
+values = '@glob "cmd/*"'
+values = '@recipes'
+values = '@vars'
+```
+
+`@enum` returns literal values from its arguments. `@lines` reads candidates
+from a text file, using the same `value<TAB>help` line format. `@glob` returns
+filesystem matches. `@recipes` returns resolved recipe names. `@vars` returns
+recipe placeholder and argument names. Relative `@lines` paths and `@glob`
+patterns resolve from the config file directory when available.
 
 Example:
 
@@ -514,10 +528,18 @@ init
 config
 exec
 completion
+enum
+glob
 help
+lines
+vars
 version
 __complete
 ```
+
+The argument-values builtins (`enum`, `glob`, `lines`, `recipes`, and `vars`)
+are reserved as recipe names. Future built-in `@` command identifiers are also
+reserved.
 
 ## Built-In Go Profile
 

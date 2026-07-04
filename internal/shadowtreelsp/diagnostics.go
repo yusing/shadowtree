@@ -74,6 +74,9 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 	completionOpts := completionOptionsForURI(opts.URI)
 	var diagnostics []lspDiagnostic
 	for _, ref := range commandReferenceSpans(lines) {
+		if ref.isArgumentValuesBuiltin() {
+			continue
+		}
 		if ref.Name == "" {
 			diagnostics = append(diagnostics, lspDiagnostic{
 				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
@@ -124,6 +127,10 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes, completionOpts)...)
 	}
 	return diagnostics
+}
+
+func (ref commandReferenceSpan) isArgumentValuesBuiltin() bool {
+	return ref.Path == "" && recipe.IsBuiltinReferenceName(ref.Name) && recipeArgumentTable(ref.Table) && ref.Key == "values"
 }
 
 func diagnosticRecipes(cfg recipe.Config) (map[string]recipe.Recipe, bool) {

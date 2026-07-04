@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -91,6 +92,186 @@ func TestRecipeReferenceSplitsCrossConfigTarget(t *testing.T) {
 	}
 	if !slices.Equal(ref.Args, []string{"mode=dev", "force=true"}) {
 		t.Fatalf("Args = %#v", ref.Args)
+	}
+}
+
+func TestBuiltinValuesParsesEnumScriptQuotedValues(t *testing.T) {
+	values, ok, err := BuiltinValues(ScriptCommand(`@enum a b "c d" e f`), ValueBuiltinOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @enum")
+	}
+	if !slices.Equal(values, []ValueCandidate{
+		{Value: "a"},
+		{Value: "b"},
+		{Value: "c d"},
+		{Value: "e"},
+		{Value: "f"},
+	}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesParsesEnumArgvValues(t *testing.T) {
+	values, ok, err := BuiltinValues(Command{"@enum", "a", "c d"}, ValueBuiltinOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @enum")
+	}
+	if !slices.Equal(values, []ValueCandidate{{Value: "a"}, {Value: "c d"}}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesReadsLines(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "targets.txt"), []byte("api\tAPI service\nworker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	values, ok, err := BuiltinValues(ScriptCommand("@lines targets.txt"), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @lines")
+	}
+	if len(values) != 2 || values[0] != (ValueCandidate{Value: "api", Help: "API service"}) || values[1] != (ValueCandidate{Value: "worker"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesReadsLinesWithPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "targets.txt"), []byte("api\tAPI service\nworker\tWorker service\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	values, ok, err := BuiltinValues(ScriptCommand("@lines targets.txt"), ValueBuiltinOptions{Dir: dir, ValuePrefix: "w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @lines")
+	}
+	if len(values) != 1 || values[0] != (ValueCandidate{Value: "worker", Help: "Worker service"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesGlobsFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "cmd", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cmd", "worker"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	values, ok, err := BuiltinValues(ScriptCommand(`@glob "cmd/*"`), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @glob")
+	}
+	if len(values) != 2 ||
+		values[0] != (ValueCandidate{Value: "cmd/api/", Help: "directory"}) ||
+		values[1] != (ValueCandidate{Value: "cmd/worker", Help: "file"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesGlobsDirectoriesWithSlashPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "cmd", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	values, ok, err := BuiltinValues(ScriptCommand(`@glob "cmd/*"`), ValueBuiltinOptions{Dir: dir, ValuePrefix: "cmd/api/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @glob")
+	}
+	if len(values) != 1 || values[0] != (ValueCandidate{Value: "cmd/api/", Help: "directory"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesListsRecipes(t *testing.T) {
+	values, ok, err := BuiltinValues(ScriptCommand("@recipes"), ValueBuiltinOptions{
+		Recipes: map[string]Recipe{
+			"build": {Help: "Build binary.", Cmd: Command{"go", "build"}},
+			"test":  {Cmd: Command{"go", "test"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @recipes")
+	}
+	if len(values) != 2 ||
+		values[0] != (ValueCandidate{Value: "build", Help: "Build binary."}) ||
+		values[1] != (ValueCandidate{Value: "test", Help: "go test"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestBuiltinValuesListsVarsAndArguments(t *testing.T) {
+	values, ok, err := BuiltinValues(ScriptCommand("@vars"), ValueBuiltinOptions{
+		Recipe: Recipe{
+			Vars: map[string]string{"project": "api"},
+			Arguments: map[string]Argument{
+				"mode": {Help: "Build mode.", Type: "string"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @vars")
+	}
+	if len(values) != 2 ||
+		values[0] != (ValueCandidate{Value: "mode", Help: "Build mode."}) ||
+		values[1] != (ValueCandidate{Value: "project", Help: "placeholder"}) {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestValidateValueBuiltinRejectsInvalidForms(t *testing.T) {
+	tests := []struct {
+		name    string
+		command Command
+	}{
+		{name: "glob missing arg", command: Command{"@glob"}},
+		{name: "lines extra arg", command: Command{"@lines", "a", "b"}},
+		{name: "recipes extra arg", command: Command{"@recipes", "x"}},
+		{name: "vars extra arg", command: Command{"@vars", "x"}},
+		{name: "non literal word", command: ScriptCommand(`@enum "$x"`)},
+		{name: "multiple statements", command: ScriptCommand("@enum api; echo worker")},
+		{name: "pipeline", command: ScriptCommand("@enum api | cat")},
+		{name: "assignment", command: ScriptCommand("target=api @enum api")},
+		{name: "redirect", command: ScriptCommand("@enum api > targets.txt")},
+		{name: "background", command: ScriptCommand("@enum api &")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok, err := ValidateValueBuiltin(tt.command)
+			if !ok {
+				t.Fatalf("ValidateValueBuiltin did not detect builtin")
+			}
+			if err == nil {
+				t.Fatal("ValidateValueBuiltin accepted invalid form")
+			}
+		})
 	}
 }
 
@@ -198,6 +379,14 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 func TestMergeRecipesRejectsReservedNames(t *testing.T) {
 	if _, err := MergeRecipes(nil, map[string]Recipe{"exec": {Cmd: Command{"go"}}}); err == nil {
 		t.Fatal("MergeRecipes succeeded with reserved name")
+	}
+}
+
+func TestMergeRecipesRejectsBuiltinReferenceNames(t *testing.T) {
+	for _, name := range BuiltinReferenceNames() {
+		if _, err := MergeRecipes(nil, map[string]Recipe{name: {Cmd: Command{"go"}}}); err == nil {
+			t.Fatalf("MergeRecipes succeeded with builtin reference name %q", name)
+		}
 	}
 }
 
@@ -488,6 +677,19 @@ func TestValidateArgumentsValidatesPathKind(t *testing.T) {
 		"target": {Type: "path", PathKind: "socket"},
 	}); err == nil {
 		t.Fatal("ValidateArguments succeeded with invalid path_kind")
+	}
+}
+
+func TestValidateConfigRejectsBuiltinReferenceRecipeName(t *testing.T) {
+	for _, name := range BuiltinReferenceNames() {
+		err := ValidateConfig(Config{
+			Recipes: map[string]Recipe{
+				name: {Cmd: Command{"go"}},
+			},
+		})
+		if err == nil {
+			t.Fatalf("ValidateConfig succeeded with builtin reference recipe name %q", name)
+		}
 	}
 }
 

@@ -409,6 +409,21 @@ func printArgumentValues(ctx context.Context, w io.Writer, arg recipe.Argument, 
 
 func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) ([]completion.Candidate, error) {
 	if len(arg.Values) > 0 {
+		if values, ok, err := recipe.BuiltinValues(arg.Values, recipe.ValueBuiltinOptions{
+			Dir:        opts.Dir,
+			ConfigPath: opts.ConfigPath,
+			Recipe:     rec,
+			Recipes:    opts.Recipes,
+		}); ok {
+			if err != nil {
+				return nil, err
+			}
+			candidates := make([]completion.Candidate, 0, len(values))
+			for _, value := range values {
+				candidates = append(candidates, completion.Candidate{Value: value.Value, Help: value.Help})
+			}
+			return candidates, nil
+		}
 		command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)
 		env := maps.Clone(opts.Env)
 		if env == nil {
@@ -437,17 +452,10 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 }
 
 func parseArgumentValues(output string) []completion.Candidate {
-	var values []completion.Candidate
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		value, help, _ := strings.Cut(line, "\t")
-		values = append(values, completion.Candidate{
-			Value: value,
-			Help:  help,
-		})
+	parsed := recipe.ParseValueCandidates(output)
+	values := make([]completion.Candidate, 0, len(parsed))
+	for _, value := range parsed {
+		values = append(values, completion.Candidate{Value: value.Value, Help: value.Help})
 	}
 	return values
 }

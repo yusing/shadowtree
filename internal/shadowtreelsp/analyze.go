@@ -190,8 +190,8 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	if items, ok := scriptRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
 		return items
 	}
-	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
-		return recipeReferenceCompletionsWithOptions(ctx, text, analysis, recipePrefix, opts)
+	if recipePrefix, key, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
+		return recipeReferenceCompletionsWithOptions(ctx, text, analysis, recipePrefix, valueBuiltinReferenceContext(analysis.CurrentTable, key), opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
@@ -264,7 +264,7 @@ func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis
 		items := spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, opts)
 		return items, true
 	}
-	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis, prefix, opts)
+	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis, prefix, valueBuiltinReferenceContext(region.Table, region.Key), opts)
 	for i := range items {
 		items[i].Edit = &completionEdit{Start: start + 1, End: pos.Character}
 	}
@@ -538,7 +538,7 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 	return recipeSubtableCompletions()
 }
 
-func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, analysis documentAnalysis, prefix string, opts completionOptions) []completion {
+func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, analysis documentAnalysis, prefix string, includeValueBuiltins bool, opts completionOptions) []completion {
 	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
 		return crossConfigRecipeReferenceCompletions(ctx, pathPrefix, recipePrefix, opts)
 	}
@@ -546,6 +546,11 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, ana
 	names := slices.Clone(analysis.Recipes)
 	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
 		names = appendUnique(names, name)
+	}
+	if includeValueBuiltins {
+		for _, name := range recipe.BuiltinReferenceNames() {
+			names = appendUnique(names, name)
+		}
 	}
 	slices.Sort(names)
 	var items []completion
@@ -625,6 +630,9 @@ func crossConfigRecipeReferenceCompletions(ctx context.Context, pathPrefix, reci
 }
 
 func recipeReferenceDetail(recipes map[string]recipe.Recipe, name string) string {
+	if detail := recipe.BuiltinReferenceDetail(name); detail != "" {
+		return detail
+	}
 	if rec, ok := recipes[name]; ok && rec.Help != "" {
 		return rec.Help
 	}
@@ -1460,6 +1468,8 @@ type commandReferenceSpan struct {
 	Path      string
 	Name      string
 	Args      []commandReferenceArgumentSpan
+	Table     string
+	Key       string
 	Line      int
 	Start     int
 	End       int
@@ -1484,6 +1494,8 @@ type commandReferenceScan struct {
 	depth   int
 	list    bool
 	pending bool
+	table   string
+	key     string
 }
 
 func commandReferenceSpans(lines []string) []commandReferenceSpan {
@@ -1512,6 +1524,8 @@ func commandReferenceSpansWithScriptRegions(lines []string, regions []scriptRegi
 			start = len(line) - len(value)
 			scan.list = key == "pre" || key == "post"
 			scan.pending = !scan.list
+			scan.table = table
+			scan.key = key
 		}
 		lineSpans := commandReferenceSpansInText(line[start:], lineNo, start, &scan)
 		spans = append(spans, lineSpans...)
@@ -1527,6 +1541,8 @@ func uniqueCommandReferenceSpans(spans []commandReferenceSpan) []commandReferenc
 	type spanKey struct {
 		path      string
 		name      string
+		table     string
+		key       string
 		line      int
 		start     int
 		end       int
@@ -1538,6 +1554,8 @@ func uniqueCommandReferenceSpans(spans []commandReferenceSpan) []commandReferenc
 		key := spanKey{
 			path:      span.Path,
 			name:      span.Name,
+			table:     span.Table,
+			key:       span.Key,
 			line:      span.Line,
 			start:     span.Start,
 			end:       span.End,
@@ -1564,21 +1582,21 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 			if scan.list {
 				switch {
 				case scan.depth == 1 && recipe.IsRecipeReferenceString(value):
-					spans = append(spans, commandReferenceSpanFromString(value, lineNo, offset+start, offset+end))
+					spans = append(spans, commandReferenceSpanFromString(value, scan.table, scan.key, lineNo, offset+start, offset+end))
 				case scan.depth == 2 && followsOpen && strings.HasPrefix(value, "@"):
-					spans = append(spans, commandReferenceSpanFromString(value, lineNo, offset+start, offset+end))
+					spans = append(spans, commandReferenceSpanFromString(value, scan.table, scan.key, lineNo, offset+start, offset+end))
 				}
 			} else {
 				switch {
 				case scan.depth == 0:
 					scan.pending = false
 					if recipe.IsRecipeReferenceString(value) {
-						spans = append(spans, commandReferenceSpanFromString(value, lineNo, offset+start, offset+end))
+						spans = append(spans, commandReferenceSpanFromString(value, scan.table, scan.key, lineNo, offset+start, offset+end))
 					}
 				case scan.depth == 1 && scan.pending:
 					scan.pending = false
 					if strings.HasPrefix(value, "@") {
-						spans = append(spans, commandReferenceSpanFromString(value, lineNo, offset+start, offset+end))
+						spans = append(spans, commandReferenceSpanFromString(value, scan.table, scan.key, lineNo, offset+start, offset+end))
 					}
 				}
 			}
@@ -1598,7 +1616,7 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 	return spans
 }
 
-func commandReferenceSpanFromString(value string, lineNo, start, end int) commandReferenceSpan {
+func commandReferenceSpanFromString(value, table, key string, lineNo, start, end int) commandReferenceSpan {
 	lookup := recipeReferenceLookupValue(value)
 	ref, ok := recipe.ParseRecipeReference(recipe.Command{lookup})
 	if !ok {
@@ -1608,6 +1626,8 @@ func commandReferenceSpanFromString(value string, lineNo, start, end int) comman
 		Path:      ref.Path,
 		Name:      ref.Name,
 		Args:      commandReferenceArgumentSpans(value, ref.Args, lineNo, start),
+		Table:     table,
+		Key:       key,
 		Line:      lineNo,
 		Start:     start,
 		End:       end,
@@ -1711,7 +1731,7 @@ func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion
 	if targetEndLine != startLine {
 		targetEndCol = endCol
 	}
-	span := commandReferenceSpanFromString(ref.Value, startLine, startCol, endCol)
+	span := commandReferenceSpanFromString(ref.Value, region.Table, region.Key, startLine, startCol, endCol)
 	span.TargetEnd = targetEndCol
 	for _, arg := range ref.Args {
 		argStartLine, argStartCol := scriptPosition(region, arg.Start)
@@ -1876,20 +1896,24 @@ func recipeReferenceArgumentPartTokens(line string, lineNo, start, end int) []se
 	return tokens
 }
 
-func recipeReferencePrefix(table, prefix string) (string, bool) {
+func recipeReferencePrefix(table, prefix string) (string, string, bool) {
 	key, ok := keyBeforeValue(prefix)
 	if !ok || !recipeReferenceKey(table, key) {
-		return "", false
+		return "", "", false
 	}
 	quote := lastOpenQuote(prefix)
 	if quote < 0 {
-		return "", false
+		return "", "", false
 	}
 	value := prefix[quote+1:]
 	if !strings.HasPrefix(value, "@") {
-		return "", false
+		return "", "", false
 	}
-	return strings.TrimPrefix(value, "@"), true
+	return strings.TrimPrefix(value, "@"), key, true
+}
+
+func valueBuiltinReferenceContext(table, key string) bool {
+	return key == "values" && recipeArgumentTable(table)
 }
 
 func lastOpenQuote(prefix string) int {

@@ -187,7 +187,7 @@ func Builtins(profile string) map[string]Recipe {
 func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) {
 	merged := maps.Clone(base)
 	for name, override := range overrides {
-		if ReservedNames[name] {
+		if IsReservedRecipeName(name) {
 			return nil, fmt.Errorf("recipe name %q is reserved", name)
 		}
 		merged[name] = MergeRecipe(merged[name], override)
@@ -340,7 +340,7 @@ func ValidateConfig(cfg Config) error {
 		return err
 	}
 	for name, rec := range cfg.Recipes {
-		if ReservedNames[name] {
+		if IsReservedRecipeName(name) {
 			return fmt.Errorf("recipe name %q is reserved", name)
 		}
 		if err := ValidateArguments(rec.Arguments); err != nil {
@@ -494,6 +494,9 @@ func ValidateArguments(args map[string]Argument) error {
 			}
 		}
 		if len(arg.Values) > 0 {
+			if _, ok, err := ValidateValueBuiltin(arg.Values); ok && err != nil {
+				return fmt.Errorf("%s values: %w", name, err)
+			}
 			if err := ValidateCommand(arg.Values); err != nil {
 				return fmt.Errorf("%s values: %w", name, err)
 			}
