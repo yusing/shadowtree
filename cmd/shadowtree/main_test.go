@@ -304,7 +304,7 @@ func TestPrintRecipeHelpReportsUnavailableDynamicValues(t *testing.T) {
 	}
 }
 
-func TestPrintRecipeHelpIncludesBoolArgumentValues(t *testing.T) {
+func TestPrintRecipeHelpSkipsImplicitBoolArgumentValues(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "test", recipe.Recipe{
 		Help: "Run tests.",
@@ -318,14 +318,11 @@ func TestPrintRecipeHelpIncludesBoolArgumentValues(t *testing.T) {
 	}
 
 	text := out.String()
-	for _, want := range []string{
-		"  values:",
-		"    true   bool",
-		"    false  bool",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("recipe help output missing %q:\n%s", want, text)
-		}
+	if strings.Contains(text, "  values:") {
+		t.Fatalf("recipe help output includes implicit bool values:\n%s", text)
+	}
+	if !strings.Contains(text, "arg race:bool  bool") {
+		t.Fatalf("recipe help output missing bool argument:\n%s", text)
 	}
 }
 

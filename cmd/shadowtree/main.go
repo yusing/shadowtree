@@ -442,13 +442,7 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 		}
 		return parseArgumentValues(output), nil
 	}
-	if arg.Type != "bool" {
-		return nil, nil
-	}
-	return []completion.Candidate{
-		{Value: "true", Help: "bool"},
-		{Value: "false", Help: "bool"},
-	}, nil
+	return nil, nil
 }
 
 func parseArgumentValues(output string) []completion.Candidate {

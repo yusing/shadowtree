@@ -584,7 +584,7 @@ with their `help` text.
 - `sandboxed: false` for unsandboxed recipes
 - pre commands
 - post commands
-- argument definitions and available values
+- argument definitions and configured available values
 - sync-out paths for sandboxed recipes
 
 Multi-line command arguments are summarized as `<script>` in help and completion
