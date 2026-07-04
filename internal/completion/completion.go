@@ -39,8 +39,17 @@ var fishShell = shellSpec{
 	normalize:  func(word string) string { return word },
 }
 
+var bashShell = shellSpec{
+	name:       "bash",
+	groupOpen:  "[",
+	groupClose: "]",
+	normalize:  func(word string) string { return word },
+}
+
 func shellFor(name string) (shellSpec, error) {
 	switch name {
+	case "bash":
+		return bashShell, nil
 	case "fish":
 		return fishShell, nil
 	default:
@@ -50,6 +59,8 @@ func shellFor(name string) (shellSpec, error) {
 
 func Script(w io.Writer, shell string) error {
 	switch shell {
+	case "bash":
+		return bashScript(w)
 	case "fish":
 		return fishScript(w)
 	default:
@@ -77,8 +88,31 @@ complete -c shadowtree -l version -d 'Show version'
 	return err
 }
 
+func bashScript(w io.Writer) error {
+	_, err := io.WriteString(w, `_shadowtree_complete() {
+    local candidate candidate_line command_name
+    command_name=${1:-shadowtree}
+    COMPREPLY=()
+    while IFS= read -r candidate_line; do
+        candidate=${candidate_line%%$'\t'*}
+        COMPREPLY+=("$candidate")
+    done < <("$command_name" __complete bash "$COMP_POINT" "$COMP_LINE" "$2")
+	for candidate in "${COMPREPLY[@]}"; do
+	    case "$candidate" in
+	        *=|*/) compopt -o nospace 2>/dev/null || true; break ;;
+	    esac
+	done
+}
+
+complete -F _shadowtree_complete shadowtree
+`)
+	return err
+}
+
 func WriteCandidates(w io.Writer, shell string, candidates []Candidate) error {
 	switch shell {
+	case "bash":
+		return writeBashCandidates(w, candidates)
 	case "fish":
 		return writeFishCandidates(w, candidates)
 	default:
@@ -89,8 +123,18 @@ func WriteCandidates(w io.Writer, shell string, candidates []Candidate) error {
 func writeFishCandidates(w io.Writer, candidates []Candidate) error {
 	for _, candidate := range candidates {
 		value := escapeFishValue(candidate.Value)
-		desc := sanitizeFishField(candidate.Help)
+		desc := sanitizeCandidateHelp(candidate.Help)
 		if _, err := fmt.Fprintf(w, "%s\t%s\n", value, desc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeBashCandidates(w io.Writer, candidates []Candidate) error {
+	for _, candidate := range candidates {
+		desc := sanitizeCandidateHelp(candidate.Help)
+		if _, err := fmt.Fprintf(w, "%s\t%s\n", candidate.Value, desc); err != nil {
 			return err
 		}
 	}
@@ -121,7 +165,7 @@ func escapeFishValue(value string) string {
 	return b.String()
 }
 
-func sanitizeFishField(value string) string {
+func sanitizeCandidateHelp(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
@@ -130,11 +174,8 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	if err != nil {
 		return nil, err
 	}
-	if completesProfile(words) {
-		return []Candidate{{Value: "go", Help: "Go project"}}, nil
-	}
-	if completesConfig(words) || completesSyncOut(words) {
-		return nil, nil
+	if candidates, ok := staticCandidates(spec, words); ok {
+		return candidates, nil
 	}
 	if candidates, ok := helpCandidates(words, recipes); ok {
 		return candidates, nil
@@ -155,6 +196,53 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	}
 	candidates = append(candidates, recipeCandidates(words, recipes)...)
 	return filterPrefix(candidates, currentWord(words)), nil
+}
+
+// StaticCandidates returns completions that do not require recipe resolution.
+func StaticCandidates(shell string, words []string) ([]Candidate, bool, error) {
+	spec, err := shellFor(shell)
+	if err != nil {
+		return nil, false, err
+	}
+	candidates, ok := staticCandidates(spec, words)
+	return candidates, ok, nil
+}
+
+func staticCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
+	if len(positionalWords(words)) > 0 {
+		return nil, false
+	}
+	if completesProfile(words) {
+		return []Candidate{{Value: "go", Help: "Go project"}}, true
+	}
+	if completesConfig(words) || completesSyncOut(words) {
+		return nil, true
+	}
+	if candidates, ok := flagCandidates(spec, words); ok {
+		return candidates, true
+	}
+	return nil, false
+}
+
+func flagCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
+	if spec.name != "bash" {
+		return nil, false
+	}
+	current := currentWord(words)
+	if !strings.HasPrefix(current, "-") {
+		return nil, false
+	}
+	candidates := []Candidate{
+		{Value: "--config", Help: "Use config file"},
+		{Value: "--profile", Help: "Use profile"},
+		{Value: "--sync-out", Help: "Copy path back after success"},
+		{Value: "--sync-out-all", Help: "Copy entire workspace back after success"},
+		{Value: "--print", Help: "Print resolved plan without running"},
+		{Value: "--verbose", Help: "Show commands and workspace paths"},
+		{Value: "--help", Help: "Show help"},
+		{Value: "--version", Help: "Show version"},
+	}
+	return filterPrefix(candidates, current), true
 }
 
 func argumentCandidates(ctx context.Context, spec shellSpec, words []string, recipes map[string]recipe.Recipe, opts Options) ([]Candidate, bool) {
@@ -211,12 +299,15 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 		valuePrefix, prefix = splitQuotedValuePrefix(valuePrefix, tokenPrefix+key+"=")
 		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
+	if candidates := argumentNameCandidates(tokenPrefix, active, rec, used); len(candidates) > 0 {
+		return candidates
+	}
 	if active != "" {
 		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
 			return candidates
 		}
 	}
-	return argumentNameCandidates(tokenPrefix, active, rec, used)
+	return nil
 }
 
 // GroupedArgumentCandidates completes bracket-style recipe arguments.
@@ -235,12 +326,15 @@ func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Re
 		valuePrefix, prefix := splitQuotedValuePrefix(valuePrefix, key+"=")
 		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
+	if candidates := argumentNameCandidates("", current, rec, used); len(candidates) > 0 {
+		return candidates
+	}
 	if current != "" {
 		if candidates := positionalValueCandidates("", current, rec, used, opts); len(candidates) > 0 {
 			return candidates
 		}
 	}
-	return argumentNameCandidates("", current, rec, used)
+	return nil
 }
 
 func splitQuotedValuePrefix(valuePrefix, prefix string) (string, string) {
@@ -616,6 +710,98 @@ func normalizedWords(spec shellSpec, words []string) []string {
 		out[i] = spec.normalize(word)
 	}
 	return out
+}
+
+// BashReplacementCandidates converts full logical candidates into replacements
+// for Bash's active word. Bash treats '=' as a word break, so value completion
+// must return only the value side even though Candidates works with name=value.
+func BashReplacementCandidates(words []string, bashCurrent string, candidates []Candidate) []Candidate {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	current := rawCurrentWord(words)
+	idx := strings.LastIndexByte(current, '=')
+	if idx < 0 {
+		return candidates
+	}
+	prefix := current[:idx+1]
+	valuePrefix := current[idx+1:]
+	if valuePrefix != "" && !strings.HasSuffix(valuePrefix, bashCurrent) {
+		return candidates
+	}
+	out := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !strings.HasPrefix(candidate.Value, prefix) {
+			out = append(out, candidate)
+			continue
+		}
+		candidate.Value = strings.TrimPrefix(candidate.Value, prefix)
+		out = append(out, candidate)
+	}
+	return out
+}
+
+// BashWords splits COMP_LINE up to COMP_POINT into the word shape expected by
+// Candidates. It avoids Bash's COMP_WORDS splitting on '=' so name=value
+// arguments complete the same way as fish.
+func BashWords(line string, point int) []string {
+	if point < 0 || point > len(line) {
+		point = len(line)
+	}
+	var words []string
+	var current strings.Builder
+	haveWord := false
+	trailingSpace := false
+	escaped := false
+	inSingle := false
+	inDouble := false
+	for _, r := range line[:point] {
+		if escaped {
+			current.WriteRune(r)
+			haveWord = true
+			trailingSpace = false
+			escaped = false
+			continue
+		}
+		switch {
+		case r == '\\' && !inSingle:
+			escaped = true
+			haveWord = true
+			trailingSpace = false
+		case r == '\'' && !inDouble:
+			current.WriteRune(r)
+			haveWord = true
+			trailingSpace = false
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			current.WriteRune(r)
+			haveWord = true
+			trailingSpace = false
+			inDouble = !inDouble
+		case isBashSpace(r) && !inSingle && !inDouble:
+			if haveWord {
+				words = append(words, current.String())
+				current.Reset()
+				haveWord = false
+			}
+			trailingSpace = true
+		default:
+			current.WriteRune(r)
+			haveWord = true
+			trailingSpace = false
+		}
+	}
+	if escaped {
+		current.WriteByte('\\')
+	}
+	if haveWord || len(words) == 0 || trailingSpace {
+		words = append(words, current.String())
+	}
+	return words
+}
+
+func isBashSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
 }
 
 func filterPrefix(candidates []Candidate, prefix string) []Candidate {

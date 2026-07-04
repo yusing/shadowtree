@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,6 +111,24 @@ func TestCandidatesCompleteSpacedRecipeArguments(t *testing.T) {
 	}
 }
 
+func TestCandidatesPreferSpacedArgumentNameOverPositionalPath(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "bin"))
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "bin"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"binary":  {Help: "Output binary name.", Type: "string"},
+				"project": {Help: "Go package to build.", Type: "rel_path", Position: 1},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0].Value != "binary=" {
+		t.Fatalf("candidates = %#v, want binary=", candidates)
+	}
+}
+
 func TestCandidatesCompleteBracketRecipeArguments(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build["}, map[string]recipe.Recipe{
 		"build": {
@@ -122,6 +141,24 @@ func TestCandidatesCompleteBracketRecipeArguments(t *testing.T) {
 
 	if len(candidates) != 1 || candidates[0].Value != "build[project=" {
 		t.Fatalf("candidates = %#v, want build[project=", candidates)
+	}
+}
+
+func TestCandidatesPreferBracketArgumentNameOverPositionalPath(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "bin"))
+	candidates := completeWithOptions(t, []string{"shadowtree", "build[bin"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"binary":  {Help: "Output binary name.", Type: "string"},
+				"project": {Help: "Go package to build.", Type: "rel_path", Position: 1},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[binary=" {
+		t.Fatalf("candidates = %#v, want build[binary=", candidates)
 	}
 }
 
@@ -521,6 +558,47 @@ func TestCandidatesRejectUnsupportedShell(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteBashFlags(t *testing.T) {
+	candidates, err := Candidates(t.Context(), "bash", []string{"shadowtree", "--p"}, nil, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasCandidate(candidates, "--profile") || !hasCandidate(candidates, "--print") {
+		t.Fatalf("candidates = %#v, want --profile and --print", candidates)
+	}
+	if hasCandidate(candidates, "--config") {
+		t.Fatalf("candidates = %#v, want prefix-filtered flags", candidates)
+	}
+}
+
+func TestStaticCandidatesCompleteBashFlags(t *testing.T) {
+	candidates, ok, err := StaticCandidates("bash", []string{"shadowtree", "--p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("StaticCandidates returned ok=false")
+	}
+
+	if !hasCandidate(candidates, "--profile") || !hasCandidate(candidates, "--print") {
+		t.Fatalf("candidates = %#v, want --profile and --print", candidates)
+	}
+	if hasCandidate(candidates, "--config") {
+		t.Fatalf("candidates = %#v, want prefix-filtered flags", candidates)
+	}
+}
+
+func TestStaticCandidatesSkipFlagsAfterCommand(t *testing.T) {
+	candidates, ok, err := StaticCandidates("bash", []string{"shadowtree", "build", "--p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, ok = %t, want no static candidates", candidates, ok)
+	}
+}
+
 func TestCandidatesDoNotCompleteParenthesizedArguments(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build(proj"}, map[string]recipe.Recipe{
 		"build": {
@@ -533,6 +611,105 @@ func TestCandidatesDoNotCompleteParenthesizedArguments(t *testing.T) {
 
 	if len(candidates) != 0 {
 		t.Fatalf("candidates = %#v, want no parenthesized completion", candidates)
+	}
+}
+
+func TestBashScriptCallsInternalCompletion(t *testing.T) {
+	var out bytes.Buffer
+	if err := Script(&out, "bash"); err != nil {
+		t.Fatal(err)
+	}
+
+	script := out.String()
+	if !strings.Contains(script, `"$command_name" __complete bash "$COMP_POINT" "$COMP_LINE" "$2"`) {
+		t.Fatalf("bash script = %q, want internal bash completion callback", script)
+	}
+	if !strings.Contains(script, "complete -F _shadowtree_complete") {
+		t.Fatalf("bash script = %q, want complete function registration", script)
+	}
+	if !strings.Contains(script, "compopt -o nospace 2>/dev/null || true; break") {
+		t.Fatalf("bash script = %q, want one compopt call per completion attempt", script)
+	}
+}
+
+func TestBashWordsPreserveCompletionShape(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		point int
+		want  []string
+	}{
+		{
+			name: "trailing space",
+			line: "shadowtree build ",
+			want: []string{"shadowtree", "build", ""},
+		},
+		{
+			name: "equals",
+			line: "shadowtree build race=",
+			want: []string{"shadowtree", "build", "race="},
+		},
+		{
+			name: "escaped space",
+			line: `shadowtree open file=My\ Project`,
+			want: []string{"shadowtree", "open", "file=My Project"},
+		},
+		{
+			name:  "cursor point",
+			line:  "shadowtree te ignored",
+			point: len("shadowtree te"),
+			want:  []string{"shadowtree", "te"},
+		},
+		{
+			name: "open quote",
+			line: `shadowtree open file="My Project`,
+			want: []string{"shadowtree", "open", `file="My Project`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			point := tt.point
+			if point == 0 {
+				point = len(tt.line)
+			}
+			if got := BashWords(tt.line, point); !slices.Equal(got, tt.want) {
+				t.Fatalf("BashWords(%q, %d) = %#v, want %#v", tt.line, point, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBashReplacementCandidatesTrimValuePrefix(t *testing.T) {
+	candidates := BashReplacementCandidates(
+		[]string{"shadowtree", "test", "race=f"},
+		"f",
+		[]Candidate{{Value: "race=false", Help: "bool"}},
+	)
+	if len(candidates) != 1 || candidates[0].Value != "false" {
+		t.Fatalf("candidates = %#v, want false replacement", candidates)
+	}
+}
+
+func TestBashReplacementCandidatesTrimGroupedValuePrefix(t *testing.T) {
+	candidates := BashReplacementCandidates(
+		[]string{"shadowtree", "build[project=s"},
+		"s",
+		[]Candidate{{Value: "build[project=sip/scheduler", Help: "Scheduler"}},
+	)
+	if len(candidates) != 1 || candidates[0].Value != "sip/scheduler" {
+		t.Fatalf("candidates = %#v, want sip/scheduler replacement", candidates)
+	}
+}
+
+func TestBashReplacementCandidatesKeepArgumentNames(t *testing.T) {
+	candidates := BashReplacementCandidates(
+		[]string{"shadowtree", "test", "ra"},
+		"ra",
+		[]Candidate{{Value: "race=", Help: "bool"}},
+	)
+	if len(candidates) != 1 || candidates[0].Value != "race=" {
+		t.Fatalf("candidates = %#v, want full argument name replacement", candidates)
 	}
 }
 
@@ -552,6 +729,22 @@ func TestFishCandidatesSanitizeNewlines(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "set -eu\ninstall") {
 		t.Fatalf("output contains raw newline: %q", out.String())
+	}
+}
+
+func TestBashCandidatesPreserveValueWhitespace(t *testing.T) {
+	var out bytes.Buffer
+	err := WriteCandidates(&out, "bash", []Candidate{{
+		Value: "file=My Project/",
+		Help:  "directory\nchild",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "file=My Project/\tdirectory child\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
 	}
 }
 

@@ -15,6 +15,16 @@ workspace with the same isolation contract.
 go install github.com/yusing/shadowtree/cmd/shadowtree@latest
 ```
 
+Bash completion:
+
+```sh
+shadowtree completion bash > ~/.config/shadowtree/completion.bash
+```
+
+The `install` recipe writes
+`${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a
+guarded source block to `~/.bashrc` so fresh Bash shells load it directly.
+
 Fish completion:
 
 ```sh
@@ -297,8 +307,9 @@ Recipes that intentionally change the host checkout set `sandboxed = false` in
 
 The `install` recipe follows the same convention as `git-agent`: it installs the
 binary to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
-`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, and installs
-fish completion only when the fish config directory exists.
+`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, installs bash
+completion through a guarded `~/.bashrc` source block, and installs fish
+completion only when the fish config directory exists.
 
 The `install-skill` recipe installs the local Shadowtree agent skill to
 `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}/shadowtree`.

@@ -289,6 +289,25 @@ func runComplete(ctx context.Context, args []string) error {
 	}
 	shell := args[0]
 	words := args[1:]
+	bashCurrent := ""
+	if shell == "bash" {
+		if len(args) != 3 && len(args) != 4 {
+			return errors.New("usage: shadowtree __complete bash <cursor> <line> [current]")
+		}
+		point, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid bash cursor: %w", err)
+		}
+		words = completion.BashWords(args[2], point)
+		if len(args) == 4 {
+			bashCurrent = args[3]
+		}
+	}
+	if candidates, ok, err := completion.StaticCandidates(shell, words); err != nil {
+		return err
+	} else if ok {
+		return completion.WriteCandidates(os.Stdout, shell, candidates)
+	}
 	opts := completionOptions(words)
 	recipes, loaded, _, err := resolveSet(ctx, opts, false)
 	if err != nil {
@@ -301,6 +320,9 @@ func runComplete(ctx context.Context, args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	if shell == "bash" {
+		candidates = completion.BashReplacementCandidates(words, bashCurrent, candidates)
 	}
 	return completion.WriteCandidates(os.Stdout, shell, candidates)
 }
@@ -575,7 +597,7 @@ func printBasicHelp(w io.Writer) {
        shadowtree help [recipe [color=false]]
        shadowtree recipes
        shadowtree init [path]
-       shadowtree completion fish
+       shadowtree completion bash|fish
 
 flags:
   --config PATH       use config file

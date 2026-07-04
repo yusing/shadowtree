@@ -31,6 +31,26 @@ if fish -v >/dev/null 2>&1; then
 	mkdir -p "$HOME/.config/fish/completions"
 	go run ./cmd/shadowtree completion fish > "$HOME/.config/fish/completions/shadowtree.fish"
 fi
+config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
+bash_completion_file="$config_home/shadowtree/completion.bash"
+mkdir -p "$(dirname "$bash_completion_file")"
+go run ./cmd/shadowtree completion bash > "$bash_completion_file"
+bashrc=${BASHRC:-"$HOME/.bashrc"}
+marker="# shadowtree bash completion"
+if ! grep -Fqs "$marker" "$bashrc" 2>/dev/null; then
+	mkdir -p "$(dirname "$bashrc")"
+	cat >> "$bashrc" <<'EOF'
+
+# shadowtree bash completion
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+	_shadowtree_completion="$XDG_CONFIG_HOME/shadowtree/completion.bash"
+else
+	_shadowtree_completion="$HOME/.config/shadowtree/completion.bash"
+fi
+[ -r "$_shadowtree_completion" ] && . "$_shadowtree_completion"
+unset _shadowtree_completion
+EOF
+fi
 ''']
 
 [recipes.install-skill]

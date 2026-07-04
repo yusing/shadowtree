@@ -41,6 +41,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 - `shadowtree help <recipe> [color=false]`: show command summary plus applicable args, configured values, pre/post, unsandboxed marker, and sync-out for one recipe. Recipe help uses color by default; `color=false` disables it.
 - `shadowtree config`: print config path, profile, and resolved recipe list.
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
+- `shadowtree completion bash`: emit bash completion script.
 - `shadowtree completion fish`: emit fish completion script.
 - `shadowtree exec -- <cmd> [args...]`: run an explicit command as a sandboxed ad hoc recipe.
 - `shadowtree <recipe> [args...]`: run a resolved recipe.
@@ -327,7 +328,13 @@ Completion criterion: use `shadowtree recipes` or `shadowtree --print <recipe>` 
 
 ## Completion
 
-Only fish completion is implemented:
+Bash and fish completion are implemented:
+
+```sh
+shadowtree completion bash > ~/.config/shadowtree/completion.bash
+```
+
+The repository `install` recipe installs `${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a guarded source block to `~/.bashrc`.
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
@@ -335,4 +342,4 @@ shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
 
 Completion includes commands, resolved recipes, `--profile go`, typed argument names, bool values, path/rel_path filesystem candidates, and dynamic `values` output. Completion reads `--config` and `--profile` when they appear before the command.
 
-Completion criterion: after config changes affecting recipes or arguments, regenerate or re-source fish completion before testing interactive behavior.
+Completion criterion: after config changes affecting recipes or arguments, regenerate or re-source shell completion before testing interactive behavior.

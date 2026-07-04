@@ -15,7 +15,7 @@ This document describes the behavior currently implemented by the project.
 - Provide useful defaults for Go projects.
 - Keep configuration small and exact, using argv arrays for process execution
   and shell script strings for workflows that benefit from shared shell logic.
-- Support dynamic fish completion from resolved recipes.
+- Support dynamic shell completion from resolved recipes.
 - Provide editor-facing schema and syntax support for TOML configuration.
 - Let the project use Shadowtree for its own development tasks.
 
@@ -77,11 +77,12 @@ shadowtree help [recipe [color=false]]
 shadowtree recipes
 shadowtree config
 shadowtree init [path]
-shadowtree completion fish
+shadowtree completion bash|fish
 shadowtree __complete fish <words...>
+shadowtree __complete bash <cursor> <line> [current]
 ```
 
-`__complete` is internal and used by generated fish completion.
+`__complete` is internal and used by generated shell completion.
 
 ## Global Flags
 
@@ -617,18 +618,27 @@ The plan includes these fields when present or applicable:
 - post commands
 - sync-out paths for sandboxed recipes
 
-## Fish Completion
+## Shell Completion
 
-Shadowtree can generate fish completion:
+Shadowtree can generate bash and fish completion:
+
+```sh
+shadowtree completion bash > ~/.config/shadowtree/completion.bash
+```
+
+The repository `install` recipe installs
+`${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a
+guarded source block to `~/.bashrc`.
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
 ```
 
-The generated fish script calls back into Shadowtree:
+The generated shell scripts call back into Shadowtree:
 
 ```sh
 shadowtree __complete fish <words...>
+shadowtree __complete bash <cursor> <line> [current]
 ```
 
 Completion is dynamic and uses:
@@ -719,6 +729,8 @@ It:
 - honors `XDG_CONFIG_HOME`
 - honors `FISH_CONFIG_DIR`
 - honors `FISH_COMPLETIONS_DIR`
+- installs bash completion under the user config directory and sources it from
+  `~/.bashrc`
 - installs fish completion only when the fish config directory exists
 
 ## Current Project Recipes
@@ -730,7 +742,7 @@ build          Build the shadowtree binary into bin/shadowtree.
 check          Run vet and tests.
 fmt            Format Go source files.
 generate       Run go generate.
-install        Install the shadowtree binary and fish completion.
+install        Install the shadowtree binary and shell completion.
 install-skill  Install the Shadowtree agent skill.
 lint           Run Go lint checks.
 run            Run a Go command.
@@ -754,5 +766,4 @@ tidy
 - Commands can still intentionally read or write absolute host paths.
 - Shell script strings are supported for recipes that need shell workflows;
   argv arrays remain preferred for direct process execution.
-- Fish is the only shell completion target currently implemented.
 - Go is the only language profile currently implemented.
