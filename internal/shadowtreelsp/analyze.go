@@ -13,6 +13,7 @@ import (
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/scriptref"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 type documentAnalysis struct {
@@ -754,8 +755,15 @@ func semanticTokens(text string) []uint32 {
 		if a.Line != b.Line {
 			return a.Line - b.Line
 		}
-		return a.Start - b.Start
+		if a.Start != b.Start {
+			return a.Start - b.Start
+		}
+		if a.Length != b.Length {
+			return a.Length - b.Length
+		}
+		return a.Type - b.Type
 	})
+	tokens = slices.Compact(tokens)
 	return encodeSemanticTokens(lines, tokens)
 }
 
@@ -1033,7 +1041,123 @@ func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
 		}
 		tokens = append(tokens, shellLineTokens(line, lineNo, start, end, region.Shell)...)
 	}
+	return mergeParsedShellTokens(tokens, parsedShellSemanticTokens(lines, region))
+}
+
+func parsedShellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
+	parser, err := scriptref.Parser(region.Shell)
+	if err != nil {
+		return nil
+	}
+	file, err := parser.Parse(strings.NewReader(scriptRegionText(lines, region)), "shadowtree")
+	if err != nil {
+		return nil
+	}
+	var tokens []semanticToken
+	var stack []bool
+	cmdSubstDepth := 0
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if node == nil {
+			last := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if last {
+				cmdSubstDepth--
+			}
+			return true
+		}
+		isCmdSubst := false
+		switch node := node.(type) {
+		case *syntax.CallExpr:
+			if cmdSubstDepth == 0 {
+				break
+			}
+			if len(node.Args) == 0 {
+				break
+			}
+			if token, ok := shellNodeToken(region, node.Args[0], semanticTokenFunction); ok {
+				tokens = append(tokens, token)
+			}
+			for _, arg := range node.Args[1:] {
+				if strings.HasPrefix(arg.Lit(), "-") {
+					if token, ok := shellNodeToken(region, arg, semanticTokenParameter); ok {
+						tokens = append(tokens, token)
+					}
+				}
+			}
+		case *syntax.ParamExp:
+			if cmdSubstDepth == 0 {
+				break
+			}
+			if token, ok := shellNodeToken(region, node, semanticTokenVariable); ok {
+				tokens = append(tokens, token)
+			}
+		case *syntax.CmdSubst:
+			tokens = append(tokens, shellCommandSubstitutionTokens(region, node)...)
+			isCmdSubst = true
+			cmdSubstDepth++
+		}
+		stack = append(stack, isCmdSubst)
+		return true
+	})
 	return tokens
+}
+
+func mergeParsedShellTokens(tokens, parsedTokens []semanticToken) []semanticToken {
+	if len(parsedTokens) == 0 {
+		return tokens
+	}
+	merged := tokens[:0]
+	for _, token := range tokens {
+		if semanticTokenOverlapsAny(token, parsedTokens) {
+			continue
+		}
+		merged = append(merged, token)
+	}
+	return append(merged, parsedTokens...)
+}
+
+func semanticTokenOverlapsAny(token semanticToken, others []semanticToken) bool {
+	for _, other := range others {
+		if token.Line == other.Line && spansOverlap(
+			span{Start: token.Start, Length: token.Length},
+			span{Start: other.Start, Length: other.Length},
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func shellCommandSubstitutionTokens(region scriptRegion, node *syntax.CmdSubst) []semanticToken {
+	leftLine, leftCol := shellSyntaxPosition(region, node.Left)
+	rightLine, rightCol := shellSyntaxPosition(region, node.Right)
+	leftLength := 2
+	if node.Backquotes {
+		leftLength = 1
+	}
+	return []semanticToken{
+		{Line: leftLine, Start: leftCol, Length: leftLength, Type: semanticTokenOperator},
+		{Line: rightLine, Start: rightCol, Length: 1, Type: semanticTokenOperator},
+	}
+}
+
+func shellNodeToken(region scriptRegion, node syntax.Node, tokenType int) (semanticToken, bool) {
+	startLine, startCol := shellSyntaxPosition(region, node.Pos())
+	endLine, endCol := shellSyntaxPosition(region, node.End())
+	if endLine != startLine {
+		return semanticToken{}, false
+	}
+	if endCol <= startCol {
+		return semanticToken{}, false
+	}
+	return semanticToken{Line: startLine, Start: startCol, Length: endCol - startCol, Type: tokenType}, true
+}
+
+func shellSyntaxPosition(region scriptRegion, pos syntax.Pos) (int, int) {
+	return scriptPosition(region, scriptref.Position{
+		Line: max(int(pos.Line())-1, 0),
+		Col:  max(int(pos.Col())-1, 0),
+	})
 }
 
 func shellLineTokens(line string, lineNo, start, end int, shell string) []semanticToken {
@@ -1216,7 +1340,7 @@ func commandContinuesAfterKeyword(shell, word string) bool {
 	if shell == "fish" {
 		return word == "and" || word == "or" || word == "not" || word == "command" || word == "if" || word == "while"
 	}
-	return word == "then" || word == "do" || word == "else" || word == "elif"
+	return word == "if" || word == "then" || word == "do" || word == "else" || word == "elif" || word == "until" || word == "while"
 }
 
 var shKeywords = []string{
@@ -1238,7 +1362,7 @@ func isShellOperator(ch byte) bool {
 }
 
 func isShellWordStart(ch byte) bool {
-	return ch == '-' || ch == '_' || ch == '.' || ch == '/' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+	return ch == '-' || ch == '_' || ch == '.' || ch == '/' || ch == '[' || ch == ']' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
 }
 
 func isShellWordPart(ch byte) bool {
@@ -1281,14 +1405,16 @@ func commandReferenceOverlapIndex(references []commandReferenceSpan) map[int][]s
 }
 
 func overlapsCommandReference(references map[int][]span, lineNo int, item span) bool {
-	start := item.Start
-	end := item.Start + item.Length
 	for _, ref := range references[lineNo] {
-		if start < ref.Start+ref.Length && ref.Start < end {
+		if spansOverlap(item, ref) {
 			return true
 		}
 	}
 	return false
+}
+
+func spansOverlap(a, b span) bool {
+	return a.Start < b.Start+b.Length && b.Start < a.Start+a.Length
 }
 
 type commandReferenceSpan struct {

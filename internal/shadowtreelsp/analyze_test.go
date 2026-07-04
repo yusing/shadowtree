@@ -762,6 +762,81 @@ fi
 	assertSemanticToken(t, tokens, 9, 0, len("fi"), semanticTokenKeyword)
 }
 
+func TestSemanticTokensHighlightShellTestCommandSubstitution(t *testing.T) {
+	text := `shell = "sh"
+
+[recipes.install]
+cmd = '''
+if [ "$(id -u)" -eq 0 ]; then
+	echo root
+fi
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	line := textLine(text, 4)
+	assertNoOverlappingSemanticTokens(t, tokens)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "if"), len("if"), semanticTokenKeyword)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "["), len("["), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "$("), len("$("), semanticTokenOperator)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "id"), len("id"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "-u"), len("-u"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, ")"), len(")"), semanticTokenOperator)
+}
+
+func TestSemanticTokensHighlightBashBacktickCommandSubstitution(t *testing.T) {
+	text := `shell = "bash"
+
+[recipes.install]
+cmd = '''
+owner=` + "`id -u`" + `
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	line := textLine(text, 4)
+	assertNoOverlappingSemanticTokens(t, tokens)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "`"), len("`"), semanticTokenOperator)
+	assertSemanticToken(t, tokens, 4, strings.LastIndex(line, "`"), len("`"), semanticTokenOperator)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "id"), len("id"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "-u"), len("-u"), semanticTokenParameter)
+	if hasSemanticToken(tokens, 4, strings.Index(line, "id"), len("id"), semanticTokenString) {
+		t.Fatalf("backtick command substitution was highlighted as string in %#v", tokens)
+	}
+}
+
+func TestSemanticTokensHighlightUnquotedShellCommandSubstitutionWithoutOverlap(t *testing.T) {
+	text := `shell = "sh"
+
+[recipes.install]
+cmd = '''
+echo $(id -u)
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	line := textLine(text, 4)
+	assertNoOverlappingSemanticTokens(t, tokens)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "$("), len("$("), semanticTokenOperator)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "id"), len("id"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "-u"), len("-u"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 4, strings.LastIndex(line, ")"), len(")"), semanticTokenOperator)
+}
+
+func TestSemanticTokensHighlightNestedParameterExpansionWithoutOverlap(t *testing.T) {
+	text := `shell = "sh"
+
+[recipes.install]
+cmd = '''
+echo ${DESTDIR:-$HOME}
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	line := textLine(text, 4)
+	assertNoOverlappingSemanticTokens(t, tokens)
+	assertSemanticToken(t, tokens, 4, strings.Index(line, "${"), len("${DESTDIR:-$HOME}"), semanticTokenVariable)
+	if hasSemanticToken(tokens, 4, strings.Index(line, "$HOME"), len("$HOME"), semanticTokenVariable) {
+		t.Fatalf("nested parameter expansion overlapped outer expansion in %#v", tokens)
+	}
+}
+
 func TestSemanticTokensHighlightPrePostScriptBodies(t *testing.T) {
 	text := `[recipes.install]
 pre = ['''
@@ -921,6 +996,20 @@ func assertSemanticToken(t *testing.T, tokens []semanticToken, line, start, leng
 	t.Helper()
 	if !hasSemanticToken(tokens, line, start, length, tokenType) {
 		t.Fatalf("missing semantic token line=%d start=%d length=%d type=%d in %#v", line, start, length, tokenType, tokens)
+	}
+}
+
+func assertNoOverlappingSemanticTokens(t *testing.T, tokens []semanticToken) {
+	t.Helper()
+	for i, token := range tokens {
+		for _, other := range tokens[i+1:] {
+			if token.Line != other.Line {
+				continue
+			}
+			if token.Start < other.Start+other.Length && other.Start < token.Start+token.Length {
+				t.Fatalf("overlapping semantic tokens %#v and %#v in %#v", token, other, tokens)
+			}
+		}
 	}
 }
 
