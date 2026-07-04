@@ -165,6 +165,7 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 	if len(ref.Args) == 0 || len(rec.Arguments) == 0 {
 		return nil
 	}
+	usesVariadicArgs := recipe.RecipeUsesVariadicArgs(rec)
 	positionals := recipe.PositionalArguments(rec.Arguments)
 	nextPositional := 0
 	var diagnostics []lspDiagnostic
@@ -173,9 +174,18 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 		if text == "" {
 			continue
 		}
+		if text == "--" && usesVariadicArgs {
+			break
+		}
 		name, value, ok := strings.Cut(text, "=")
 		if !ok {
+			if usesVariadicArgs && strings.HasPrefix(text, "-") {
+				continue
+			}
 			if nextPositional >= len(positionals) {
+				if usesVariadicArgs {
+					continue
+				}
 				diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, "unexpected positional argument "+strconv.Quote(text)))
 				continue
 			}
@@ -185,6 +195,9 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 		}
 		arg, exists := rec.Arguments[name]
 		if !exists {
+			if usesVariadicArgs && strings.HasPrefix(name, "-") {
+				continue
+			}
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, "unknown argument "+strconv.Quote(name)))
 			continue
 		}

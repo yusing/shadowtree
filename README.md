@@ -235,6 +235,25 @@ accepts relative paths only and completes relative checkout paths. Path
 arguments can set `path_kind` to `any`, `file`, `dir`, or `executable` to
 filter completion candidates.
 
+Use `{@}` as a whole argv item to splice leftover recipe CLI args into `cmd`,
+`args`, `default_args`, `pre`, or `post`:
+
+```toml
+[recipes.test]
+cmd = ["go", "test"]
+default_args = ["{pkg}", "{@}"]
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
+```
+
+For typed recipes, positional values and known `key=value` argument values are
+consumed by typed arguments and excluded from `{@}`. Unknown identifier
+`key=value` tokens remain errors; command flags such as `-run=TestName` pass
+through. Use `--` to pass following tokens literally to `{@}`.
+
 ## Built-In Profiles
 
 Supported profiles are `go` and `node`. A profile is selected by explicit

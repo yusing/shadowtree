@@ -428,6 +428,31 @@ expanded in `cmd`, `args`, `default_args`, `pre`, `post`, and `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 
+`{@}` is a variadic placeholder for leftover recipe CLI args. It must be a
+whole argv item in `cmd`, `args`, `default_args`, `pre`, or `post`; Shadowtree
+splices each leftover CLI arg into argv at that position. It is not supported
+inside shell script commands or `sync_out`. For recipes with typed
+`arguments`, positional argument values and known `key=value` argument values
+are consumed by those arguments and excluded from `{@}`. Unknown identifier
+`key=value` tokens remain errors; command flags such as `-run=TestName` pass
+through. Use `--` to pass following tokens literally to `{@}`:
+
+```toml
+[recipes.test]
+cmd = ["go", "test"]
+default_args = ["{pkg}", "{@}"]
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
+```
+
+```sh
+shadowtree test ./internal/recipe -run=TestResolve -count=1
+shadowtree test pkg=./internal/recipe -- pkg=literal
+```
+
 ## Recipe Resolution
 
 Recipe resolution order:
@@ -483,7 +508,8 @@ CLI args replace `default_args`; they do not append to them.
 
 For recipes with typed `arguments`, CLI args are parsed as argument values
 instead. In that case, `default_args` stays active and can contain placeholders
-such as `{project}`.
+such as `{project}`. Use `{@}` in `default_args` when a typed recipe should
+also forward leftover CLI args after its typed argument values.
 
 ## Execution Semantics
 

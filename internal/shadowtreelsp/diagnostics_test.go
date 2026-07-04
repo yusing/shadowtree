@@ -452,6 +452,65 @@ cmd = ["go", "build"]
 	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build `), len(`@build mode=nope`))
 }
 
+func TestDocumentDiagnosticsAllowRecipeReferenceVariadicArgs(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@build -race ./internal/recipe -run=TestResolve -count 1
+'''
+
+[recipes.build]
+cmd = ["go", "test"]
+default_args = ["{pkg}", "{@}"]
+
+[recipes.build.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAllowRecipeReferenceVariadicArgsAfterSeparator(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@build pkg=./internal/recipe -- pkg=literal
+'''
+
+[recipes.build]
+cmd = ["go", "test"]
+default_args = ["{pkg}", "{@}"]
+
+[recipes.build.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectUnknownNamedArgWithVariadicArgs(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@build ./internal/recipe count=1
+'''
+
+[recipes.build]
+cmd = ["go", "test"]
+default_args = ["{pkg}", "{@}"]
+
+[recipes.build.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
+`)
+	assertOneDiagnostic(t, diagnostics, `unknown argument "count"`)
+	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build ./internal/recipe `), len(`@build ./internal/recipe count=1`))
+}
+
 func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[vars]
 cmd = "@missing"

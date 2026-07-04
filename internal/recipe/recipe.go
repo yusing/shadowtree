@@ -21,6 +21,7 @@ const (
 const scriptCommand = "__shadowtree_script__"
 const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
+const variadicArgsPlaceholder = "{@}"
 
 var ReservedNames = map[string]bool{
 	"recipes":    true,
@@ -278,42 +279,45 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
 	}
-	values, selectedArgs, err := ResolveArguments(rec, cliArgs)
+	values, selectedArgs, variadicArgs, err := resolveArguments(rec, cliArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
 	values = mergeStringMaps(rec.Vars, values)
-	cmd, err := expandCommand(rec.Cmd, values)
+	cmd, err := expandCommand(rec.Cmd, values, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
 	cmd = CommandWithRecipeReference(cmd, rec.Shell, rec.ShellPrelude)
-	fixedArgs, err := expandStrings(rec.Args, values)
+	fixedArgs, err := expandStrings(rec.Args, values, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
-	selectedArgs, err = expandStrings(selectedArgs, values)
+	selectedArgs, err = expandStrings(selectedArgs, values, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q default_args: %w", name, err)
 	}
-	pre, err := expandCommands(rec.Pre, values)
+	pre, err := expandCommands(rec.Pre, values, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
 	for i := range pre {
 		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, rec.ShellPrelude)
 	}
-	post, err := expandCommands(rec.Post, values)
+	post, err := expandCommands(rec.Post, values, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
 	for i := range post {
 		post[i] = CommandWithRecipeReference(post[i], rec.Shell, rec.ShellPrelude)
 	}
+	if containsVariadicArgsPlaceholder(globalSyncOut) || containsVariadicArgsPlaceholder(rec.SyncOut) {
+		return Resolved{}, fmt.Errorf("recipe %q sync_out: %s is not supported in sync_out", name, variadicArgsPlaceholder)
+	}
 	sandboxed := RecipeSandboxed(rec)
 	var syncOut []string
 	if sandboxed {
-		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values)
+		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values, nil)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
 		}
@@ -391,74 +395,104 @@ func ValidateConfig(cfg Config) error {
 }
 
 func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
+	values, selectedArgs, _, err := resolveArguments(rec, cliArgs)
+	return values, selectedArgs, err
+}
+
+func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, []string, error) {
+	usesVariadicArgs := recipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
 		selectedArgs := rec.DefaultArgs
 		if len(cliArgs) > 0 {
+			if usesVariadicArgs {
+				variadicArgs := cliArgs
+				if cliArgs[0] == "--" {
+					variadicArgs = cliArgs[1:]
+				}
+				return map[string]string{}, slices.Clone(selectedArgs), variadicArgs, nil
+			}
 			selectedArgs = cliArgs
 		}
-		return map[string]string{}, slices.Clone(selectedArgs), nil
+		return map[string]string{}, slices.Clone(selectedArgs), nil, nil
 	}
 	values := map[string]string{}
 	for name, arg := range rec.Arguments {
 		if arg.Default != nil {
 			value, err := defaultValueString(arg.Default)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s default: %w", name, err)
+				return nil, nil, nil, fmt.Errorf("%s default: %w", name, err)
 			}
 			if err := validateArgumentValue(name, arg, value); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			value, err = expandPathArgumentValue(arg, value)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", name, err)
+				return nil, nil, nil, fmt.Errorf("%s: %w", name, err)
 			}
 			values[name] = value
 		}
 	}
 	positionals := PositionalArguments(rec.Arguments)
 	nextPositional := 0
-	for _, token := range cliArgs {
+	var variadicArgs []string
+	for i, token := range cliArgs {
 		if token == "" {
 			continue
+		}
+		if token == "--" && usesVariadicArgs {
+			variadicArgs = append(variadicArgs, cliArgs[i+1:]...)
+			break
 		}
 		if key, value, ok := strings.Cut(token, "="); ok {
 			arg, exists := rec.Arguments[key]
 			if !exists {
-				return nil, nil, fmt.Errorf("unknown argument %q", key)
+				if usesVariadicArgs && strings.HasPrefix(key, "-") {
+					variadicArgs = append(variadicArgs, token)
+					continue
+				}
+				return nil, nil, nil, fmt.Errorf("unknown argument %q", key)
 			}
 			if err := validateArgumentValue(key, arg, value); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			expanded, err := expandPathArgumentValue(arg, value)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", key, err)
+				return nil, nil, nil, fmt.Errorf("%s: %w", key, err)
 			}
 			values[key] = expanded
 			continue
 		}
+		if usesVariadicArgs && strings.HasPrefix(token, "-") {
+			variadicArgs = append(variadicArgs, token)
+			continue
+		}
 		if nextPositional >= len(positionals) {
-			return nil, nil, fmt.Errorf("unexpected positional argument %q", token)
+			if usesVariadicArgs {
+				variadicArgs = append(variadicArgs, token)
+				continue
+			}
+			return nil, nil, nil, fmt.Errorf("unexpected positional argument %q", token)
 		}
 		name := positionals[nextPositional]
 		nextPositional++
 		arg := rec.Arguments[name]
 		if err := validateArgumentValue(name, arg, token); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		expanded, err := expandPathArgumentValue(arg, token)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		values[name] = expanded
 	}
 	for name, arg := range rec.Arguments {
 		if arg.Required {
 			if _, ok := values[name]; !ok {
-				return nil, nil, fmt.Errorf("missing required argument %q", name)
+				return nil, nil, nil, fmt.Errorf("missing required argument %q", name)
 			}
 		}
 	}
-	return values, slices.Clone(rec.DefaultArgs), nil
+	return values, slices.Clone(rec.DefaultArgs), variadicArgs, nil
 }
 
 func PositionalArguments(args map[string]Argument) []string {
@@ -762,10 +796,10 @@ func MergeArgument(base, override Argument) Argument {
 	return out
 }
 
-func expandCommands(commands []Command, values map[string]string) ([]Command, error) {
+func expandCommands(commands []Command, values map[string]string, variadicArgs []string) ([]Command, error) {
 	out := make([]Command, len(commands))
 	for i, command := range commands {
-		expanded, err := expandCommand(command, values)
+		expanded, err := expandCommand(command, values, variadicArgs)
 		if err != nil {
 			return nil, fmt.Errorf("[%d]: %w", i, err)
 		}
@@ -774,21 +808,65 @@ func expandCommands(commands []Command, values map[string]string) ([]Command, er
 	return out, nil
 }
 
-func expandCommand(command Command, values map[string]string) (Command, error) {
-	expanded, err := expandStrings(command, values)
+func expandCommand(command Command, values map[string]string, variadicArgs []string) (Command, error) {
+	if IsScriptCommand(command) && containsVariadicArgsPlaceholder(command[1:]) {
+		return nil, fmt.Errorf("%s is not supported in script commands", variadicArgsPlaceholder)
+	}
+	expanded, err := expandStrings(command, values, variadicArgs)
 	return Command(expanded), err
 }
 
-func expandStrings(items []string, values map[string]string) ([]string, error) {
-	out := make([]string, len(items))
-	for i, item := range items {
+func expandStrings(items []string, values map[string]string, variadicArgs []string) ([]string, error) {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if !strings.Contains(item, "{") {
+			out = append(out, item)
+			continue
+		}
+		if item == variadicArgsPlaceholder {
+			out = append(out, variadicArgs...)
+			continue
+		}
+		if strings.Contains(item, variadicArgsPlaceholder) {
+			return nil, fmt.Errorf("%s must be a whole argv item", variadicArgsPlaceholder)
+		}
 		expanded, err := expandPlaceholders(item, values)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = expanded
+		out = append(out, expanded)
 	}
 	return out, nil
+}
+
+func recipeUsesVariadicArgs(rec Recipe) bool {
+	return RecipeUsesVariadicArgs(rec)
+}
+
+// RecipeUsesVariadicArgs reports whether rec references the leftover CLI args placeholder.
+func RecipeUsesVariadicArgs(rec Recipe) bool {
+	if containsVariadicArgsPlaceholder(rec.Cmd) ||
+		containsVariadicArgsPlaceholder(rec.Args) ||
+		containsVariadicArgsPlaceholder(rec.DefaultArgs) {
+		return true
+	}
+	for _, command := range rec.Pre {
+		if containsVariadicArgsPlaceholder(command) {
+			return true
+		}
+	}
+	for _, command := range rec.Post {
+		if containsVariadicArgsPlaceholder(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsVariadicArgsPlaceholder(items []string) bool {
+	return slices.ContainsFunc(items, func(item string) bool {
+		return strings.Contains(item, variadicArgsPlaceholder)
+	})
 }
 
 func expandPlaceholders(text string, values map[string]string) (string, error) {

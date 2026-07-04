@@ -483,6 +483,149 @@ func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveUntypedRecipeSplicesVariadicArgs(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"./...", "{@}"},
+	}
+
+	got, err := Resolve("test", rec, []string{"-run=TestResolve", "-count=1"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "test", "./...", "-run=TestResolve", "-count=1"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveTypedRecipeSplicesVariadicArgs(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"{pkg}", "{@}"},
+		Arguments: map[string]Argument{
+			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
+		},
+	}
+
+	got, err := Resolve("test", rec, []string{"./internal/recipe", "-run=TestResolve", "-count=1"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "test", "./internal/recipe", "-run=TestResolve", "-count=1"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveTypedRecipeKeepsKnownArgsAfterVariadicOptIn(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"{pkg}", "{@}"},
+		Arguments: map[string]Argument{
+			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
+		},
+	}
+
+	got, err := Resolve("test", rec, []string{"pkg=./internal/runner", "--", "pkg=literal"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "test", "./internal/runner", "pkg=literal"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveTypedRecipeRejectsUnknownNamedArgWithVariadicArgs(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"{pkg}", "{@}"},
+		Arguments: map[string]Argument{
+			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
+		},
+	}
+
+	_, err := Resolve("test", rec, []string{"./internal/recipe", "count=1"}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), `unknown argument "count"`) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveTypedRecipeSplicesFlagBeforePosition(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"{pkg}", "{@}"},
+		Arguments: map[string]Argument{
+			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
+		},
+	}
+
+	got, err := Resolve("test", rec, []string{"-race", "./internal/recipe"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "test", "./internal/recipe", "-race"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveRejectsEmbeddedVariadicArgsPlaceholder(t *testing.T) {
+	rec := Recipe{
+		Cmd:         Command{"go", "test"},
+		DefaultArgs: []string{"./...", "-run={@}"},
+	}
+
+	_, err := Resolve("test", rec, []string{"TestResolve"}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "{@} must be a whole argv item") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveRejectsVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf '%s\n' {@}`),
+	}
+
+	_, err := Resolve("script", rec, []string{"value"}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "{@} is not supported in script commands") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveRejectsVariadicArgsPlaceholderInSyncOut(t *testing.T) {
+	rec := Recipe{
+		Cmd:     Command{"go", "test"},
+		SyncOut: []string{"{@}"},
+	}
+
+	_, err := Resolve("test", rec, []string{"out.txt"}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "{@} is not supported in sync_out") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveRejectsVariadicArgsPlaceholderInUnsandboxedSyncOut(t *testing.T) {
+	rec := Recipe{
+		Cmd:       Command{"go", "test"},
+		Sandboxed: new(false),
+		SyncOut:   []string{"{@}"},
+	}
+
+	_, err := Resolve("test", rec, []string{"out.txt"}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "{@} is not supported in sync_out") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveRejectsVariadicArgsPlaceholderInGlobalSyncOut(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"go", "test"},
+	}
+
+	_, err := Resolve("test", rec, []string{"out.txt"}, []string{"{@}"}, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "{@} is not supported in sync_out") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
 func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
 	rec := ApplyGlobals(map[string]Recipe{
 		"build": {

@@ -62,6 +62,30 @@ cmd = '''go build {'''
 	}
 }
 
+func TestCompletionsIncludeVariadicArgsPlaceholder(t *testing.T) {
+	text := `[recipes.test]
+cmd = ["go", "test", "{@`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = ["go", "test", "{@`)})
+	assertLabels(t, items, "@")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = ["go", "test", "{@`)})
+	edit := completionTextEdit(t, result, "@")
+	if edit["newText"] != "@}" {
+		t.Fatalf("newText = %#v, want variadic placeholder suffix", edit["newText"])
+	}
+}
+
+func TestCompletionsExcludeVariadicArgsPlaceholderInSyncOut(t *testing.T) {
+	text := `[recipes.test]
+sync_out = ["{`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`sync_out = ["{`)})
+	for _, item := range items {
+		if item.Label == "@" {
+			t.Fatalf("unexpected variadic placeholder completion in %#v", items)
+		}
+	}
+}
+
 func TestCompletionsIncludeRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
@@ -714,6 +738,16 @@ cmd = '''go build {PROJECT}'''
 	}
 	if !hasSemanticToken(tokens, 4, len("cmd = '''go build "), len("{PROJECT}"), semanticTokenVariable) {
 		t.Fatalf("missing placeholder token in %#v", tokens)
+	}
+}
+
+func TestSemanticTokensIncludeVariadicArgsPlaceholder(t *testing.T) {
+	text := `[recipes.test]
+cmd = ["go", "test", "{@}"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	if !hasSemanticToken(tokens, 1, len(`cmd = ["go", "test", "`), len("{@}"), semanticTokenVariable) {
+		t.Fatalf("missing variadic placeholder token in %#v", tokens)
 	}
 }
 

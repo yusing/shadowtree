@@ -194,7 +194,7 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, recipePrefix, valueBuiltinReferenceContext(analysis.CurrentTable, key), opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
-		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
+		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos))
 	}
 	if key, ok := keyBeforeValue(prefix); ok {
 		return valueCompletions(key)
@@ -728,7 +728,7 @@ func valueCompletions(key string) []completion {
 	}
 }
 
-func placeholderCompletions(analysis documentAnalysis, recipe, prefix string) []completion {
+func placeholderCompletions(analysis documentAnalysis, recipe, prefix string, allowVariadic bool) []completion {
 	var names []string
 	names = append(names, analysis.GlobalVars...)
 	names = append(names, analysis.RecipeVars[recipe]...)
@@ -748,6 +748,19 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string) []
 		}
 	}
 	var items []completion
+	if allowVariadic && strings.HasPrefix("@", prefix) {
+		insertText := "@"
+		if !strings.HasSuffix(prefix, "}") {
+			insertText += "}"
+		}
+		items = append(items, completion{
+			Label:       "@",
+			InsertText:  insertText,
+			Kind:        completionKindVariable,
+			Detail:      "Remaining recipe args",
+			Placeholder: true,
+		})
+	}
 	for _, name := range names {
 		if !strings.HasPrefix(name, prefix) {
 			continue
@@ -765,6 +778,27 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string) []
 		})
 	}
 	return items
+}
+
+func variadicPlaceholderCompletionAllowed(analysis documentAnalysis, prefix string, pos lspPosition) bool {
+	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
+		return false
+	}
+	key, ok := keyBeforeValue(prefix)
+	if !ok {
+		return false
+	}
+	_, valuePrefix, _ := strings.Cut(prefix, "=")
+	switch key {
+	case "args", "default_args":
+		return strings.Contains(valuePrefix, "[")
+	case "cmd":
+		return strings.Contains(valuePrefix, "[")
+	case "pre", "post":
+		return strings.Contains(valuePrefix, "[[")
+	default:
+		return false
+	}
 }
 
 func semanticTokens(text string) []uint32 {
@@ -1429,6 +1463,11 @@ func placeholderSpans(line string) []span {
 	var spans []span
 	for i := 0; i < len(line); i++ {
 		if line[i] != '{' {
+			continue
+		}
+		if strings.HasPrefix(line[i:], "{@}") {
+			spans = append(spans, span{Start: i, Length: len("{@}")})
+			i += len("{@}") - 1
 			continue
 		}
 		end := i + 1
@@ -2117,6 +2156,9 @@ func placeholderPrefix(prefix string) (string, bool) {
 	close := strings.LastIndexByte(prefix, '}')
 	if open < 0 || close > open {
 		return "", false
+	}
+	if prefix[open+1:] == "@" {
+		return "@", true
 	}
 	for _, ch := range prefix[open+1:] {
 		if !(ch == '_' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z') {
