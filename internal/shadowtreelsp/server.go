@@ -274,7 +274,7 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 			out["textEdit"] = textEdit(line, bytePosition.Line, item.Edit.Start, item.Edit.End, item.InsertText)
 		case item.Quote:
 			out["textEdit"] = quotedValueTextEdit(text, bytePosition, item.Label)
-		case item.Detail == "Shadowtree placeholder":
+		case item.Placeholder:
 			out["textEdit"] = placeholderTextEdit(text, bytePosition, item.Label)
 		case item.RecipeReference:
 			out["textEdit"] = recipeReferenceTextEdit(text, bytePosition, item.InsertText)

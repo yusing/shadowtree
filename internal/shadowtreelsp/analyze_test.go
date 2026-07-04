@@ -41,13 +41,25 @@ PROJECT = "./cmd/shadowtree"
 BIN = "shadowtree"
 
 [recipes.build.arguments.pkg]
+help = "Package to build."
 type = "string"
 
 [recipes.build]
 cmd = '''go build {'''
 `
-	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len("cmd = '''go build {")})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 11, Character: len("cmd = '''go build {")})
 	assertLabels(t, items, "{PROJECT}", "{BIN}", "{pkg}")
+	assertCompletionDetail(t, items, "{pkg}", "Package to build.")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 11, Character: len("cmd = '''go build {")})
+	item := completionItem(t, result, "{pkg}")
+	if item["detail"] != "Package to build." {
+		t.Fatalf("detail = %#v, want argument help", item["detail"])
+	}
+	edit := completionTextEdit(t, result, "{pkg}")
+	if edit["newText"] != "pkg}" {
+		t.Fatalf("newText = %#v, want placeholder suffix", edit["newText"])
+	}
 }
 
 func TestCompletionsIncludeRecipeReferences(t *testing.T) {

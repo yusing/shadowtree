@@ -22,6 +22,7 @@ type documentAnalysis struct {
 	GlobalVars    []string
 	RecipeVars    map[string][]string
 	Arguments     map[string][]string
+	ArgumentHelp  map[string]map[string]string
 	ScriptRegions []scriptRegion
 	CurrentTable  string
 }
@@ -32,6 +33,7 @@ type completion struct {
 	Kind            int
 	Detail          string
 	Quote           bool
+	Placeholder     bool
 	RecipeReference bool
 	Edit            *completionEdit
 }
@@ -114,9 +116,10 @@ var boolValues = []completion{
 func analyzeDocument(text string, line int) documentAnalysis {
 	lines := strings.Split(text, "\n")
 	analysis := documentAnalysis{
-		Lines:      lines,
-		RecipeVars: map[string][]string{},
-		Arguments:  map[string][]string{},
+		Lines:        lines,
+		RecipeVars:   map[string][]string{},
+		Arguments:    map[string][]string{},
+		ArgumentHelp: map[string]map[string]string{},
 	}
 	table := ""
 	for i, raw := range lines {
@@ -154,6 +157,17 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	}
 	for name := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[name])
+	}
+	var cfg recipe.Config
+	if _, err := toml.Decode(text, &cfg); err == nil {
+		for recipeName, rec := range cfg.Recipes {
+			for argName, arg := range rec.Arguments {
+				if analysis.ArgumentHelp[recipeName] == nil {
+					analysis.ArgumentHelp[recipeName] = map[string]string{}
+				}
+				analysis.ArgumentHelp[recipeName][argName] = recipe.ArgumentHelp(arg)
+			}
+		}
 	}
 	analysis.ScriptRegions = scriptRegions(lines, shellSettings(lines))
 	return analysis
@@ -708,6 +722,19 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string) []
 	names = append(names, analysis.RecipeVars[recipe]...)
 	names = append(names, analysis.Arguments[recipe]...)
 	names = uniqueSorted(names)
+	detail := map[string]string{}
+	for _, name := range analysis.GlobalVars {
+		detail[name] = "Shared placeholder"
+	}
+	for _, name := range analysis.RecipeVars[recipe] {
+		detail[name] = "Recipe placeholder"
+	}
+	for _, name := range analysis.Arguments[recipe] {
+		detail[name] = "Argument placeholder"
+		if help := analysis.ArgumentHelp[recipe][name]; help != "" {
+			detail[name] = help
+		}
+	}
 	var items []completion
 	for _, name := range names {
 		if !strings.HasPrefix(name, prefix) {
@@ -718,10 +745,11 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string) []
 			insertText += "}"
 		}
 		items = append(items, completion{
-			Label:      "{" + name + "}",
-			InsertText: insertText,
-			Kind:       completionKindVariable,
-			Detail:     "Shadowtree placeholder",
+			Label:       "{" + name + "}",
+			InsertText:  insertText,
+			Kind:        completionKindVariable,
+			Detail:      detail[name],
+			Placeholder: true,
 		})
 	}
 	return items
