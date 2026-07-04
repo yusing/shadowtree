@@ -1,12 +1,15 @@
 package shadowtreelsp
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/BurntSushi/toml"
 	recipecompletion "github.com/yusing/shadowtree/internal/completion"
+	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -34,7 +37,8 @@ type completionEdit struct {
 }
 
 type completionOptions struct {
-	Dir string
+	Dir        string
+	ConfigPath string
 }
 
 const (
@@ -164,7 +168,7 @@ func completionsAtWithOptions(text string, pos lspPosition, opts completionOptio
 		return items
 	}
 	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
-		return recipeReferenceCompletions(analysis, recipePrefix)
+		return recipeReferenceCompletionsWithOptions(analysis, recipePrefix, opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
@@ -197,7 +201,11 @@ func recipeArgumentReferenceCompletions(text, table, prefix string, pos lspPosit
 	if !ok {
 		return nil, true
 	}
-	rec, ok := recipes[name]
+	ref := recipeReferenceForCompletion(name)
+	rec, ok := recipes[ref.Name]
+	if ref.Path != "" {
+		rec, ok = crossConfigCompletionRecipe(ref, opts)
+	}
 	if !ok || len(rec.Arguments) == 0 {
 		return nil, true
 	}
@@ -311,6 +319,13 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 }
 
 func recipeReferenceCompletions(analysis documentAnalysis, prefix string) []completion {
+	return recipeReferenceCompletionsWithOptions(analysis, prefix, completionOptions{})
+}
+
+func recipeReferenceCompletionsWithOptions(analysis documentAnalysis, prefix string, opts completionOptions) []completion {
+	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
+		return crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix, opts)
+	}
 	names := slices.Clone(analysis.Recipes)
 	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
 		names = appendUnique(names, name)
@@ -328,7 +343,110 @@ func recipeReferenceCompletions(analysis documentAnalysis, prefix string) []comp
 			Detail:     "Shadowtree recipe reference",
 		})
 	}
+	items = append(items, crossConfigDirectoryCompletions(prefix, opts)...)
 	return items
+}
+
+func crossConfigDirectoryCompletions(prefix string, opts completionOptions) []completion {
+	base := completionBaseDir(opts)
+	if base == "" || strings.Contains(prefix, "{") {
+		return nil
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	var items []completion
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		configPath := filepath.Join(base, name, ".shadowtree.toml")
+		if _, err := os.Stat(configPath); err != nil {
+			continue
+		}
+		items = append(items, completion{
+			Label:      "@" + name + ":",
+			InsertText: name + ":",
+			Kind:       completionKindField,
+			Detail:     "Shadowtree config directory",
+		})
+	}
+	return items
+}
+
+func crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix string, opts completionOptions) []completion {
+	if pathPrefix == "" || strings.Contains(pathPrefix, "{") {
+		return nil
+	}
+	recipes, ok := crossConfigCompletionRecipes(pathPrefix, opts)
+	if !ok {
+		return nil
+	}
+	names := mapsKeys(recipes)
+	slices.Sort(names)
+	var items []completion
+	for _, name := range names {
+		if !strings.HasPrefix(name, recipePrefix) {
+			continue
+		}
+		value := pathPrefix + ":" + name
+		items = append(items, completion{
+			Label:      "@" + value,
+			InsertText: value,
+			Kind:       completionKindFunction,
+			Detail:     "Shadowtree recipe reference",
+		})
+	}
+	return items
+}
+
+func crossConfigCompletionRecipe(ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {
+	recipes, ok := crossConfigCompletionRecipes(ref.Path, opts)
+	if !ok {
+		return recipe.Recipe{}, false
+	}
+	rec, ok := recipes[ref.Name]
+	return rec, ok
+}
+
+func crossConfigCompletionRecipes(path string, opts completionOptions) (map[string]recipe.Recipe, bool) {
+	base := completionBaseDir(opts)
+	if base == "" {
+		return nil, false
+	}
+	targetDir := path
+	if !filepath.IsAbs(targetDir) {
+		targetDir = filepath.Join(base, targetDir)
+	}
+	loaded, err := configfile.Load(filepath.Join(targetDir, ".shadowtree.toml"))
+	if err != nil {
+		return nil, false
+	}
+	recipes, _, err := configfile.ResolveRecipes(nil, loaded, targetDir, configfile.ResolveOptions{})
+	if err != nil {
+		return nil, false
+	}
+	return recipes, true
+}
+
+func completionBaseDir(opts completionOptions) string {
+	if opts.ConfigPath != "" {
+		return filepath.Dir(opts.ConfigPath)
+	}
+	return opts.Dir
+}
+
+func recipeReferenceForCompletion(name string) recipe.RecipeReferenceTarget {
+	ref, ok := recipe.ParseRecipeReference(recipe.Command{"@" + name})
+	if !ok {
+		return recipe.RecipeReferenceTarget{Name: name}
+	}
+	return ref
 }
 
 func recipeSubtableCompletions() []completion {
@@ -858,10 +976,18 @@ func overlapsCommandReference(references []commandReferenceSpan, lineNo int, ite
 }
 
 type commandReferenceSpan struct {
+	Path  string
 	Name  string
 	Line  int
 	Start int
 	End   int
+}
+
+func (ref commandReferenceSpan) Target() string {
+	if ref.Path == "" {
+		return ref.Name
+	}
+	return ref.Path + ":" + ref.Name
 }
 
 type commandReferenceScan struct {
@@ -949,12 +1075,13 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 }
 
 func commandReferenceSpanFromString(value string, lineNo, start, end int) commandReferenceSpan {
-	name, _, ok := recipe.RecipeReference(recipe.Command{value})
+	ref, ok := recipe.ParseRecipeReference(recipe.Command{value})
 	if !ok {
-		name = strings.TrimPrefix(value, "@")
+		ref.Name = strings.TrimPrefix(value, "@")
 	}
 	return commandReferenceSpan{
-		Name:  name,
+		Path:  ref.Path,
+		Name:  ref.Name,
 		Line:  lineNo,
 		Start: start,
 		End:   end,
@@ -1088,7 +1215,7 @@ func recipeArgumentTable(table string) bool {
 }
 
 func isRecipeReferenceNameByte(ch byte) bool {
-	return isBareKeyByte(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '/' || ch == '{' || ch == '}'
+	return isBareKeyByte(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '/' || ch == ':' || ch == '{' || ch == '}'
 }
 
 func encodeSemanticTokens(lines []string, tokens []semanticToken) []uint32 {
@@ -1268,6 +1395,14 @@ func appendUnique(values []string, value string) []string {
 		return values
 	}
 	return append(values, value)
+}
+
+func mapsKeys[V any](items map[string]V) []string {
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func uniqueSorted(values []string) []string {

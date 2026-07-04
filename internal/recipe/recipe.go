@@ -88,6 +88,13 @@ type Resolved struct {
 	Profile    string
 }
 
+// RecipeReferenceTarget is a parsed @recipe or @path:recipe command target.
+type RecipeReferenceTarget struct {
+	Path string
+	Name string
+	Args []string
+}
+
 var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var goBuiltinNames = []string{"build", "generate", "lint", "test", "test-race", "tidy", "vet"}
@@ -511,12 +518,13 @@ func ValidateCommand(command Command) error {
 		}
 		return nil
 	}
-	if ref, _, ok := RecipeReference(command); ok {
-		if ref == "" {
+	if ref, ok := ParseRecipeReference(command); ok {
+		if ref.Path == "" && ref.Name == "" {
 			return errors.New("empty recipe reference")
 		}
-		if strings.TrimSpace(ref) != ref {
-			return fmt.Errorf("invalid recipe reference %q", ref)
+		if strings.TrimSpace(ref.Path) != ref.Path || strings.TrimSpace(ref.Name) != ref.Name ||
+			(ref.Path != "" && ref.Name == "") {
+			return fmt.Errorf("invalid recipe reference %q", ref.Target())
 		}
 		return nil
 	}
@@ -578,15 +586,43 @@ func CommandHelpText(command Command) string {
 }
 
 func RecipeReference(command Command) (string, []string, bool) {
-	if len(command) == 0 || !strings.HasPrefix(command[0], recipeReferencePrefix) {
+	ref, ok := ParseRecipeReference(command)
+	if !ok {
 		return "", nil, false
+	}
+	return ref.Name, slices.Clone(ref.Args), true
+}
+
+// ParseRecipeReference parses a command whose first item starts with @.
+func ParseRecipeReference(command Command) (RecipeReferenceTarget, bool) {
+	if len(command) == 0 || !strings.HasPrefix(command[0], recipeReferencePrefix) {
+		return RecipeReferenceTarget{}, false
 	}
 	target := strings.TrimPrefix(command[0], recipeReferencePrefix)
 	name, args, ok := parseGroupedInvocation([]string{target})
 	if ok {
-		return name, slices.Concat(args, command[1:]), true
+		ref := splitRecipeReferenceTarget(name)
+		ref.Args = slices.Concat(args, command[1:])
+		return ref, true
 	}
-	return target, slices.Clone(command[1:]), true
+	ref := splitRecipeReferenceTarget(target)
+	ref.Args = slices.Clone(command[1:])
+	return ref, true
+}
+
+func splitRecipeReferenceTarget(target string) RecipeReferenceTarget {
+	path, name, ok := strings.Cut(target, ":")
+	if !ok {
+		return RecipeReferenceTarget{Name: target}
+	}
+	return RecipeReferenceTarget{Path: path, Name: name}
+}
+
+func (ref RecipeReferenceTarget) Target() string {
+	if ref.Path == "" {
+		return ref.Name
+	}
+	return ref.Path + ":" + ref.Name
 }
 
 func SingleLine(text string) string {

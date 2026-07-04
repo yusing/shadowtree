@@ -61,7 +61,7 @@ func (sandbox *sandboxWorkspace) probeNamespaceOverlay() error {
 		truePath = "/bin/true"
 	}
 	var stderr bytes.Buffer
-	if err := sandbox.runNamespaceCommand(context.Background(), os.Environ(), []string{truePath}, nil, io.Discard, &stderr); err != nil {
+	if err := sandbox.runNamespaceCommand(context.Background(), os.Environ(), sandbox.target, []string{truePath}, nil, io.Discard, &stderr); err != nil {
 		if message := strings.TrimSpace(stderr.String()); message != "" {
 			return fmt.Errorf("%w: %s", err, message)
 		}
@@ -70,7 +70,7 @@ func (sandbox *sandboxWorkspace) probeNamespaceOverlay() error {
 	return nil
 }
 
-func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []string, dir string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	helper, err := os.Executable()
 	if err != nil {
 		return err
@@ -81,6 +81,7 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []
 		sandbox.upper,
 		sandbox.work,
 		sandbox.target,
+		dir,
 		"--",
 	}
 	args = append(args, command...)
@@ -115,13 +116,13 @@ func (sandbox *sandboxWorkspace) runNamespaceCommand(ctx context.Context, env []
 }
 
 func OverlayHelperMain(argv []string) int {
-	if len(argv) < 6 || argv[4] != "--" {
+	if len(argv) < 7 || argv[5] != "--" {
 		fmt.Fprintln(os.Stderr, "shadowtree overlay helper: missing command")
 		return 125
 	}
-	lower, upper, work, target := argv[0], argv[1], argv[2], argv[3]
-	command := argv[5:]
-	if lower == "" || upper == "" || work == "" || target == "" || len(command) == 0 {
+	lower, upper, work, target, dir := argv[0], argv[1], argv[2], argv[3], argv[4]
+	command := argv[6:]
+	if lower == "" || upper == "" || work == "" || target == "" || dir == "" || len(command) == 0 {
 		fmt.Fprintln(os.Stderr, "shadowtree overlay helper: incomplete arguments")
 		return 125
 	}
@@ -134,7 +135,7 @@ func OverlayHelperMain(argv []string) int {
 		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: mount overlayfs: %v\n", err)
 		return 125
 	}
-	if err := os.Chdir(target); err != nil {
+	if err := os.Chdir(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: chdir: %v\n", err)
 		return 125
 	}

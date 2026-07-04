@@ -1,6 +1,8 @@
 package shadowtreelsp
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -115,6 +117,70 @@ cmd = ["go", "build"]
 pre = ["@build[mode="]
 `
 	items := completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["@build[mode=`)})
+	assertLabels(t, items, "true", "false")
+}
+
+func TestCompletionsIncludeCrossConfigDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeLSPTargetConfig(t, root, "gen-schema")
+	text := `[recipes.test]
+cmd = ["@web"]
+`
+	items := completionsAtWithOptions(
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = ["@web`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@webui:")
+}
+
+func TestCompletionsIncludeCrossConfigRecipeReferences(t *testing.T) {
+	root := t.TempDir()
+	writeLSPTargetConfig(t, root, "gen-schema")
+	text := `[recipes.test]
+cmd = ["@webui:g"]
+`
+	items := completionsAtWithOptions(
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = ["@webui:g`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@webui:gen-schema")
+}
+
+func TestCompletionsIncludeCrossConfigRecipeReferenceArguments(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[recipes.gen-schema.arguments.mode]
+type = "bool"
+
+[recipes.gen-schema]
+cmd = ["true"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+cmd = ["@webui:gen-schema["]
+`
+	items := completionsAtWithOptions(
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "mode=")
+
+	text = `[recipes.test]
+cmd = ["@webui:gen-schema[mode="]
+`
+	items = completionsAtWithOptions(
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[mode=`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
 	assertLabels(t, items, "true", "false")
 }
 
@@ -281,6 +347,17 @@ pre = ["@build[project=internal/, binary=abc]"]
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project="), len("internal/"), semanticTokenString)
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project=internal/, "), len("binary"), semanticTokenParameter)
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@build[project=internal/, binary="), len("abc"), semanticTokenString)
+}
+
+func TestSemanticTokensHighlightCrossConfigRecipeReferences(t *testing.T) {
+	text := `[recipes.test]
+cmd = ["@webui:gen-schema[mode=dev]"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	linePrefix := len(`cmd = ["`)
+	assertSemanticToken(t, tokens, 1, linePrefix, len("@webui:gen-schema"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@webui:gen-schema["), len("mode"), semanticTokenParameter)
+	assertSemanticToken(t, tokens, 1, linePrefix+len("@webui:gen-schema[mode="), len("dev"), semanticTokenString)
 }
 
 func TestSemanticTokensIgnoreShellStringStartingWithAt(t *testing.T) {

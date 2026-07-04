@@ -2,10 +2,14 @@ package shadowtreelsp
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -21,7 +25,7 @@ type lspDiagnostic struct {
 func (server *server) publishDiagnostics(uri, text string, version *int) error {
 	params := map[string]any{
 		"uri":         uri,
-		"diagnostics": documentDiagnostics(text),
+		"diagnostics": documentDiagnosticsWithOptions(text, diagnosticOptions{URI: uri}),
 	}
 	if version != nil {
 		params["version"] = *version
@@ -34,13 +38,21 @@ func (server *server) publishDiagnostics(uri, text string, version *int) error {
 }
 
 func documentDiagnostics(text string) []lspDiagnostic {
+	return documentDiagnosticsWithOptions(text, diagnosticOptions{})
+}
+
+type diagnosticOptions struct {
+	URI string
+}
+
+func documentDiagnosticsWithOptions(text string, opts diagnosticOptions) []lspDiagnostic {
 	var cfg recipe.Config
 	md, err := toml.Decode(text, &cfg)
 	if err != nil {
 		return []lspDiagnostic{parseDiagnostic(text, err)}
 	}
 
-	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(text, cfg)...)
+	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(text, cfg, opts)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
 	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
 		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
@@ -51,7 +63,7 @@ func documentDiagnostics(text string) []lspDiagnostic {
 	return diagnostics
 }
 
-func commandReferenceDiagnostics(text string, cfg recipe.Config) []lspDiagnostic {
+func commandReferenceDiagnostics(text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
 	valid := map[string]bool{}
 	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
@@ -74,6 +86,20 @@ func commandReferenceDiagnostics(text string, cfg recipe.Config) []lspDiagnostic
 		if strings.Contains(ref.Name, "{") {
 			continue
 		}
+		if ref.Path != "" {
+			if strings.Contains(ref.Path, "{") {
+				continue
+			}
+			if err := validateCrossConfigReference(ref, opts); err != nil {
+				diagnostics = append(diagnostics, lspDiagnostic{
+					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+					Severity: diagnosticSeverityError,
+					Source:   "shadowtree",
+					Message:  err.Error(),
+				})
+			}
+			continue
+		}
 		if !valid[ref.Name] {
 			diagnostics = append(diagnostics, lspDiagnostic{
 				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
@@ -84,6 +110,36 @@ func commandReferenceDiagnostics(text string, cfg recipe.Config) []lspDiagnostic
 		}
 	}
 	return diagnostics
+}
+
+func validateCrossConfigReference(ref commandReferenceSpan, opts diagnosticOptions) error {
+	base, ok := lspConfigDir(opts.URI)
+	if !ok {
+		return nil
+	}
+	targetDir := ref.Path
+	if !filepath.IsAbs(targetDir) {
+		targetDir = filepath.Join(base, targetDir)
+	}
+	info, err := os.Stat(targetDir)
+	if err != nil {
+		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("invalid recipe reference @%s: not a directory", ref.Target())
+	}
+	loaded, err := configfile.Load(filepath.Join(targetDir, ".shadowtree.toml"))
+	if err != nil {
+		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
+	}
+	recipes, _, err := configfile.ResolveRecipes(nil, loaded, targetDir, configfile.ResolveOptions{})
+	if err != nil {
+		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
+	}
+	if _, ok := recipes[ref.Name]; !ok {
+		return fmt.Errorf("unknown recipe reference @%s", ref.Target())
+	}
+	return nil
 }
 
 func parseDiagnostic(text string, err error) lspDiagnostic {

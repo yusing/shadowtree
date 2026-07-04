@@ -1,8 +1,10 @@
 package configfile
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,12 @@ var Names = []string{".shadowtree.toml"}
 type Loaded struct {
 	Path   string
 	Config recipe.Config
+}
+
+// ResolveOptions controls how recipes are assembled from a loaded config.
+type ResolveOptions struct {
+	Profile         string
+	EvalDynamicVars bool
 }
 
 func Load(path string) (Loaded, error) {
@@ -37,6 +45,36 @@ func Load(path string) (Loaded, error) {
 		return Loaded{}, err
 	}
 	return Loaded{Path: path, Config: cfg}, nil
+}
+
+// ResolveRecipes merges built-ins, config recipes, globals, and optional dynamic vars.
+func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts ResolveOptions) (map[string]recipe.Recipe, string, error) {
+	profile := opts.Profile
+	if profile == "" {
+		profile = loaded.Config.Profile
+	}
+	if profile == "" {
+		profile = detect.Profile(dir)
+	}
+	if profile != "" && profile != recipe.GoProfile {
+		return nil, "", fmt.Errorf("unsupported profile: %s", profile)
+	}
+	vars := maps.Clone(loaded.Config.Vars)
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	if opts.EvalDynamicVars {
+		dynamicVars, err := recipe.EvalVarCommands(ctx, dir, loaded.Config.Env, loaded.Config.VarCommands, loaded.Config.Shell, loaded.Config.ShellPrelude)
+		if err != nil {
+			return nil, "", fmt.Errorf("var_commands: %w", err)
+		}
+		maps.Copy(vars, dynamicVars)
+	}
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), loaded.Config.Recipes)
+	if err != nil {
+		return nil, "", err
+	}
+	return recipe.ApplyGlobals(recipes, vars, loaded.Config.Shell, loaded.Config.ShellPrelude), profile, nil
 }
 
 func Find(cwd string) (Loaded, bool, error) {

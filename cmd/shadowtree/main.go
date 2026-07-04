@@ -17,7 +17,6 @@ import (
 
 	"github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
-	"github.com/yusing/shadowtree/internal/detect"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/runner"
 )
@@ -41,9 +40,10 @@ type options struct {
 type multiFlag []string
 
 type recipeHelpOptions struct {
-	Dir     string
-	Env     map[string]string
-	Recipes map[string]recipe.Recipe
+	Dir        string
+	ConfigPath string
+	Env        map[string]string
+	Recipes    map[string]recipe.Recipe
 }
 
 func (flag *multiFlag) String() string {
@@ -115,9 +115,10 @@ func run(ctx context.Context, args []string) error {
 				return fmt.Errorf("unknown recipe: %s", rest[1])
 			}
 			return printRecipeHelp(ctx, os.Stdout, rest[1], rec, recipeHelpOptions{
-				Dir:     mustGetwd(),
-				Env:     loaded.Config.Env,
-				Recipes: resolvedSet,
+				Dir:        mustGetwd(),
+				ConfigPath: loaded.Path,
+				Env:        loaded.Config.Env,
+				Recipes:    resolvedSet,
 			})
 		}
 		return printHelp(os.Stdout, loaded, profile, resolvedSet)
@@ -235,32 +236,13 @@ func resolveSet(ctx context.Context, opts options, evalDynamicVars bool) (map[st
 	} else if ok {
 		loaded = cfg
 	}
-	profile := opts.profile
-	if profile == "" {
-		profile = loaded.Config.Profile
-	}
-	if profile == "" {
-		profile = detect.Profile(cwd)
-	}
-	if profile != "" && profile != recipe.GoProfile {
-		return nil, loaded, "", fmt.Errorf("unsupported profile: %s", profile)
-	}
-	vars := maps.Clone(loaded.Config.Vars)
-	if vars == nil {
-		vars = map[string]string{}
-	}
-	if evalDynamicVars {
-		dynamicVars, err := recipe.EvalVarCommands(ctx, cwd, loaded.Config.Env, loaded.Config.VarCommands, loaded.Config.Shell, loaded.Config.ShellPrelude)
-		if err != nil {
-			return nil, loaded, "", fmt.Errorf("var_commands: %w", err)
-		}
-		maps.Copy(vars, dynamicVars)
-	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), loaded.Config.Recipes)
+	recipes, profile, err := configfile.ResolveRecipes(ctx, loaded, cwd, configfile.ResolveOptions{
+		Profile:         opts.profile,
+		EvalDynamicVars: evalDynamicVars,
+	})
 	if err != nil {
 		return nil, loaded, "", err
 	}
-	recipes = recipe.ApplyGlobals(recipes, vars, loaded.Config.Shell, loaded.Config.ShellPrelude)
 	return recipes, loaded, profile, nil
 }
 
@@ -276,8 +258,9 @@ func runComplete(args []string) error {
 		return nil
 	}
 	candidates, err := completion.Candidates(context.Background(), shell, words, recipes, completion.Options{
-		Dir: mustGetwd(),
-		Env: loaded.Config.Env,
+		Dir:        mustGetwd(),
+		ConfigPath: loaded.Path,
+		Env:        loaded.Config.Env,
 	})
 	if err != nil {
 		return err
@@ -433,7 +416,11 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 		maps.Copy(env, rec.Env)
 		valueCtx, cancel := context.WithTimeout(ctx, argumentValuesTimeout)
 		defer cancel()
-		output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, opts.Recipes)
+		output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, runner.CommandOutputOptions{
+			Recipes:    opts.Recipes,
+			ConfigPath: opts.ConfigPath,
+			SourceDir:  opts.Dir,
+		})
 		if err != nil {
 			return nil, err
 		}

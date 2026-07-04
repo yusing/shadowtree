@@ -78,9 +78,31 @@ func TestRecipeReferenceSplitsBracketStyleArguments(t *testing.T) {
 	}
 }
 
+func TestRecipeReferenceSplitsCrossConfigTarget(t *testing.T) {
+	ref, ok := ParseRecipeReference(Command{"@webui:gen-schema[mode=dev]", "force=true"})
+	if !ok {
+		t.Fatal("ParseRecipeReference did not detect @ command")
+	}
+	if ref.Path != "webui" {
+		t.Fatalf("Path = %q", ref.Path)
+	}
+	if ref.Name != "gen-schema" {
+		t.Fatalf("Name = %q", ref.Name)
+	}
+	if !slices.Equal(ref.Args, []string{"mode=dev", "force=true"}) {
+		t.Fatalf("Args = %#v", ref.Args)
+	}
+}
+
 func TestValidateCommandRejectsEmptyRecipeReference(t *testing.T) {
 	if err := ValidateCommand(Command{"@"}); err == nil {
 		t.Fatal("ValidateCommand accepted empty recipe reference")
+	}
+}
+
+func TestValidateCommandRejectsEmptyCrossConfigRecipeName(t *testing.T) {
+	if err := ValidateCommand(Command{"@webui:"}); err == nil {
+		t.Fatal("ValidateCommand accepted empty cross-config recipe name")
 	}
 }
 

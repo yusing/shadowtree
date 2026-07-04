@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -31,6 +32,13 @@ type Options struct {
 
 type ExitError struct {
 	Code int
+}
+
+// CommandOutputOptions controls recipe references inside output-producing commands.
+type CommandOutputOptions struct {
+	Recipes    map[string]recipe.Recipe
+	ConfigPath string
+	SourceDir  string
 }
 
 var errReflinkUnsupported = errors.New("reflink unsupported")
@@ -53,12 +61,13 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err != nil {
 		return err
 	}
+	options.SourceDir = source
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
 	if !options.Resolved.Sandboxed {
 		if options.Verbose {
 			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
 		}
-		return runResolvedCommands(ctx, nil, source, env, options, stdin, stdout, stderr, []string{options.Resolved.Name})
+		return runResolvedCommands(ctx, nil, source, env, options, stdin, stdout, stderr, []string{recipeReferenceStackKey(options.Resolved.ConfigPath, options.Resolved.Name)})
 	}
 	workDir, err := os.MkdirTemp("", "shadowtree-*")
 	if err != nil {
@@ -75,7 +84,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 			runErr = err
 		}
 	}()
-	if err := runResolvedCommands(ctx, sandbox, sandbox.root, env, options, stdin, stdout, stderr, []string{options.Resolved.Name}); err != nil {
+	if err := runResolvedCommands(ctx, sandbox, sandbox.root, env, options, stdin, stdout, stderr, []string{recipeReferenceStackKey(options.Resolved.ConfigPath, options.Resolved.Name)}); err != nil {
 		return err
 	}
 	if options.SyncOutAll {
@@ -152,6 +161,17 @@ func (sandbox *sandboxWorkspace) Close() error {
 	return removeAll(sandbox.workDir)
 }
 
+func (sandbox *sandboxWorkspace) namespaceDir(dir string) string {
+	if !sandbox.overlay {
+		return dir
+	}
+	rel, err := filepath.Rel(sandbox.root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return dir
+	}
+	return filepath.Join(sandbox.target, rel)
+}
+
 func (sandbox *sandboxWorkspace) materialize(dst string) error {
 	if err := clearHostDir(dst); err != nil {
 		return err
@@ -189,11 +209,11 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 		}
 		fmt.Fprintf(stderr, "shadowtree: %s: %s\n", label, strings.Join(command, " "))
 	}
-	if _, _, ok := recipe.RecipeReference(command); ok && options.Recipes != nil {
+	if _, ok := recipe.ParseRecipeReference(command); ok && options.Recipes != nil {
 		return runRecipeReference(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, stack)
 	}
 	if sandbox != nil && sandbox.overlay {
-		return sandbox.runNamespaceCommand(ctx, env, command, stdin, stdout, stderr)
+		return sandbox.runNamespaceCommand(ctx, env, sandbox.namespaceDir(dir), command, stdin, stdout, stderr)
 	}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = dir
@@ -212,16 +232,20 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 }
 
 func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
-	name, args, _ := recipe.RecipeReference(command)
-	if slices.Contains(stack, name) {
-		cycle := append(slices.Clone(stack), name)
+	ref, _ := recipe.ParseRecipeReference(command)
+	if ref.Path != "" {
+		return runCrossConfigRecipeReference(ctx, sandbox, env, ref, stdin, stdout, stderr, options, stack)
+	}
+	key := recipeReferenceStackKey(options.Resolved.ConfigPath, ref.Name)
+	if slices.Contains(stack, key) {
+		cycle := append(slices.Clone(stack), key)
 		return fmt.Errorf("recipe reference cycle: %s", strings.Join(cycle, " -> "))
 	}
-	rec, ok := options.Recipes[name]
+	rec, ok := options.Recipes[ref.Name]
 	if !ok {
-		return fmt.Errorf("unknown recipe reference: @%s", name)
+		return fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.Resolve(name, rec, args, nil, nil, options.Resolved.ConfigPath, options.Resolved.Profile)
+	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, nil, options.Resolved.ConfigPath, options.Resolved.Profile)
 	if err != nil {
 		return err
 	}
@@ -230,29 +254,178 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
 	nestedEnv := mergedEnv(env, nil, resolved.Recipe.Env)
-	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), name))
+	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
 
-func CommandOutput(ctx context.Context, dir string, env map[string]string, command recipe.Command, recipes map[string]recipe.Recipe) (string, error) {
-	if _, _, ok := recipe.RecipeReference(command); !ok || recipes == nil {
+func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, env []string, ref recipe.RecipeReferenceTarget, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
+	target, err := resolveCrossConfigReference(ctx, ref, options.Resolved.ConfigPath, options.SourceDir, true)
+	if err != nil {
+		return err
+	}
+	key := recipeReferenceStackKey(target.loaded.Path, ref.Name)
+	if slices.Contains(stack, key) {
+		cycle := append(slices.Clone(stack), key)
+		return fmt.Errorf("recipe reference cycle: %s", strings.Join(cycle, " -> "))
+	}
+	rec, ok := target.recipes[ref.Name]
+	if !ok {
+		return fmt.Errorf("unknown recipe reference: @%s", ref.Target())
+	}
+	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, target.loaded.Config.Env, target.loaded.Path, target.profile)
+	if err != nil {
+		return err
+	}
+	nested := options
+	nested.Resolved = resolved
+	nested.Recipes = target.recipes
+	nested.SyncOutAll = false
+	nested.PrintOnly = false
+	nestedEnv := mergedEnv(env, target.loaded.Config.Env, resolved.Recipe.Env)
+	return runResolvedCommands(ctx, sandbox, targetExecutionDir(sandbox, options.SourceDir, target.dir), nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
+}
+
+func CommandOutput(ctx context.Context, dir string, env map[string]string, command recipe.Command, opts CommandOutputOptions) (string, error) {
+	ref, ok := recipe.ParseRecipeReference(command)
+	if !ok || opts.Recipes == nil {
 		return recipe.CommandOutput(ctx, dir, env, command)
 	}
-	name, args, _ := recipe.RecipeReference(command)
-	rec, ok := recipes[name]
-	if !ok {
-		return "", fmt.Errorf("unknown recipe reference: @%s", name)
+	if ref.Path != "" {
+		return crossConfigCommandOutput(ctx, dir, env, ref, opts)
 	}
-	resolved, err := recipe.Resolve(name, rec, args, nil, env, "", "")
+	rec, ok := opts.Recipes[ref.Name]
+	if !ok {
+		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Name)
+	}
+	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, env, opts.ConfigPath, "")
 	if err != nil {
 		return "", err
 	}
 	var stdout bytes.Buffer
 	envList := mergedEnv(os.Environ(), resolved.GlobalEnv, resolved.Recipe.Env)
-	err = runResolvedCommands(ctx, nil, dir, envList, Options{Resolved: resolved, Recipes: recipes}, nil, &stdout, io.Discard, []string{name})
+	err = runResolvedCommands(ctx, nil, dir, envList, Options{
+		Resolved:  resolved,
+		Recipes:   opts.Recipes,
+		SourceDir: cmpSourceDir(opts.SourceDir, dir),
+	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(opts.ConfigPath, ref.Name)})
 	if err != nil {
 		return "", err
 	}
 	return stdout.String(), nil
+}
+
+func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]string, ref recipe.RecipeReferenceTarget, opts CommandOutputOptions) (string, error) {
+	sourceDir := cmpSourceDir(opts.SourceDir, dir)
+	target, err := resolveCrossConfigReference(ctx, ref, opts.ConfigPath, sourceDir, true)
+	if err != nil {
+		return "", err
+	}
+	rec, ok := target.recipes[ref.Name]
+	if !ok {
+		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Target())
+	}
+	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, target.loaded.Config.Env, target.loaded.Path, target.profile)
+	if err != nil {
+		return "", err
+	}
+	var stdout bytes.Buffer
+	envList := mergedEnv(os.Environ(), env, target.loaded.Config.Env, resolved.Recipe.Env)
+	err = runResolvedCommands(ctx, nil, target.dir, envList, Options{
+		Resolved:  resolved,
+		Recipes:   target.recipes,
+		SourceDir: sourceDir,
+	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(target.loaded.Path, ref.Name)})
+	if err != nil {
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+type crossConfigTarget struct {
+	loaded  configfile.Loaded
+	profile string
+	recipes map[string]recipe.Recipe
+	dir     string
+}
+
+func resolveCrossConfigReference(ctx context.Context, ref recipe.RecipeReferenceTarget, configPath, sourceDir string, evalDynamicVars bool) (crossConfigTarget, error) {
+	targetDir, err := crossConfigTargetDir(ref.Path, configPath, sourceDir)
+	if err != nil {
+		return crossConfigTarget{}, err
+	}
+	loaded, err := configfile.Load(filepath.Join(targetDir, ".shadowtree.toml"))
+	if err != nil {
+		return crossConfigTarget{}, fmt.Errorf("@%s: %w", ref.Target(), err)
+	}
+	recipes, profile, err := configfile.ResolveRecipes(ctx, loaded, targetDir, configfile.ResolveOptions{EvalDynamicVars: evalDynamicVars})
+	if err != nil {
+		return crossConfigTarget{}, fmt.Errorf("@%s: %w", ref.Target(), err)
+	}
+	return crossConfigTarget{loaded: loaded, profile: profile, recipes: recipes, dir: targetDir}, nil
+}
+
+func crossConfigTargetDir(path, configPath, sourceDir string) (string, error) {
+	base := sourceDir
+	if configPath != "" {
+		base = filepath.Dir(configPath)
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(sourceDir, base)
+		}
+	}
+	target := path
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(base, target)
+	}
+	target, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", fmt.Errorf("@%s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("@%s: not a directory", path)
+	}
+	source, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(source, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("@%s: path is outside source", path)
+	}
+	return target, nil
+}
+
+func targetExecutionDir(sandbox *sandboxWorkspace, sourceDir, targetDir string) string {
+	if sandbox == nil {
+		return targetDir
+	}
+	rel, err := filepath.Rel(sourceDir, targetDir)
+	if err != nil {
+		return targetDir
+	}
+	if sandbox.overlay {
+		return filepath.Join(sandbox.target, rel)
+	}
+	return filepath.Join(sandbox.root, rel)
+}
+
+func recipeReferenceStackKey(configPath, name string) string {
+	if configPath == "" {
+		return name
+	}
+	return configPath + ":" + name
+}
+
+func cmpSourceDir(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func printPlan(w io.Writer, resolved recipe.Resolved) {
@@ -774,7 +947,7 @@ func shouldSkip(rel string, entry fs.DirEntry) bool {
 	return rel == ".shadowtree"
 }
 
-func mergedEnv(base []string, global, local map[string]string) []string {
+func mergedEnv(base []string, overlays ...map[string]string) []string {
 	env := map[string]string{}
 	for _, item := range base {
 		key, value, ok := strings.Cut(item, "=")
@@ -782,8 +955,9 @@ func mergedEnv(base []string, global, local map[string]string) []string {
 			env[key] = value
 		}
 	}
-	maps.Copy(env, global)
-	maps.Copy(env, local)
+	for _, overlay := range overlays {
+		maps.Copy(env, overlay)
+	}
 	out := make([]string, 0, len(env))
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		out = append(out, key+"="+env[key])

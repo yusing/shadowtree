@@ -20,8 +20,9 @@ type Candidate struct {
 }
 
 type Options struct {
-	Dir string
-	Env map[string]string
+	Dir        string
+	ConfigPath string
+	Env        map[string]string
 }
 
 type shellSpec struct {
@@ -310,7 +311,11 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 		env = map[string]string{}
 	}
 	maps.Copy(env, rec.Env)
-	output, err := runner.CommandOutput(ctx, opts.Dir, env, command, recipes)
+	output, err := runner.CommandOutput(ctx, opts.Dir, env, command, runner.CommandOutputOptions{
+		Recipes:    recipes,
+		ConfigPath: opts.ConfigPath,
+		SourceDir:  opts.Dir,
+	})
 	if err != nil {
 		return nil
 	}

@@ -49,6 +49,7 @@ func TestCreateOverlayWorkspaceHidesSkippedFiles(t *testing.T) {
 	err = sandbox.runNamespaceCommand(
 		t.Context(),
 		os.Environ(),
+		sandbox.target,
 		[]string{"sh", "-c", "test -f file.txt && test ! -e .git && test ! -e .shadowtree.toml && test ! -e pipe"},
 		nil,
 		io.Discard,
@@ -76,6 +77,7 @@ func TestNamespaceCommandUsesStableSourceCWD(t *testing.T) {
 	err = sandbox.runNamespaceCommand(
 		t.Context(),
 		os.Environ(),
+		sandbox.target,
 		[]string{"pwd"},
 		nil,
 		&stdout,
@@ -300,6 +302,7 @@ func TestNamespaceCommandPreservesEnvironment(t *testing.T) {
 	err = sandbox.runNamespaceCommand(
 		t.Context(),
 		append(os.Environ(), "SHADOWTREE_OVERLAY_DEBUG=1"),
+		sandbox.target,
 		[]string{"sh", "-c", `test "$SHADOWTREE_OVERLAY_DEBUG" = 1`},
 		nil,
 		io.Discard,

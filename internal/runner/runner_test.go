@@ -201,6 +201,99 @@ func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
 	}
 }
 
+func TestRunInvokesCrossConfigRecipeReferenceFromTargetDir(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[recipes.gen-schema]
+cmd = ["sh", "-c", "printf '%s\n' \"$PWD\"; printf '%s' \"$1\" > out.txt", "shadowtree"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"@webui:gen-schema", "shadow"},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"@webui:gen-schema", "shadow"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout.String()) != target {
+		t.Fatalf("stdout = %q, want target dir %q", stdout.String(), target)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("out.txt = %q", data)
+	}
+}
+
+func TestRunCrossConfigRecipeReferenceUsesTopLevelSyncOut(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[recipes.gen-schema]
+cmd = ["sh", "-c", "printf shadow > out.txt"]
+sync_out = ["out.txt"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{Cmd: recipe.Command{"@webui:gen-schema"}},
+		nil,
+		[]string{"webui/out.txt"},
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"@webui:gen-schema"}}},
+		SourceDir: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("out.txt = %q", data)
+	}
+}
+
 func TestRunRejectsRecipeReferenceCycle(t *testing.T) {
 	resolved, err := recipe.Resolve("a", recipe.Recipe{Cmd: recipe.Command{"@b"}, Sandboxed: new(false)}, nil, nil, nil, "", "")
 	if err != nil {

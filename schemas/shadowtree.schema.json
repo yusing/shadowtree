@@ -108,7 +108,7 @@
         },
         "cmd": {
           "$ref": "#/definitions/command",
-          "description": "Required main command. Use an argv array for direct execution, an @recipe argv marker for another Shadowtree recipe, or a string for a shell script."
+          "description": "Required main command. Use an argv array for direct execution, an @recipe or @path:recipe marker for another Shadowtree recipe, or a string for a shell script."
         },
         "args": {
           "$ref": "#/definitions/stringArray",
@@ -120,11 +120,11 @@
         },
         "pre": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run before the main command. A command array starting with @recipe invokes another Shadowtree recipe in the current workspace."
+          "description": "Commands run before the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace."
         },
         "post": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run after the main command. A command array starting with @recipe invokes another Shadowtree recipe in the current workspace."
+          "description": "Commands run after the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace."
         },
         "env": {
           "$ref": "#/definitions/env"
@@ -195,7 +195,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. A command array starting with @recipe invokes another Shadowtree recipe."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe."
         }
       },
       "x-taplo": {
@@ -203,7 +203,7 @@
       }
     },
     "command": {
-      "description": "Command as a shell script string or an argv array. Script strings run through the configured shell unless the whole string is exactly @recipe. A string @recipe or argv array whose first item is @recipe invokes another Shadowtree recipe directly.",
+      "description": "Command as a shell script string or an argv array. Script strings run through the configured shell unless the whole string is exactly @recipe or @path:recipe. A string @recipe/@path:recipe or argv array whose first item is @recipe/@path:recipe invokes another Shadowtree recipe directly.",
       "oneOf": [
         {
           "$ref": "#/definitions/shellScript"
@@ -221,7 +221,7 @@
     },
     "argv": {
       "type": "array",
-      "description": "Direct process argv. The first item is the executable, or @recipe to invoke another Shadowtree recipe. Use {name} placeholders in any item.",
+      "description": "Direct process argv. The first item is the executable, @recipe, or @path:recipe to invoke another Shadowtree recipe. Use {name} placeholders in any item.",
       "minItems": 1,
       "items": {
         "type": "string"
@@ -246,7 +246,7 @@
     "shellScript": {
       "type": "string",
       "minLength": 1,
-      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe."
+      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe."
     },
     "stringArray": {
       "type": "array",

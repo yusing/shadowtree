@@ -14,7 +14,7 @@ func createOverlayWorkspace(_, _, _ string) (*sandboxWorkspace, error) {
 	return nil, errors.New("overlayfs requires linux")
 }
 
-func (sandbox *sandboxWorkspace) runNamespaceCommand(context.Context, []string, []string, io.Reader, io.Writer, io.Writer) error {
+func (sandbox *sandboxWorkspace) runNamespaceCommand(context.Context, []string, string, []string, io.Reader, io.Writer, io.Writer) error {
 	return errors.New("overlay namespace requires linux")
 }
 

@@ -207,6 +207,16 @@ passed to that recipe as CLI arguments:
 pre = [["@build-api", "service=public"]]
 ```
 
+Use `@path:recipe` to invoke a recipe from another Shadowtree config. The path
+is resolved relative to the directory containing the referencing
+`.shadowtree.toml`, and the target config is loaded from
+`path/.shadowtree.toml`. The referenced recipe runs from that target directory:
+
+```toml
+[recipes.gen-schema]
+cmd = ["@webui:gen-schema"]
+```
+
 In command-list fields such as `pre` and `post`, a string command that is
 exactly `@recipe` is also a recipe reference. Other string commands are shell
 scripts:
@@ -221,11 +231,13 @@ separators split the argument list, and surrounding whitespace is ignored:
 ```toml
 pre = ["@build[component=godoxy, mode=dev]"]
 cmd = ["@test[package=./internal/recipe]"]
+post = ["@webui:gen-schema[mode=dev]"]
 ```
 
 Placeholders can be used in recipe references. Static references such as
-`@gen-swagger` can be validated by the editor; dynamic references such as
-`@{target}` are resolved at run time after placeholder expansion.
+`@gen-swagger` and `@webui:gen-schema` can be validated by the editor; dynamic
+references such as `@{target}` and `@{target_path}:{target_recipe}` are
+resolved at run time after placeholder expansion.
 
 Top-level `shell_prelude` is prepended to every script command and every
 `["sh", "-c", "..."]` command. It is intended for shared shell functions and
@@ -438,12 +450,14 @@ For a sandboxed recipe:
 5. If all phases succeeded, sync configured/requested paths back.
 6. Remove the temporary workspace.
 
-When a command is an `@recipe` reference, Shadowtree runs the referenced
-recipe's `pre`, main command, and `post` directly in the current workspace. It
-does not start another Shadowtree process, create a nested sandbox, or perform
-the referenced recipe's sync-out. Sync-out is performed only for the top-level
-invoked recipe after all phases succeed. Recursive recipe references fail with a
-cycle error.
+When a command is an `@recipe` or `@path:recipe` reference, Shadowtree runs the
+referenced recipe's `pre`, main command, and `post` directly in the current
+workspace. It does not start another Shadowtree process, create a nested
+sandbox, or perform the referenced recipe's sync-out. Cross-config references
+load `path/.shadowtree.toml` relative to the referencing config and run from the
+target path inside the current host checkout or current sandbox. Sync-out is
+performed only for the top-level invoked recipe after all phases succeed.
+Recursive recipe references fail with a cycle error.
 
 Failure behavior:
 

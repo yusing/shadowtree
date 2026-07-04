@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -286,6 +288,50 @@ cmd = ["go", "test"]
 	}
 }
 
+func TestDocumentDiagnosticsAcceptCrossConfigRecipeReference(t *testing.T) {
+	root := t.TempDir()
+	writeLSPTargetConfig(t, root, "gen-schema")
+	text := `[recipes.test]
+cmd = ["@webui:gen-schema"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectCrossConfigMissingRecipe(t *testing.T) {
+	root := t.TempDir()
+	writeLSPTargetConfig(t, root, "gen-schema")
+	text := `[recipes.test]
+cmd = ["@webui:missing"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @webui:missing")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["`), len(`cmd = ["@webui:missing`))
+}
+
+func TestDocumentDiagnosticsRejectCrossConfigMissingConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "webui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+cmd = ["@webui:gen-schema"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "invalid recipe reference @webui:gen-schema") ||
+		!strings.Contains(diagnostics[0].Message, ".shadowtree.toml") {
+		t.Fatalf("message = %q, want missing config", diagnostics[0].Message)
+	}
+}
+
 func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
 	diagnostics := documentDiagnostics(`"$schema" = "https://example.com/schema.json"
 
@@ -361,6 +407,22 @@ func diagnosticsParams(t *testing.T, notification rpcMessage) struct {
 		t.Fatal(err)
 	}
 	return paramsOut
+}
+
+func writeLSPTargetConfig(t *testing.T, root, recipeName string) {
+	t.Helper()
+	target := filepath.Join(root, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	text := "[recipes." + recipeName + "]\ncmd = [\"true\"]\n"
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fileURI(path string) string {
+	return "file://" + filepath.ToSlash(path)
 }
 
 func readTestMessage(t *testing.T, data []byte) rpcMessage {

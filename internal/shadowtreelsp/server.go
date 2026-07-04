@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -137,7 +139,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return nil, err
 		}
-		return completionResult(server.documents[params.TextDocument.URI], params.Position), nil
+		return completionResultWithOptions(server.documents[params.TextDocument.URI], params.Position, completionOptionsForURI(params.TextDocument.URI)), nil
 	case "textDocument/semanticTokens/full":
 		var params semanticTokensParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
@@ -149,6 +151,33 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 	}
 }
 
+func completionOptionsForURI(uri string) completionOptions {
+	path, ok := lspFilePath(uri)
+	if !ok {
+		return completionOptions{}
+	}
+	return completionOptions{
+		Dir:        filepath.Dir(path),
+		ConfigPath: path,
+	}
+}
+
+func lspConfigDir(uri string) (string, bool) {
+	path, ok := lspFilePath(uri)
+	if !ok {
+		return "", false
+	}
+	return filepath.Dir(path), true
+}
+
+func lspFilePath(uri string) (string, bool) {
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme != "file" {
+		return "", false
+	}
+	return filepath.FromSlash(parsed.Path), true
+}
+
 func initializeResult() map[string]any {
 	return map[string]any{
 		"capabilities": map[string]any{
@@ -157,7 +186,7 @@ func initializeResult() map[string]any {
 				"change":    2,
 			},
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@", ","},
+				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@", ",", ":"},
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
@@ -220,9 +249,13 @@ type semanticTokensParams struct {
 }
 
 func completionResult(text string, position lspPosition) map[string]any {
+	return completionResultWithOptions(text, position, completionOptions{})
+}
+
+func completionResultWithOptions(text string, position lspPosition, opts completionOptions) map[string]any {
 	lines := strings.Split(text, "\n")
 	bytePosition := lspToBytePosition(lines, position)
-	completions := completionsAt(text, bytePosition)
+	completions := completionsAtWithOptions(text, bytePosition, opts)
 	items := make([]map[string]any, 0, len(completions))
 	for _, item := range completions {
 		out := map[string]any{

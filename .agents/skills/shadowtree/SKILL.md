@@ -88,7 +88,9 @@ For a recipe:
 Command env is `os.Environ()` overlaid by top-level `env`, then recipe `env`.
 
 An argv command whose first item is `@recipe` invokes another resolved
-Shadowtree recipe directly in the current workspace. It does not spawn another
+Shadowtree recipe directly in the current workspace. Use `@path:recipe` to load
+`path/.shadowtree.toml` relative to the referencing config directory and run the
+target recipe from that path. Recipe references do not spawn another
 `shadowtree` process, start a nested sandbox, or run the referenced recipe's
 sync-out. Remaining argv items are passed as that recipe's CLI args. Recursive
 references fail with a cycle error.
@@ -163,6 +165,9 @@ values = ["@list-build-targets"]
 ```
 
 Use `["@build-api", "service=public"]` to pass args to the referenced recipe.
+Use `["@webui:gen-schema"]` to invoke `gen-schema` from
+`webui/.shadowtree.toml`; relative paths are resolved from the referencing
+config directory and execution starts in `webui/`.
 Use `@{NAME}` only when the recipe name must come from a placeholder; static
 `@recipe` references are easier for LSP diagnostics and completion to validate.
 In `pre` and `post`, `["@recipe"]` and `"@recipe"` both invoke the referenced
