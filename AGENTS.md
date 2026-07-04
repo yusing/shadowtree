@@ -4,6 +4,12 @@
 
 Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point lives in `cmd/shadowtree/`. Internal packages live under `internal/`: `recipe` resolves configured recipes and Go profile defaults, `runner` manages sandboxed execution with Linux namespace overlayfs or copied-workspace fallback plus sync-out, `configfile` loads project config, `completion` emits shell completion, `shadowtreelsp` implements editor completion/semantic tokens, and `detect` handles profile detection. Design notes and behavioral spec live in `docs/spec.md`. Editor integrations live under `editors/`: `zed-shadowtree` is a Zed extension with a nested Rust crate and Tree-sitter queries, and `vscode-shadowtree` is a VS Code schema-binding manifest. The shared Shadowtree config schema lives at `schemas/shadowtree.schema.json`. Build outputs go in `bin/`; editor build outputs such as `editors/zed-shadowtree/target/` should stay untracked. Agent skill in `.agents/skills/shadowtree`
 
+## Operating Principles
+
+Do not rely on `shadowtree` skill but update that when spec or behavior changes.
+On significant changes, also update (where applicable) README, spec, json schema,
+lsp (autocomplete and diagnostic) and shell completion.
+
 ## Build, Test, and Development Commands
 
 Use the local CLI before installing a binary:
