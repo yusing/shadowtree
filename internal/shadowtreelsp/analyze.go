@@ -1,6 +1,7 @@
 package shadowtreelsp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -154,22 +155,22 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	return analysis
 }
 
-func completionsAt(text string, pos lspPosition) []completion {
-	return completionsAtWithOptions(text, pos, completionOptions{})
+func completionsAt(ctx context.Context, text string, pos lspPosition) []completion {
+	return completionsAtWithOptions(ctx, text, pos, completionOptions{})
 }
 
-func completionsAtWithOptions(text string, pos lspPosition, opts completionOptions) []completion {
+func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition, opts completionOptions) []completion {
 	analysis := analyzeDocument(text, pos.Line)
 	line := lineAt(analysis.Lines, pos.Line)
 	prefix := linePrefix(line, pos.Character)
 	if tablePrefix, ok := openTablePrefix(prefix); ok {
 		return tableCompletions(analysis, tablePrefix)
 	}
-	if items, ok := recipeArgumentReferenceCompletions(text, analysis.CurrentTable, prefix, pos, opts); ok {
+	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
 		return items
 	}
 	if recipePrefix, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
-		return recipeReferenceCompletionsWithOptions(text, analysis, recipePrefix, opts)
+		return recipeReferenceCompletionsWithOptions(ctx, text, analysis, recipePrefix, opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
@@ -180,7 +181,7 @@ func completionsAtWithOptions(text string, pos lspPosition, opts completionOptio
 	return keyCompletions(analysis.CurrentTable)
 }
 
-func recipeArgumentReferenceCompletions(text, table, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
+func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
 	key, ok := keyBeforeValue(prefix)
 	if !ok || !recipeReferenceKey(table, key) {
 		return nil, false
@@ -205,7 +206,7 @@ func recipeArgumentReferenceCompletions(text, table, prefix string, pos lspPosit
 	ref := recipeReferenceForCompletion(name)
 	rec, ok := recipes[ref.Name]
 	if ref.Path != "" {
-		rec, ok = crossConfigCompletionRecipe(ref, opts)
+		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
 	}
 	if !ok || len(rec.Arguments) == 0 {
 		return nil, true
@@ -319,13 +320,9 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 	return recipeSubtableCompletions()
 }
 
-func recipeReferenceCompletions(analysis documentAnalysis, prefix string) []completion {
-	return recipeReferenceCompletionsWithOptions("", analysis, prefix, completionOptions{})
-}
-
-func recipeReferenceCompletionsWithOptions(text string, analysis documentAnalysis, prefix string, opts completionOptions) []completion {
+func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, analysis documentAnalysis, prefix string, opts completionOptions) []completion {
 	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
-		return crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix, opts)
+		return crossConfigRecipeReferenceCompletions(ctx, pathPrefix, recipePrefix, opts)
 	}
 	recipes, _ := completionRecipes(text)
 	names := slices.Clone(analysis.Recipes)
@@ -382,11 +379,11 @@ func crossConfigDirectoryCompletions(prefix string, opts completionOptions) []co
 	return items
 }
 
-func crossConfigRecipeReferenceCompletions(pathPrefix, recipePrefix string, opts completionOptions) []completion {
+func crossConfigRecipeReferenceCompletions(ctx context.Context, pathPrefix, recipePrefix string, opts completionOptions) []completion {
 	if pathPrefix == "" || strings.Contains(pathPrefix, "{") {
 		return nil
 	}
-	recipes, ok := crossConfigCompletionRecipes(pathPrefix, opts)
+	recipes, ok := crossConfigCompletionRecipes(ctx, pathPrefix, opts)
 	if !ok {
 		return nil
 	}
@@ -416,8 +413,8 @@ func recipeReferenceDetail(recipes map[string]recipe.Recipe, name string) string
 	return "Shadowtree recipe reference"
 }
 
-func crossConfigCompletionRecipe(ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {
-	recipes, ok := crossConfigCompletionRecipes(ref.Path, opts)
+func crossConfigCompletionRecipe(ctx context.Context, ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {
+	recipes, ok := crossConfigCompletionRecipes(ctx, ref.Path, opts)
 	if !ok {
 		return recipe.Recipe{}, false
 	}
@@ -425,7 +422,7 @@ func crossConfigCompletionRecipe(ref recipe.RecipeReferenceTarget, opts completi
 	return rec, ok
 }
 
-func crossConfigCompletionRecipes(path string, opts completionOptions) (map[string]recipe.Recipe, bool) {
+func crossConfigCompletionRecipes(ctx context.Context, path string, opts completionOptions) (map[string]recipe.Recipe, bool) {
 	base := completionBaseDir(opts)
 	if base == "" {
 		return nil, false
@@ -438,7 +435,7 @@ func crossConfigCompletionRecipes(path string, opts completionOptions) (map[stri
 	if err != nil {
 		return nil, false
 	}
-	recipes, _, err := configfile.ResolveRecipes(nil, loaded, targetDir, configfile.ResolveOptions{})
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, targetDir, configfile.ResolveOptions{})
 	if err != nil {
 		return nil, false
 	}

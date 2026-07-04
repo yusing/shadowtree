@@ -74,7 +74,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		return err
 	}
 	workspace := filepath.Join(workDir, "workspace")
-	sandbox, err := createSandboxWorkspace(source, workDir, workspace, stderr, options.Verbose)
+	sandbox, err := createSandboxWorkspace(ctx, source, workDir, workspace, stderr, options.Verbose)
 	if err != nil {
 		_ = removeAll(workDir)
 		return err
@@ -120,8 +120,8 @@ type sandboxWorkspace struct {
 
 var newOverlayWorkspace = createOverlayWorkspace
 
-func createSandboxWorkspace(source, workDir, workspace string, stderr io.Writer, verbose bool) (*sandboxWorkspace, error) {
-	sandbox, err := newOverlayWorkspace(source, workDir, workspace)
+func createSandboxWorkspace(ctx context.Context, source, workDir, workspace string, stderr io.Writer, verbose bool) (*sandboxWorkspace, error) {
+	sandbox, err := newOverlayWorkspace(ctx, source, workDir, workspace)
 	if err == nil {
 		if verbose {
 			fmt.Fprintf(stderr, "shadowtree: overlayfs %s -> %s\n", source, workspace)

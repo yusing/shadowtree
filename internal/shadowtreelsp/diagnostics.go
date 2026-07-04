@@ -1,6 +1,7 @@
 package shadowtreelsp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -22,10 +23,10 @@ type lspDiagnostic struct {
 	Message  string         `json:"message"`
 }
 
-func (server *server) publishDiagnostics(uri, text string, version *int) error {
+func (server *server) publishDiagnostics(ctx context.Context, uri, text string, version *int) error {
 	params := map[string]any{
 		"uri":         uri,
-		"diagnostics": documentDiagnosticsWithOptions(text, diagnosticOptions{URI: uri}),
+		"diagnostics": documentDiagnosticsWithOptions(ctx, text, diagnosticOptions{URI: uri}),
 	}
 	if version != nil {
 		params["version"] = *version
@@ -37,22 +38,22 @@ func (server *server) publishDiagnostics(uri, text string, version *int) error {
 	})
 }
 
-func documentDiagnostics(text string) []lspDiagnostic {
-	return documentDiagnosticsWithOptions(text, diagnosticOptions{})
+func documentDiagnostics(ctx context.Context, text string) []lspDiagnostic {
+	return documentDiagnosticsWithOptions(ctx, text, diagnosticOptions{})
 }
 
 type diagnosticOptions struct {
 	URI string
 }
 
-func documentDiagnosticsWithOptions(text string, opts diagnosticOptions) []lspDiagnostic {
+func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagnosticOptions) []lspDiagnostic {
 	var cfg recipe.Config
 	md, err := toml.Decode(text, &cfg)
 	if err != nil {
 		return []lspDiagnostic{parseDiagnostic(text, err)}
 	}
 
-	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(text, cfg, opts)...)
+	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, cfg, opts)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
 	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
 		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
@@ -63,7 +64,7 @@ func documentDiagnosticsWithOptions(text string, opts diagnosticOptions) []lspDi
 	return diagnostics
 }
 
-func commandReferenceDiagnostics(text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
+func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
 	valid := map[string]bool{}
 	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
@@ -90,7 +91,7 @@ func commandReferenceDiagnostics(text string, cfg recipe.Config, opts diagnostic
 			if strings.Contains(ref.Path, "{") {
 				continue
 			}
-			if err := validateCrossConfigReference(ref, opts); err != nil {
+			if err := validateCrossConfigReference(ctx, ref, opts); err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
 					Severity: diagnosticSeverityError,
@@ -112,7 +113,7 @@ func commandReferenceDiagnostics(text string, cfg recipe.Config, opts diagnostic
 	return diagnostics
 }
 
-func validateCrossConfigReference(ref commandReferenceSpan, opts diagnosticOptions) error {
+func validateCrossConfigReference(ctx context.Context, ref commandReferenceSpan, opts diagnosticOptions) error {
 	base, ok := lspConfigDir(opts.URI)
 	if !ok {
 		return nil
@@ -132,7 +133,7 @@ func validateCrossConfigReference(ref commandReferenceSpan, opts diagnosticOptio
 	if err != nil {
 		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
 	}
-	recipes, _, err := configfile.ResolveRecipes(nil, loaded, targetDir, configfile.ResolveOptions{})
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, targetDir, configfile.ResolveOptions{})
 	if err != nil {
 		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
 	}

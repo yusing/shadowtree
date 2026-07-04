@@ -10,7 +10,7 @@ import (
 	"os"
 )
 
-func createOverlayWorkspace(_, _, _ string) (*sandboxWorkspace, error) {
+func createOverlayWorkspace(context.Context, string, string, string) (*sandboxWorkspace, error) {
 	return nil, errors.New("overlayfs requires linux")
 }
 

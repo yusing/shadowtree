@@ -20,7 +20,7 @@ cmd = ["go", "build"]
 [recipes.build.arguments.project]
 position = ` + value + `
 `
-			diagnostics := documentDiagnostics(text)
+			diagnostics := documentDiagnostics(t.Context(), text)
 			if len(diagnostics) != 1 {
 				t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
 			}
@@ -41,6 +41,7 @@ position = -1
 `
 	var out bytes.Buffer
 	server := &server{
+		ctx:       t.Context(),
 		output:    &out,
 		documents: map[string]string{},
 	}
@@ -82,6 +83,7 @@ position = -1
 `
 	var out bytes.Buffer
 	server := &server{
+		ctx:       t.Context(),
 		output:    &out,
 		documents: map[string]string{"file:///shadowtree.toml": text},
 	}
@@ -125,6 +127,7 @@ position = -1
 func TestServerClearsDiagnosticsOnClose(t *testing.T) {
 	var out bytes.Buffer
 	server := &server{
+		ctx:       t.Context(),
 		output:    &out,
 		documents: map[string]string{"file:///shadowtree.toml": "position = -1"},
 	}
@@ -161,7 +164,7 @@ func TestServerClearsDiagnosticsOnClose(t *testing.T) {
 }
 
 func TestDocumentDiagnosticsRejectSyntaxError(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.build]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = [
 `)
 	if len(diagnostics) != 1 {
@@ -173,7 +176,7 @@ cmd = [
 }
 
 func TestDocumentDiagnosticsRejectUnknownRecipeField(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.build]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = ["go", "build"]
 unknown = true
 `)
@@ -187,7 +190,7 @@ unknown = true
 }
 
 func TestDocumentDiagnosticsRejectUnknownRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["echo 123", "@missing"]
 cmd = ["go", "test"]
 `)
@@ -196,7 +199,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsAcceptKnownBracketRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@build[component=godoxy, mode=dev]"]
 cmd = ["go", "test"]
 
@@ -209,7 +212,7 @@ cmd = ["go", "build"]
 }
 
 func TestDocumentDiagnosticsRejectUnknownBracketRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@missing[component=godoxy]"]
 cmd = ["go", "test"]
 `)
@@ -218,7 +221,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsRejectUnknownMultilineRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = [
   ["@missing"]
 ]
@@ -229,7 +232,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsRejectUnknownScalarRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 cmd = "@missing"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
@@ -237,7 +240,7 @@ cmd = "@missing"
 }
 
 func TestDocumentDiagnosticsRejectUnknownScalarValuesRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test.arguments.target]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@missing"
 
 [recipes.test]
@@ -248,7 +251,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
-	diagnostics := documentDiagnostics(`[vars]
+	diagnostics := documentDiagnostics(t.Context(), `[vars]
 cmd = "@missing"
 
 [recipes.test]
@@ -263,7 +266,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsIgnoreShellStringStartingWithAt(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@echo hi"]
 cmd = ["go", "test"]
 `)
@@ -276,7 +279,7 @@ cmd = ["go", "test"]
 }
 
 func TestDocumentDiagnosticsAcceptDynamicRecipeReference(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.test]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = [["@{target}"]]
 cmd = ["go", "test"]
 `)
@@ -295,7 +298,7 @@ func TestDocumentDiagnosticsAcceptCrossConfigRecipeReference(t *testing.T) {
 cmd = ["@webui:gen-schema"]
 `
 
-	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
 	}
@@ -308,7 +311,7 @@ func TestDocumentDiagnosticsRejectCrossConfigMissingRecipe(t *testing.T) {
 cmd = ["@webui:missing"]
 `
 
-	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @webui:missing")
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["`), len(`cmd = ["@webui:missing`))
 }
@@ -322,7 +325,7 @@ func TestDocumentDiagnosticsRejectCrossConfigMissingConfig(t *testing.T) {
 cmd = ["@webui:gen-schema"]
 `
 
-	diagnostics := documentDiagnosticsWithOptions(text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	if len(diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
 	}
@@ -333,7 +336,7 @@ cmd = ["@webui:gen-schema"]
 }
 
 func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
-	diagnostics := documentDiagnostics(`"$schema" = "https://example.com/schema.json"
+	diagnostics := documentDiagnostics(t.Context(), `"$schema" = "https://example.com/schema.json"
 
 [recipes.build]
 cmd = ["go", "build"]
@@ -347,7 +350,7 @@ cmd = ["go", "build"]
 }
 
 func TestDocumentDiagnosticsAcceptValidConfig(t *testing.T) {
-	diagnostics := documentDiagnostics(`[recipes.build]
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = ["go", "build"]
 
 [recipes.build.arguments.project]

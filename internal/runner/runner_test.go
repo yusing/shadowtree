@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 
 func TestRunWarnsAndFallsBackWhenOverlayUnavailable(t *testing.T) {
 	original := newOverlayWorkspace
-	newOverlayWorkspace = func(_, _, _ string) (*sandboxWorkspace, error) {
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
 		return nil, errors.New("forced overlay failure")
 	}
 	t.Cleanup(func() {

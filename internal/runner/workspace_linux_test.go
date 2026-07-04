@@ -37,7 +37,7 @@ func TestCreateOverlayWorkspaceHidesSkippedFiles(t *testing.T) {
 	workDir := t.TempDir()
 	workspace := filepath.Join(workDir, "workspace")
 
-	sandbox, err := createOverlayWorkspace(source, workDir, workspace)
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, workspace)
 	if err != nil {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCreateOverlayWorkspaceHidesSkippedFiles(t *testing.T) {
 func TestNamespaceCommandUsesStableSourceCWD(t *testing.T) {
 	source := t.TempDir()
 	workDir := t.TempDir()
-	sandbox, err := createOverlayWorkspace(source, workDir, filepath.Join(workDir, "workspace"))
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, filepath.Join(workDir, "workspace"))
 	if err != nil {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestCopyTreeSkipsUnsupportedFileType(t *testing.T) {
 func TestNamespaceCommandPreservesEnvironment(t *testing.T) {
 	source := t.TempDir()
 	workDir := t.TempDir()
-	sandbox, err := createOverlayWorkspace(source, workDir, filepath.Join(workDir, "workspace"))
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, filepath.Join(workDir, "workspace"))
 	if err != nil {
 		t.Skipf("overlayfs unavailable: %v", err)
 	}

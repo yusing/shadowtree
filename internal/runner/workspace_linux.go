@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func createOverlayWorkspace(source, workDir, workspace string) (*sandboxWorkspace, error) {
+func createOverlayWorkspace(ctx context.Context, source, workDir, workspace string) (*sandboxWorkspace, error) {
 	overlayDir := filepath.Join(workDir, "overlay")
 	cleanup := true
 	defer func() {
@@ -48,20 +48,20 @@ func createOverlayWorkspace(source, workDir, workspace string) (*sandboxWorkspac
 		protectedWhiteouts: protectedWhiteouts,
 		overlay:            true,
 	}
-	if err := sandbox.probeNamespaceOverlay(); err != nil {
+	if err := sandbox.probeNamespaceOverlay(ctx); err != nil {
 		return nil, fmt.Errorf("namespace overlay: %w", err)
 	}
 	cleanup = false
 	return sandbox, nil
 }
 
-func (sandbox *sandboxWorkspace) probeNamespaceOverlay() error {
+func (sandbox *sandboxWorkspace) probeNamespaceOverlay(ctx context.Context) error {
 	truePath, err := exec.LookPath("true")
 	if err != nil {
 		truePath = "/bin/true"
 	}
 	var stderr bytes.Buffer
-	if err := sandbox.runNamespaceCommand(context.Background(), os.Environ(), sandbox.target, []string{truePath}, nil, io.Discard, &stderr); err != nil {
+	if err := sandbox.runNamespaceCommand(ctx, os.Environ(), sandbox.target, []string{truePath}, nil, io.Discard, &stderr); err != nil {
 		if message := strings.TrimSpace(stderr.String()); message != "" {
 			return fmt.Errorf("%w: %s", err, message)
 		}

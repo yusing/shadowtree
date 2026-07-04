@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompletionsIncludeTopLevelTablesAfterOpenBracket(t *testing.T) {
-	items := completionsAt("[", lspPosition{Line: 0, Character: 1})
+	items := completionsAt(t.Context(), "[", lspPosition{Line: 0, Character: 1})
 	assertLabels(t, items, "env", "vars", "var_commands", "recipes")
 }
 
@@ -18,7 +18,7 @@ func TestCompletionsIncludeRecipeSubtables(t *testing.T) {
 cmd = ["go", "build"]
 [recipes.build.
 `
-	items := completionsAt(text, lspPosition{Line: 2, Character: len("[recipes.build.")})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len("[recipes.build.")})
 	assertLabels(t, items,
 		"vars",
 		"env",
@@ -29,7 +29,7 @@ cmd = ["go", "build"]
 func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	text := `[recipes.build]
 `
-	items := completionsAt(text, lspPosition{Line: 1, Character: 0})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
 	assertLabels(t, items, "cmd", "default_args", "sandboxed", "sync_out")
 }
 
@@ -46,7 +46,7 @@ type = "string"
 [recipes.build]
 cmd = '''go build {'''
 `
-	items := completionsAt(text, lspPosition{Line: 10, Character: len("cmd = '''go build {")})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len("cmd = '''go build {")})
 	assertLabels(t, items, "{PROJECT}", "{BIN}", "{pkg}")
 }
 
@@ -61,11 +61,11 @@ cmd = ["go", "vet"]
 [recipes.test]
 pre = ["echo 123", "@gen"]
 `
-	items := completionsAt(text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@`)})
 	assertLabels(t, items, "@gen-swagger", "@vet")
 	assertCompletionDetail(t, items, "@gen-swagger", "Generate Swagger docs.")
 
-	items = completionsAt(text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@gen`)})
+	items = completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@gen`)})
 	assertLabels(t, items, "@gen-swagger")
 }
 
@@ -77,7 +77,7 @@ cmd = ["go", "generate", "./..."]
 [recipes.test]
 pre = [["@gen"]]
 `
-	result := completionResult(text, lspPosition{Line: 5, Character: len(`pre = [["@gen`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 5, Character: len(`pre = [["@gen`)})
 	item := completionItem(t, result, "@gen-swagger")
 	if item["detail"] != "Generate Swagger docs." {
 		t.Fatalf("detail = %#v, want recipe help", item["detail"])
@@ -98,7 +98,7 @@ cmd = ["go", "vet"]
 [recipes.check]
 pre = ["@v"]
 `
-	items := completionsAt(text, lspPosition{Line: 4, Character: len(`pre = ["@v`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`pre = ["@v`)})
 	assertLabels(t, items, "@vet")
 }
 
@@ -109,7 +109,7 @@ cmd = ["go", "test"]
 [recipes.check]
 cmd = "@t"
 `
-	items := completionsAt(text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
 	assertLabels(t, items, "@test")
 }
 
@@ -126,7 +126,7 @@ cmd = ["go", "build"]
 [recipes.test]
 pre = ["@build["]
 `
-	items := completionsAt(text, lspPosition{Line: 10, Character: len(`pre = ["@build[`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`pre = ["@build[`)})
 	assertLabels(t, items, "component=", "mode=")
 }
 
@@ -140,7 +140,7 @@ cmd = ["go", "build"]
 [recipes.test]
 pre = ["@build[mode="]
 `
-	items := completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["@build[mode=`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 7, Character: len(`pre = ["@build[mode=`)})
 	assertLabels(t, items, "true", "false")
 }
 
@@ -151,6 +151,7 @@ func TestCompletionsIncludeCrossConfigDirectories(t *testing.T) {
 cmd = ["@web"]
 `
 	items := completionsAtWithOptions(
+		t.Context(),
 		text,
 		lspPosition{Line: 1, Character: len(`cmd = ["@web`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
@@ -165,6 +166,7 @@ func TestCompletionsIncludeCrossConfigRecipeReferences(t *testing.T) {
 cmd = ["@webui:g"]
 `
 	items := completionsAtWithOptions(
+		t.Context(),
 		text,
 		lspPosition{Line: 1, Character: len(`cmd = ["@webui:g`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
@@ -192,6 +194,7 @@ cmd = ["true"]
 cmd = ["@webui:gen-schema["]
 `
 	items := completionsAtWithOptions(
+		t.Context(),
 		text,
 		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
@@ -202,6 +205,7 @@ cmd = ["@webui:gen-schema["]
 cmd = ["@webui:gen-schema[mode="]
 `
 	items = completionsAtWithOptions(
+		t.Context(),
 		text,
 		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[mode=`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
@@ -219,7 +223,7 @@ cmd = ["go", "build"]
 [recipes.test]
 pre = ["@build[m"]
 `
-	result := completionResult(text, lspPosition{Line: 7, Character: len(`pre = ["@build[m`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 7, Character: len(`pre = ["@build[m`)})
 	edit := completionTextEdit(t, result, "mode=")
 	if edit["newText"] != "build[mode=" {
 		t.Fatalf("newText = %#v, want grouped recipe argument", edit["newText"])
@@ -234,7 +238,7 @@ cmd = ["go", "test"]
 [vars]
 cmd = "@t"
 `
-	items := completionsAt(text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
 	if len(items) != 0 {
 		t.Fatalf("items = %#v, want none", items)
 	}
@@ -247,7 +251,7 @@ cmd = ["go", "generate", "./..."]
 [recipes.test]
 pre = [["@gen"]]
 `
-	result := completionResult(text, lspPosition{Line: 4, Character: len(`pre = [["@gen`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 4, Character: len(`pre = [["@gen`)})
 	edit := completionTextEdit(t, result, "@gen-swagger")
 	if edit["newText"] != "gen-swagger" {
 		t.Fatalf("newText = %#v, want recipe name", edit["newText"])
@@ -256,7 +260,7 @@ pre = [["@gen"]]
 }
 
 func TestCompletionsIncludeSupportedShellValues(t *testing.T) {
-	items := completionsAt("shell = ", lspPosition{Line: 0, Character: len("shell = ")})
+	items := completionsAt(t.Context(), "shell = ", lspPosition{Line: 0, Character: len("shell = ")})
 	assertLabels(t, items, "sh", "bash", "fish")
 }
 
@@ -300,7 +304,7 @@ func TestTableTextEditReplacesSegmentBeforeExistingBracket(t *testing.T) {
 
 func TestCompletionTextEditUsesUTF16Offsets(t *testing.T) {
 	line := `[recipes.café.arg]`
-	result := completionResult(line, lspPosition{
+	result := completionResult(t.Context(), line, lspPosition{
 		Line:      0,
 		Character: byteToUTF16Offset(line, len(`[recipes.café.arg`)),
 	})

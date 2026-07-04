@@ -3,6 +3,7 @@ package shadowtreelsp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +14,9 @@ import (
 )
 
 // Serve runs the Shadowtree language server over stdio.
-func Serve(input io.Reader, output io.Writer) error {
+func Serve(ctx context.Context, input io.Reader, output io.Writer) error {
 	server := &server{
+		ctx:       ctx,
 		input:     bufio.NewReader(input),
 		output:    output,
 		documents: map[string]string{},
@@ -23,6 +25,7 @@ func Serve(input io.Reader, output io.Writer) error {
 }
 
 type server struct {
+	ctx       context.Context
 	input     *bufio.Reader
 	output    io.Writer
 	documents map[string]string
@@ -104,7 +107,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			return nil, err
 		}
 		server.documents[params.TextDocument.URI] = params.TextDocument.Text
-		if err := server.publishDiagnostics(params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err != nil {
+		if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -119,7 +122,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 				text = applyContentChange(text, change)
 			}
 			server.documents[params.TextDocument.URI] = text
-			if err := server.publishDiagnostics(params.TextDocument.URI, text, params.TextDocument.Version); err != nil {
+			if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, text, params.TextDocument.Version); err != nil {
 				return nil, err
 			}
 		}
@@ -130,7 +133,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			return nil, err
 		}
 		delete(server.documents, params.TextDocument.URI)
-		if err := server.publishDiagnostics(params.TextDocument.URI, "", nil); err != nil {
+		if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, "", nil); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -139,7 +142,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return nil, err
 		}
-		return completionResultWithOptions(server.documents[params.TextDocument.URI], params.Position, completionOptionsForURI(params.TextDocument.URI)), nil
+		return completionResultWithOptions(server.ctx, server.documents[params.TextDocument.URI], params.Position, completionOptionsForURI(params.TextDocument.URI)), nil
 	case "textDocument/semanticTokens/full":
 		var params semanticTokensParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
@@ -248,14 +251,14 @@ type semanticTokensParams struct {
 	} `json:"textDocument"`
 }
 
-func completionResult(text string, position lspPosition) map[string]any {
-	return completionResultWithOptions(text, position, completionOptions{})
+func completionResult(ctx context.Context, text string, position lspPosition) map[string]any {
+	return completionResultWithOptions(ctx, text, position, completionOptions{})
 }
 
-func completionResultWithOptions(text string, position lspPosition, opts completionOptions) map[string]any {
+func completionResultWithOptions(ctx context.Context, text string, position lspPosition, opts completionOptions) map[string]any {
 	lines := strings.Split(text, "\n")
 	bytePosition := lspToBytePosition(lines, position)
-	completions := completionsAtWithOptions(text, bytePosition, opts)
+	completions := completionsAtWithOptions(ctx, text, bytePosition, opts)
 	items := make([]map[string]any, 0, len(completions))
 	for _, item := range completions {
 		out := map[string]any{

@@ -95,7 +95,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		return completion.Script(os.Stdout, rest[1])
 	case "__complete":
-		return runComplete(rest[1:])
+		return runComplete(ctx, rest[1:])
 	case "init":
 		path := ".shadowtree.toml"
 		if len(rest) > 1 {
@@ -247,18 +247,18 @@ func resolveSet(ctx context.Context, opts options, evalDynamicVars bool) (map[st
 	return recipes, loaded, profile, nil
 }
 
-func runComplete(args []string) error {
+func runComplete(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: shadowtree __complete <shell> <words...>")
 	}
 	shell := args[0]
 	words := args[1:]
 	opts := completionOptions(words)
-	recipes, loaded, _, err := resolveSet(context.Background(), opts, false)
+	recipes, loaded, _, err := resolveSet(ctx, opts, false)
 	if err != nil {
 		return nil
 	}
-	candidates, err := completion.Candidates(context.Background(), shell, words, recipes, completion.Options{
+	candidates, err := completion.Candidates(ctx, shell, words, recipes, completion.Options{
 		Dir:        mustGetwd(),
 		ConfigPath: loaded.Path,
 		Env:        loaded.Config.Env,
