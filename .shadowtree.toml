@@ -42,6 +42,24 @@ if [ -d "$destdir$fish_config_dir" ]; then
 fi
 '''
 
+[recipes.install-skill]
+help = "Install the Shadowtree agent skill."
+cmd = '''
+set -eu
+skill_src=.agents/skills/shadowtree
+skill_dest=${AGENTS_SKILLS_DIR:-"$HOME/.agents/skills"}/shadowtree
+
+if [ ! -f "$skill_src/SKILL.md" ]; then
+	echo "missing skill source: $skill_src" >&2
+	exit 1
+fi
+
+rm -rf "$skill_dest"
+mkdir -p "$(dirname "$skill_dest")"
+cp -R "$skill_src" "$skill_dest"
+echo "installed shadowtree skill to $skill_dest"
+'''
+
 [recipes.test]
 help = "Run the test suite."
 cmd = ["go", "test"]

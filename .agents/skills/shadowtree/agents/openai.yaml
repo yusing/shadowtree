@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shadowtree"
+  short_description: "Run recipes in disposable workspaces"
+  default_prompt: "Use $shadowtree to run this project's test recipe safely."
