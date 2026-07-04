@@ -23,18 +23,31 @@ default = "shadowtree"
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
 sandboxed = false
-cmd = ["go", "install"]
-args = ["./cmd/shadowtree", "./cmd/shadowtree-lsp"]
+cmd = '''
+set -eu
+prefix=${PREFIX:-"$HOME/.local"}
+bindir=${BINDIR:-"$prefix/bin"}
+destdir=${DESTDIR:-}
+install_bin="$destdir$bindir"
+mkdir -p "$install_bin"
+GOBIN="$install_bin" go install ./cmd/shadowtree ./cmd/shadowtree-lsp
+'''
 post = ['''
 set -eu
+prefix=${PREFIX:-"$HOME/.local"}
+bindir=${BINDIR:-"$prefix/bin"}
+destdir=${DESTDIR:-}
+shadowtree_bin="$destdir$bindir/shadowtree"
 if fish -v >/dev/null 2>&1; then
-	mkdir -p "$HOME/.config/fish/completions"
-	go run ./cmd/shadowtree completion fish > "$HOME/.config/fish/completions/shadowtree.fish"
+	fish_config_dir=${FISH_CONFIG_DIR:-"$HOME/.config/fish"}
+	fish_completions_dir=${FISH_COMPLETIONS_DIR:-"$fish_config_dir/completions"}
+	mkdir -p "$fish_completions_dir"
+	"$shadowtree_bin" completion fish > "$fish_completions_dir/shadowtree.fish"
 fi
 config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
 bash_completion_file="$config_home/shadowtree/completion.bash"
 mkdir -p "$(dirname "$bash_completion_file")"
-go run ./cmd/shadowtree completion bash > "$bash_completion_file"
+"$shadowtree_bin" completion bash > "$bash_completion_file"
 bashrc=${BASHRC:-"$HOME/.bashrc"}
 marker="# shadowtree bash completion"
 if ! grep -Fqs "$marker" "$bashrc" 2>/dev/null; then

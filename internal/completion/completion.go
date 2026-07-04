@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/yusing/shadowtree/internal/globalflag"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/runner"
 )
@@ -23,6 +25,12 @@ type Options struct {
 	Dir        string
 	ConfigPath string
 	Env        map[string]string
+}
+
+type Request struct {
+	Shell       string
+	Words       []string
+	bashCurrent string
 }
 
 type shellSpec struct {
@@ -69,23 +77,30 @@ func Script(w io.Writer, shell string) error {
 }
 
 func fishScript(w io.Writer) error {
-	_, err := io.WriteString(w, `function __shadowtree_complete
+	if _, err := io.WriteString(w, `function __shadowtree_complete
     set -l tokens (commandline -opc)
     set -l current (commandline -ct)
     shadowtree __complete fish $tokens $current
 end
 
 complete -c shadowtree -f -a '(__shadowtree_complete)'
-complete -c shadowtree -l config -r -d 'Use config file'
-complete -c shadowtree -l profile -x -a 'go' -d 'Use profile'
-complete -c shadowtree -l sync-out -r -d 'Copy path back after success'
-complete -c shadowtree -l sync-out-all -d 'Copy entire workspace back after success'
-complete -c shadowtree -l print -d 'Print resolved plan without running'
-complete -c shadowtree -l verbose -d 'Show commands and workspace paths'
-complete -c shadowtree -l help -d 'Show help'
-complete -c shadowtree -l version -d 'Show version'
-`)
-	return err
+`); err != nil {
+		return err
+	}
+	for _, spec := range globalflag.All() {
+		if _, err := fmt.Fprintf(w, "complete -c shadowtree -l %s", spec.Name); err != nil {
+			return err
+		}
+		if spec.FishOptions != "" {
+			if _, err := fmt.Fprintf(w, " %s", spec.FishOptions); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, " -d '%s'\n", spec.Help); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func bashScript(w io.Writer) error {
@@ -169,6 +184,46 @@ func sanitizeCandidateHelp(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+func ParseRequest(args []string) (Request, error) {
+	if len(args) == 0 {
+		return Request{}, fmt.Errorf("usage: shadowtree __complete <shell> <words...>")
+	}
+	shell := args[0]
+	if _, err := shellFor(shell); err != nil {
+		return Request{}, err
+	}
+	request := Request{
+		Shell: shell,
+		Words: args[1:],
+	}
+	if shell != "bash" {
+		return request, nil
+	}
+	if len(args) != 3 && len(args) != 4 {
+		return Request{}, fmt.Errorf("usage: shadowtree __complete bash <cursor> <line> [current]")
+	}
+	point, err := strconv.Atoi(args[1])
+	if err != nil {
+		return Request{}, fmt.Errorf("invalid bash cursor: %w", err)
+	}
+	request.Words = BashWords(args[2], point)
+	if len(args) == 4 {
+		request.bashCurrent = args[3]
+	}
+	return request, nil
+}
+
+func (request Request) StaticCandidates() ([]Candidate, bool, error) {
+	return StaticCandidates(request.Shell, request.Words)
+}
+
+func (request Request) AdjustCandidates(candidates []Candidate) []Candidate {
+	if request.Shell == "bash" {
+		return BashReplacementCandidates(request.Words, request.bashCurrent, candidates)
+	}
+	return candidates
+}
+
 func Candidates(ctx context.Context, shell string, words []string, recipes map[string]recipe.Recipe, opts Options) ([]Candidate, error) {
 	spec, err := shellFor(shell)
 	if err != nil {
@@ -232,15 +287,12 @@ func flagCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
 	if !strings.HasPrefix(current, "-") {
 		return nil, false
 	}
-	candidates := []Candidate{
-		{Value: "--config", Help: "Use config file"},
-		{Value: "--profile", Help: "Use profile"},
-		{Value: "--sync-out", Help: "Copy path back after success"},
-		{Value: "--sync-out-all", Help: "Copy entire workspace back after success"},
-		{Value: "--print", Help: "Print resolved plan without running"},
-		{Value: "--verbose", Help: "Show commands and workspace paths"},
-		{Value: "--help", Help: "Show help"},
-		{Value: "--version", Help: "Show version"},
+	candidates := make([]Candidate, 0, len(globalflag.All()))
+	for _, spec := range globalflag.All() {
+		candidates = append(candidates, Candidate{
+			Value: "--" + spec.Name,
+			Help:  spec.Help,
+		})
 	}
 	return filterPrefix(candidates, current), true
 }
@@ -671,14 +723,14 @@ func positionalWords(words []string) []string {
 			skipValue = false
 			continue
 		}
-		switch word {
-		case "--config", "--profile", "--sync-out":
-			skipValue = true
-			continue
-		case "--sync-out-all", "--print", "--verbose", "--help", "--version":
-			continue
-		}
 		if strings.HasPrefix(word, "-") {
+			if globalflag.TakesValue(word) {
+				skipValue = true
+				continue
+			}
+			if _, ok := globalflag.Lookup(word); ok {
+				continue
+			}
 			continue
 		}
 		positionals = append(positionals, word)

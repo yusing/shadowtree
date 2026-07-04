@@ -306,10 +306,11 @@ Recipes that intentionally change the host checkout set `sandboxed = false` in
 `.shadowtree.toml`.
 
 The `install` recipe follows the same convention as `git-agent`: it installs the
-binary to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
-`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, installs bash
-completion through a guarded `~/.bashrc` source block, and installs fish
-completion only when the fish config directory exists.
+binaries to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
+`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, generates
+completion from the installed `shadowtree` binary, installs bash completion
+through a guarded `~/.bashrc` source block, and installs fish completion when
+`fish` is available.
 
 The `install-skill` recipe installs the local Shadowtree agent skill to
 `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}/shadowtree`.

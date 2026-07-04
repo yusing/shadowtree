@@ -722,16 +722,16 @@ after `git-agent`.
 
 It:
 
-- builds `bin/shadowtree` with `-buildvcs=false` and stripped ldflags
-- installs the binary to `${PREFIX:-$HOME/.local}/bin`
+- installs the binaries to `${PREFIX:-$HOME/.local}/bin`
 - honors `DESTDIR`
 - honors `BINDIR`
 - honors `XDG_CONFIG_HOME`
 - honors `FISH_CONFIG_DIR`
 - honors `FISH_COMPLETIONS_DIR`
+- generates completion from the installed `shadowtree` binary
 - installs bash completion under the user config directory and sources it from
   `~/.bashrc`
-- installs fish completion only when the fish config directory exists
+- installs fish completion when `fish` is available
 
 ## Current Project Recipes
 

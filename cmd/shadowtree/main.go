@@ -18,6 +18,7 @@ import (
 
 	"github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
+	"github.com/yusing/shadowtree/internal/globalflag"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/runner"
 )
@@ -193,14 +194,7 @@ func parseGlobal(args []string) (options, []string, error) {
 	var opts options
 	flags := flag.NewFlagSet("shadowtree", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	flags.StringVar(&opts.configPath, "config", "", "use config file")
-	flags.StringVar(&opts.profile, "profile", "", "use profile")
-	flags.Var(&opts.syncOut, "sync-out", "copy path back after success")
-	flags.BoolVar(&opts.syncOutAll, "sync-out-all", false, "copy entire workspace back after success")
-	flags.BoolVar(&opts.printOnly, "print", false, "print resolved plan without running")
-	flags.BoolVar(&opts.verbose, "verbose", false, "show commands and workspace paths")
-	flags.BoolVar(&opts.help, "help", false, "show help")
-	flags.BoolVar(&opts.showVer, "version", false, "show version")
+	registerGlobalFlags(flags, &opts)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -229,12 +223,29 @@ func parseGlobal(args []string) (options, []string, error) {
 }
 
 func globalFlagTakesValue(arg string) bool {
-	name, _, _ := strings.Cut(arg, "=")
-	switch name {
-	case "-config", "--config", "-profile", "--profile", "-sync-out", "--sync-out":
-		return true
-	default:
-		return false
+	return globalflag.TakesValue(arg)
+}
+
+func registerGlobalFlags(flags *flag.FlagSet, opts *options) {
+	for _, spec := range globalflag.All() {
+		switch spec.Name {
+		case globalflag.Config:
+			flags.StringVar(&opts.configPath, spec.Name, "", spec.Help)
+		case globalflag.Profile:
+			flags.StringVar(&opts.profile, spec.Name, "", spec.Help)
+		case globalflag.SyncOut:
+			flags.Var(&opts.syncOut, spec.Name, spec.Help)
+		case globalflag.SyncOutAll:
+			flags.BoolVar(&opts.syncOutAll, spec.Name, false, spec.Help)
+		case globalflag.Print:
+			flags.BoolVar(&opts.printOnly, spec.Name, false, spec.Help)
+		case globalflag.Verbose:
+			flags.BoolVar(&opts.verbose, spec.Name, false, spec.Help)
+		case globalflag.Help:
+			flags.BoolVar(&opts.help, spec.Name, false, spec.Help)
+		case globalflag.Version:
+			flags.BoolVar(&opts.showVer, spec.Name, false, spec.Help)
+		}
 	}
 }
 
@@ -284,36 +295,21 @@ func resolveSet(ctx context.Context, opts options, evalDynamicVars bool) (map[st
 }
 
 func runComplete(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: shadowtree __complete <shell> <words...>")
+	request, err := completion.ParseRequest(args)
+	if err != nil {
+		return err
 	}
-	shell := args[0]
-	words := args[1:]
-	bashCurrent := ""
-	if shell == "bash" {
-		if len(args) != 3 && len(args) != 4 {
-			return errors.New("usage: shadowtree __complete bash <cursor> <line> [current]")
-		}
-		point, err := strconv.Atoi(args[1])
-		if err != nil {
-			return fmt.Errorf("invalid bash cursor: %w", err)
-		}
-		words = completion.BashWords(args[2], point)
-		if len(args) == 4 {
-			bashCurrent = args[3]
-		}
-	}
-	if candidates, ok, err := completion.StaticCandidates(shell, words); err != nil {
+	if candidates, ok, err := request.StaticCandidates(); err != nil {
 		return err
 	} else if ok {
-		return completion.WriteCandidates(os.Stdout, shell, candidates)
+		return completion.WriteCandidates(os.Stdout, request.Shell, candidates)
 	}
-	opts := completionOptions(words)
+	opts := completionOptions(request.Words)
 	recipes, loaded, _, err := resolveSet(ctx, opts, false)
 	if err != nil {
 		return nil
 	}
-	candidates, err := completion.Candidates(ctx, shell, words, recipes, completion.Options{
+	candidates, err := completion.Candidates(ctx, request.Shell, request.Words, recipes, completion.Options{
 		Dir:        mustGetwd(),
 		ConfigPath: loaded.Path,
 		Env:        loaded.Config.Env,
@@ -321,22 +317,29 @@ func runComplete(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if shell == "bash" {
-		candidates = completion.BashReplacementCandidates(words, bashCurrent, candidates)
-	}
-	return completion.WriteCandidates(os.Stdout, shell, candidates)
+	candidates = request.AdjustCandidates(candidates)
+	return completion.WriteCandidates(os.Stdout, request.Shell, candidates)
 }
 
 func completionOptions(words []string) options {
 	var opts options
 	for i := 0; i < len(words); i++ {
-		switch words[i] {
-		case "--config":
+		name, value, hasValue := strings.Cut(words[i], "=")
+		switch name {
+		case "--" + globalflag.Config:
+			if hasValue {
+				opts.configPath = value
+				continue
+			}
 			if i+1 < len(words) {
 				opts.configPath = words[i+1]
 				i++
 			}
-		case "--profile":
+		case "--" + globalflag.Profile:
+			if hasValue {
+				opts.profile = value
+				continue
+			}
 			if i+1 < len(words) {
 				opts.profile = words[i+1]
 				i++
@@ -600,13 +603,13 @@ func printBasicHelp(w io.Writer) {
        shadowtree completion bash|fish
 
 flags:
-  --config PATH       use config file
-  --profile PROFILE   use detected/profile built-ins, initially: go
-  --sync-out PATH     copy path back after success; repeatable or comma-separated
-  --sync-out-all      copy entire workspace back after success
-  --print             print resolved plan without running
-  --verbose           show commands and workspace paths
 `)
+	for _, spec := range globalflag.All() {
+		if spec.UsageHelp == "" {
+			continue
+		}
+		fmt.Fprintf(w, "  --%-18s%s\n", spec.Usage(), spec.UsageHelp)
+	}
 }
 
 func mustGetwd() string {

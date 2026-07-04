@@ -334,7 +334,7 @@ Bash and fish completion are implemented:
 shadowtree completion bash > ~/.config/shadowtree/completion.bash
 ```
 
-The repository `install` recipe installs `${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a guarded source block to `~/.bashrc`.
+The repository `install` recipe generates completion from the installed `shadowtree` binary, installs `${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash`, and appends a guarded source block to `~/.bashrc`.
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
