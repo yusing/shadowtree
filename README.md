@@ -36,8 +36,8 @@ command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
 Completion is dynamic: it uses configured recipes plus recipes from the selected
-profile. Without a config file, Shadowtree can detect a Go project and expose Go
-built-ins.
+profile. Without a config file, Shadowtree detects the nearest Go or Node
+project marker upward from the current directory and exposes matching built-ins.
 
 ## Quick Start
 
@@ -235,6 +235,17 @@ accepts relative paths only and completes relative checkout paths. Path
 arguments can set `path_kind` to `any`, `file`, `dir`, or `executable` to
 filter completion candidates.
 
+## Built-In Profiles
+
+Supported profiles are `go` and `node`. A profile is selected by explicit
+`--profile`, then by config `profile`, then by marker detection only when no
+config file is loaded. Detection walks upward from the current directory:
+`package.json` selects `node`, and `go.mod` or `go.work` selects `go`. The
+nearest marker wins; if Go and Node markers are in the same directory, Go wins.
+
+Configs that omit `profile` do not receive detected built-ins. This keeps local
+config recipes exact unless the config opts into a profile.
+
 ## Built-In Go Recipes
 
 When `--profile go` is set, config has `profile = "go"`, or Shadowtree runs in a
@@ -260,6 +271,40 @@ unless project config overrides them. Built-in `run` takes a required positional
 
 Project config can override any built-in recipe field. Use
 `shadowtree --print <recipe>` to inspect the final command.
+
+## Built-In Node Recipes
+
+When `--profile node` is set, config has `profile = "node"`, or Shadowtree runs
+in a detected Node project without a config file, it loads the nearest
+`package.json` and runs built-ins from that package directory. Node built-ins are
+unsandboxed by default because package-manager and framework commands commonly
+update lockfiles, dependency state, caches, and generated outputs.
+
+Package manager detection uses `packageManager` first (`pnpm`, `yarn`, `bun`,
+or `npm`), then lockfiles in this order: `pnpm-lock.yaml`, `yarn.lock`,
+`bun.lockb`, `bun.lock`, `package-lock.json`, `npm-shrinkwrap.json`. The default
+is `npm`.
+
+Default Node recipes:
+
+```text
+install    <pm> install
+dev        package script dev, or inferred framework dev command
+build      package script build, or inferred framework build command
+start      package script start, or inferred framework preview/start command
+test       package script test, or vitest/jest/playwright/bun test fallback
+lint       package script lint, or ESLint/Oxlint/Biome
+fmt        package script fmt/format, or Prettier/Oxfmt/Biome
+typecheck  package script typecheck/type-check, or vue-tsc/svelte-check/tsc
+check      available lint, typecheck, and test recipes in that order
+```
+
+Framework inference recognizes `next`, `vite`, `nuxt`, `astro`, and
+`@sveltejs/kit`. Package scripts also fill recipe gaps. Script names are
+normalized before becoming recipe names: `:` and characters outside
+`[A-Za-z0-9._-]` become `-`, repeated dashes collapse, and edge dashes are
+trimmed. For example, `lint:fix` becomes recipe `lint-fix`, but the generated
+recipe still runs the original `lint:fix` script.
 
 ## Editor Support
 

@@ -222,6 +222,22 @@ cmd = "@fmt"
 	}
 }
 
+func TestDocumentDiagnosticsAcceptNodeBuiltinWhenConfigSetsProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"vitest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `profile = "node"
+
+[recipes.assets]
+cmd = "@install"
+`
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsAcceptKnownBracketRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@build[component=godoxy, mode=dev]"]

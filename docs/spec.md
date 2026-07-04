@@ -12,7 +12,7 @@ This document describes the behavior currently implemented by the project.
 - Run common development tasks through a simple recipe interface.
 - Keep command writes isolated from the host checkout unless explicitly synced.
 - Avoid triggering editor/LSP reindexing for generated or temporary files.
-- Provide useful defaults for Go projects.
+- Provide useful defaults for Go and Node projects.
 - Keep configuration small and exact, using argv arrays for process execution
   and shell script strings for workflows that benefit from shared shell logic.
 - Support dynamic shell completion from resolved recipes.
@@ -89,7 +89,7 @@ shadowtree __complete zsh <words...>
 
 ```text
 --config PATH       use an explicit config file
---profile PROFILE   use a profile, initially only go is supported
+--profile PROFILE   use a profile; supported profiles are go and node
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
 --print             print the resolved plan without running
@@ -544,6 +544,24 @@ The argument-values builtins (`enum`, `glob`, `lines`, `recipes`, and `vars`)
 are reserved as recipe names. Future built-in `@` command identifiers are also
 reserved.
 
+## Built-In Profiles
+
+Supported profiles are `go` and `node`. Profile selection precedence is:
+
+1. explicit `--profile`;
+2. config `profile`;
+3. marker detection only when no config is loaded.
+
+Configs that omit `profile` suppress detected built-ins. This preserves exact
+configured recipe sets unless a config opts into a profile.
+
+When marker detection is active, Shadowtree walks upward from the current
+directory and compares the nearest profile markers:
+
+- `package.json` selects `node`.
+- `go.mod` or `go.work` selects `go`.
+- If Go and Node markers are in the same directory, Go wins.
+
 ## Built-In Go Profile
 
 The Go profile is selected when:
@@ -552,8 +570,6 @@ The Go profile is selected when:
 - config has `profile = "go"`, or
 - no config is loaded and Shadowtree detects `go.mod` or `go.work` upward from
   the current directory.
-
-Only the `go` profile is supported currently.
 
 Built-in Go recipes:
 
@@ -574,6 +590,103 @@ Built-in `fmt` and `tidy` are unsandboxed by default, so `gofmt -w` and
 `go mod tidy` update the host checkout directly. Other built-in Go recipes are
 sandboxed unless project config overrides them. Built-in `run` has a required
 positional `command` argument with `rel_path` type.
+
+## Built-In Node Profile
+
+The Node profile is selected when:
+
+- `--profile node` is provided, or
+- config has `profile = "node"`, or
+- no config is loaded and Shadowtree detects the nearest `package.json` upward
+  from the current directory.
+
+Node built-ins resolve the nearest `package.json` directory and generate shell
+commands that `cd` there before invoking the package manager or tool. This
+makes subdirectory invocation run against the package root. Every Node built-in
+recipe has `sandboxed = false` by default because package-manager and framework
+commands commonly mutate lockfiles, dependency state, caches, and generated
+outputs.
+
+Package manager detection:
+
+1. `packageManager` prefix: `pnpm`, `yarn`, `bun`, or `npm`;
+2. lockfiles in order: `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `bun.lock`,
+   `package-lock.json`, `npm-shrinkwrap.json`;
+3. default `npm`.
+
+Command forms:
+
+- Package scripts run `<pm> run <script> -- "$@"`.
+- Tool commands run `npm exec -- <bin> ... "$@"`, `pnpm exec <bin> ... "$@"`,
+  `yarn exec <bin> ... "$@"`, or `bunx <bin> ... "$@"`.
+- Bun projects without a test script use `bun test "$@"` when Vitest is not
+  installed.
+
+Default Node recipes:
+
+```text
+install    npm|pnpm|yarn|bun install
+dev        package script dev, or inferred framework dev command
+build      package script build, or inferred framework build command
+start      package script start, or inferred framework start/preview command
+test       package script test, or Vitest/Jest/Playwright/Bun fallback
+lint       package script lint, or ESLint/Oxlint/Biome
+fmt        package script fmt/format, or Prettier/Oxfmt/Biome
+typecheck  package script typecheck/type-check, or detected type checkers
+check      available lint, typecheck, and test recipes in that order
+```
+
+Framework inference for `dev`, `build`, and `start`:
+
+- `next`: `next dev`, `next build`, `next start`.
+- `vite`: `vite`, `vite build`, `vite preview`.
+- `nuxt`: `nuxt dev`, `nuxt build`, `nuxt preview`.
+- `astro`: `astro dev`, `astro build`, `astro preview`.
+- `@sveltejs/kit`: `vite`, `vite build`, `vite preview`.
+
+Test inference:
+
+- Script `test` wins.
+- Bun projects use installed `vitest` first, otherwise `bun test`.
+- Other projects use installed `vitest`, then `jest`, then `playwright test`
+  when `@playwright/test` is installed.
+
+Lint inference:
+
+- Script `lint` wins.
+- ESLint markers: `eslint` dependency, `eslint.config.*`, `.eslintrc*`, or
+  package `eslintConfig`; command `eslint .`.
+- Oxlint markers: `oxlint` dependency, `oxlint.config.*`, `.oxlintrc.json`, or
+  `.oxlintrc.jsonc`; command `oxlint`.
+- Biome markers: `@biomejs/biome` dependency, `biome.json`, or `biome.jsonc`;
+  command `biome lint .`.
+
+Format inference:
+
+- Script `fmt` wins, then script `format`.
+- Prettier markers: `prettier` dependency, `prettier.config.*`,
+  `.prettierrc*`, or package `prettier`; command `prettier --write .`.
+- Oxfmt markers: `oxfmt` dependency, `oxfmt.config.*`, `.oxfmtrc.json`, or
+  `.oxfmtrc.jsonc`; command `oxfmt`.
+- Biome markers: `@biomejs/biome` dependency, `biome.json`, or `biome.jsonc`;
+  command `biome format --write .`.
+
+Typecheck inference:
+
+- Script `typecheck` wins, then script `type-check`.
+- Otherwise Shadowtree runs every detected checker in stable order:
+  `vue-tsc --noEmit`, `svelte-check`, then `tsc --noEmit`.
+- `tsc --noEmit` is included when `typescript` is installed or `tsconfig.json`
+  exists.
+
+Package scripts fill gaps without overriding predefined Node recipe names.
+Before a package script becomes a recipe name, Shadowtree replaces `:` and every
+character outside `[A-Za-z0-9._-]` with `-`, collapses repeated `-`, trims
+leading and trailing `-`, and skips empty or reserved names. If multiple scripts
+normalize to the same recipe name, the script whose original name already equals
+the normalized name wins; otherwise the lexicographically first original script
+name wins. For example, package script `lint:fix` becomes recipe `lint-fix`, but
+the generated command still runs the original script key `lint:fix`.
 
 ## Help
 
@@ -661,7 +774,7 @@ Supported completion behavior:
 - `shadowtree te<TAB>` completes matching recipe names such as `test`.
 - `shadowtree help <TAB>` completes recipe names.
 - `shadowtree help test <TAB>` completes `color=false`.
-- `shadowtree --profile <TAB>` completes `go`.
+- `shadowtree --profile <TAB>` completes `go` and `node`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.
 - `shadowtree build[<TAB>` completes bracket-style arguments such as
@@ -771,4 +884,4 @@ tidy
 - Commands can still intentionally read or write absolute host paths.
 - Shell script strings are supported for recipes that need shell workflows;
   argv arrays remain preferred for direct process execution.
-- Go is the only language profile currently implemented.
+- Built-in language profiles currently cover Go and Node.

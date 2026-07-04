@@ -59,7 +59,7 @@ Discovery walks upward from the current directory until the git root or filesyst
 .shadowtree.toml
 ```
 
-An explicit `--config PATH` bypasses discovery. Only `go` is a supported profile. If no profile is configured, Shadowtree detects `go` from `go.mod` or `go.work`.
+An explicit `--config PATH` bypasses discovery. Supported profiles are `go` and `node`. When no config is loaded, Shadowtree detects the nearest upward marker: `package.json` selects `node`, `go.mod` or `go.work` selects `go`, and same-directory ties select `go`. A config that omits `profile` suppresses detected built-ins.
 
 Completion criterion: config location and profile are known before editing or explaining behavior.
 
@@ -117,7 +117,7 @@ Completion criterion: cleanup or reporting that must run after failure belongs i
 
 Use these fields at config root:
 
-- `profile`: currently `go`.
+- `profile`: `go` or `node`.
 - `shell`: shell for script commands; defaults to `sh`.
 - `shell_prelude`: shell code prepended to every script command and every `["sh", "-c", "..."]` command.
 - `sync_out`: sandboxed paths copied back after successful runs for every recipe unless unsandboxed.
@@ -327,6 +327,14 @@ vet        go vet ./...
 
 Completion criterion: use `shadowtree recipes` or `shadowtree --print <recipe>` to confirm the built-in or overridden behavior before relying on it.
 
+## Node Profile
+
+When profile is `node`, Shadowtree loads the nearest upward `package.json`, detects the package manager from `packageManager` then lockfiles then `npm`, and runs generated shell commands from that package directory. Node built-ins are unsandboxed by default.
+
+Built-ins include `install`, script/framework-aware `dev`/`build`/`start`, script/tool-aware `test`/`lint`/`fmt`/`typecheck`, and `check` composed from available `lint`, `typecheck`, and `test` recipes. Package scripts fill gaps after normalizing names such as `lint:fix` to `lint-fix`; the generated command still runs the original script key.
+
+Completion criterion: inspect `shadowtree --print <recipe>` before Node recipes that install dependencies, update lockfiles, build assets, or run framework commands.
+
 ## Completion
 
 Bash, fish, and zsh completion are implemented:
@@ -345,6 +353,6 @@ shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
 command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
-Completion includes commands, resolved recipes, `--profile go`, typed argument names, bool values, path/rel_path filesystem candidates, and dynamic `values` output. Completion reads `--config` and `--profile` when they appear before the command.
+Completion includes commands, resolved recipes, `--profile go` and `--profile node`, typed argument names, bool values, path/rel_path filesystem candidates, and dynamic `values` output. Completion reads `--config` and `--profile` when they appear before the command.
 
 Completion criterion: after config changes affecting recipes or arguments, regenerate or re-source shell completion before testing interactive behavior.

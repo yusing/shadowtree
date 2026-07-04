@@ -168,6 +168,24 @@ func TestResolveRecipesDetectsProfileWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestResolveRecipesDetectsNodeProfileWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"test":"vitest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.NodeProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.NodeProfile)
+	}
+	if _, ok := recipes["install"]; !ok {
+		t.Fatalf("recipes missing Node builtin install: %#v", recipes)
+	}
+}
+
 func TestResolveRecipesUsesExplicitConfigProfile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".shadowtree.toml")
@@ -217,5 +235,37 @@ cmd = ["npm", "test"]
 	}
 	if _, ok := recipes["test"]; !ok {
 		t.Fatalf("recipes missing Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesUsesOptionsNodeProfileWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"test":"vitest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.assets]
+cmd = ["npm", "test"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{Profile: recipe.NodeProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.NodeProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.NodeProfile)
+	}
+	if _, ok := recipes["assets"]; !ok {
+		t.Fatalf("recipes missing configured recipe: %#v", recipes)
+	}
+	if _, ok := recipes["install"]; !ok {
+		t.Fatalf("recipes missing Node builtin install: %#v", recipes)
 	}
 }

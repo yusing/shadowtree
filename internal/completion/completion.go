@@ -321,7 +321,10 @@ func staticCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
 		return nil, false
 	}
 	if completesProfile(words) {
-		return []Candidate{{Value: "go", Help: "Go project"}}, true
+		return []Candidate{
+			{Value: recipe.GoProfile, Help: "Go project"},
+			{Value: recipe.NodeProfile, Help: "Node project"},
+		}, true
 	}
 	if completesConfig(words) || completesSyncOut(words) {
 		return nil, true

@@ -199,6 +199,32 @@ cmd = "@f"
 	assertLabels(t, items, "@fmt")
 }
 
+func TestCompletionsIncludeNodeProfileValue(t *testing.T) {
+	text := `profile = "`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 0, Character: len(text)})
+
+	assertLabels(t, items, "go", "node")
+}
+
+func TestCompletionsIncludeNodeBuiltinsWhenConfigSetsProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"vitest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `profile = "node"
+
+[recipes.check]
+cmd = "@i"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`cmd = "@i`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@install")
+}
+
 func TestCompletionsIncludeLocalRecipeReferencesWhenTOMLIsIncomplete(t *testing.T) {
 	text := `[recipes.build]
 cmd = ["go", "build"]

@@ -12,8 +12,8 @@
     },
     "profile": {
       "type": "string",
-      "enum": ["go"],
-      "description": "Recipe profile. Set to \"go\" to enable built-in Go recipes for this config."
+      "enum": ["go", "node"],
+      "description": "Recipe profile. Set to \"go\" or \"node\" to enable built-in recipes for this config."
     },
     "shell": {
       "$ref": "#/definitions/shell"
@@ -226,7 +226,7 @@
         "type": "string"
       },
       "x-taplo": {
-        "initKeys": ["go", "test"]
+        "initKeys": ["go", "node", "test"]
       }
     },
     "shell": {

@@ -56,7 +56,7 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 	if profile == "" && loaded.Path == "" {
 		profile = detect.Profile(dir)
 	}
-	if profile != "" && profile != recipe.GoProfile {
+	if profile != "" && !recipe.SupportsProfile(profile) {
 		return nil, "", fmt.Errorf("unsupported profile: %s", profile)
 	}
 	vars := maps.Clone(loaded.Config.Vars)
@@ -70,7 +70,7 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 		}
 		maps.Copy(vars, dynamicVars)
 	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), loaded.Config.Recipes)
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, recipe.BuiltinOptions{Dir: dir}), loaded.Config.Recipes)
 	if err != nil {
 		return nil, "", err
 	}

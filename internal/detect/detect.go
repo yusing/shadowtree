@@ -5,13 +5,17 @@ import (
 	"path/filepath"
 )
 
-const GoProfile = "go"
+const (
+	GoProfile   = "go"
+	NodeProfile = "node"
+)
 
 func Profile(cwd string) string {
-	if hasFileUpward(cwd, "go.mod") || hasFileUpward(cwd, "go.work") {
-		return GoProfile
+	profile, ok := nearestProfileMarker(cwd)
+	if !ok {
+		return ""
 	}
-	return ""
+	return profile
 }
 
 func RepoRoot(cwd string) string {
@@ -28,18 +32,28 @@ func RepoRoot(cwd string) string {
 	}
 }
 
-func hasFileUpward(cwd, name string) bool {
+func nearestProfileMarker(cwd string) (string, bool) {
 	dir := cwd
 	for {
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
-			return true
+		hasGo := hasFile(dir, "go.mod") || hasFile(dir, "go.work")
+		hasNode := hasFile(dir, "package.json")
+		switch {
+		case hasGo:
+			return GoProfile, true
+		case hasNode:
+			return NodeProfile, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return false
+			return "", false
 		}
 		dir = parent
 	}
+}
+
+func hasFile(dir, name string) bool {
+	info, err := os.Stat(filepath.Join(dir, name))
+	return err == nil && !info.IsDir()
 }
 
 func exists(path string) bool {

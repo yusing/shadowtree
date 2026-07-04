@@ -14,7 +14,10 @@ import (
 	"strings"
 )
 
-const GoProfile = "go"
+const (
+	GoProfile   = "go"
+	NodeProfile = "node"
+)
 const scriptCommand = "__shadowtree_script__"
 const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
@@ -98,18 +101,37 @@ type RecipeReferenceTarget struct {
 
 var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var goBuiltinNames = []string{"build", "check", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
+var (
+	supportedProfiles = []string{GoProfile, NodeProfile}
+	goBuiltinNames    = []string{"build", "check", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
+	nodeBuiltinNames  = []string{"install", "dev", "build", "start", "test", "lint", "fmt", "typecheck", "check"}
+)
+
+type BuiltinOptions struct {
+	Dir string
+}
 
 // BuiltinNames returns the built-in recipe names for profile.
 func BuiltinNames(profile string) []string {
-	if profile != GoProfile {
+	switch profile {
+	case GoProfile:
+		return slices.Clone(goBuiltinNames)
+	case NodeProfile:
+		return slices.Clone(nodeBuiltinNames)
+	default:
 		return nil
 	}
-	return slices.Clone(goBuiltinNames)
 }
 
-func Builtins(profile string) map[string]Recipe {
+func SupportsProfile(profile string) bool {
+	return slices.Contains(supportedProfiles, profile)
+}
+
+func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 	if profile != GoProfile {
+		if profile == NodeProfile {
+			return nodeBuiltins(opts)
+		}
 		return map[string]Recipe{}
 	}
 	lint := Recipe{

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -336,7 +337,7 @@ func TestResolveUnsandboxedIgnoresSyncOut(t *testing.T) {
 }
 
 func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
-	builtins := Builtins(GoProfile)
+	builtins := Builtins(GoProfile, BuiltinOptions{})
 	if RecipeSandboxed(builtins["tidy"]) {
 		t.Fatal("built-in tidy is sandboxed, want unsandboxed")
 	}
@@ -353,7 +354,7 @@ func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 }
 
 func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
-	builtins := Builtins(GoProfile)
+	builtins := Builtins(GoProfile, BuiltinOptions{})
 	for _, name := range []string{"check", "fmt", "run"} {
 		if _, ok := builtins[name]; !ok {
 			t.Fatalf("built-in %q is missing", name)
@@ -391,7 +392,7 @@ func TestMergeRecipesRejectsBuiltinReferenceNames(t *testing.T) {
 }
 
 func TestMergeRecipesAllowsRunOverride(t *testing.T) {
-	merged, err := MergeRecipes(Builtins(GoProfile), map[string]Recipe{
+	merged, err := MergeRecipes(Builtins(GoProfile, BuiltinOptions{}), map[string]Recipe{
 		"run": {Help: "Run custom command."},
 	})
 	if err != nil {
@@ -701,5 +702,300 @@ func TestInvocationParsesBracketStyleArguments(t *testing.T) {
 	}
 	if !slices.Equal(args, []string{"project=./cmd/shadowtree", "binary=st"}) {
 		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestNodeBuiltinsDetectPackageManager(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageJSON string
+		lockfile    string
+		want        string
+	}{
+		{name: "packageManager pnpm", packageJSON: `{"packageManager":"pnpm@9.0.0"}`, want: "pnpm install"},
+		{name: "packageManager yarn", packageJSON: `{"packageManager":"yarn@4.0.0"}`, want: "yarn install"},
+		{name: "packageManager bun", packageJSON: `{"packageManager":"bun@1.1.0"}`, want: "bun install"},
+		{name: "pnpm lockfile", packageJSON: `{}`, lockfile: "pnpm-lock.yaml", want: "pnpm install"},
+		{name: "default npm", packageJSON: `{}`, want: "npm install"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeNodePackage(t, dir, tt.packageJSON)
+			if tt.lockfile != "" {
+				if err := os.WriteFile(filepath.Join(dir, tt.lockfile), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["install"]
+
+			if body := ScriptBody(rec.Cmd); !strings.Contains(body, tt.want) {
+				t.Fatalf("install body = %q, want %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodeBuiltinsDetectAncestorPackageManager(t *testing.T) {
+	root := t.TempDir()
+	writeNodePackage(t, root, `{"packageManager":"pnpm@9.0.0"}`)
+	leaf := filepath.Join(root, "packages", "app")
+	writeNodePackage(t, leaf, `{"scripts":{"test":"vitest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: leaf})["test"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `pnpm run test -- "$@"`) {
+		t.Fatalf("test body = %q, want ancestor pnpm package manager", body)
+	}
+	if body := ScriptBody(rec.Cmd); !strings.HasPrefix(body, "cd "+shellQuote(leaf)+"\n") {
+		t.Fatalf("test body = %q, want cd to nearest package dir %q", body, leaf)
+	}
+}
+
+func TestNodeBuiltinsDetectAncestorLockfile(t *testing.T) {
+	root := t.TempDir()
+	writeNodePackage(t, root, `{}`)
+	if err := os.WriteFile(filepath.Join(root, "yarn.lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(root, "packages", "app")
+	writeNodePackage(t, leaf, `{"scripts":{"test":"vitest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: leaf})["test"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `yarn run test -- "$@"`) {
+		t.Fatalf("test body = %q, want ancestor yarn lockfile", body)
+	}
+}
+
+func TestNodeBuiltinsRunFromNearestPackageDir(t *testing.T) {
+	root := t.TempDir()
+	writeNodePackage(t, root, `{"scripts":{"test":"vitest"}}`)
+	subdir := filepath.Join(root, "src", "feature")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: subdir})["test"]
+
+	if body := ScriptBody(rec.Cmd); !strings.HasPrefix(body, "cd "+shellQuote(root)+"\n") {
+		t.Fatalf("test body = %q, want cd to package dir %q", body, root)
+	}
+}
+
+func TestNodeBuiltinsAreUnsandboxed(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{
+		"scripts":{"dev":"vite","build":"vite build","start":"vite preview","test":"vitest","lint":"eslint .","fmt":"prettier --write .","typecheck":"tsc --noEmit","lint:fix":"eslint --fix ."}
+	}`)
+
+	for name, rec := range Builtins(NodeProfile, BuiltinOptions{Dir: dir}) {
+		if rec.Sandboxed == nil || *rec.Sandboxed {
+			t.Fatalf("%s Sandboxed = %#v, want false", name, rec.Sandboxed)
+		}
+	}
+}
+
+func TestNodeBuiltinsInferFrameworkRecipes(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"dependencies":{"next":"latest"}}`)
+
+	recipes := Builtins(NodeProfile, BuiltinOptions{Dir: dir})
+
+	for name, want := range map[string]string{
+		"dev":   "npm exec -- next dev",
+		"build": "npm exec -- next build",
+		"start": "npm exec -- next start",
+	} {
+		if body := ScriptBody(recipes[name].Cmd); !strings.Contains(body, want) {
+			t.Fatalf("%s body = %q, want %q", name, body, want)
+		}
+	}
+}
+
+func TestNodeBuiltinsInferBunTest(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"packageManager":"bun@1.0.0"}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["test"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bun test "$@"`) {
+		t.Fatalf("test body = %q, want bun test", body)
+	}
+}
+
+func TestNodeBuiltinsPreferBunVitestWhenInstalled(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"packageManager":"bun@1.0.0","devDependencies":{"vitest":"latest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["test"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bunx vitest "$@"`) {
+		t.Fatalf("test body = %q, want bunx vitest", body)
+	}
+}
+
+func TestNodeBuiltinsInferLintInOrder(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageJSON string
+		files       []string
+		want        string
+	}{
+		{name: "eslint dependency", packageJSON: `{"devDependencies":{"eslint":"latest","@biomejs/biome":"latest"}}`, want: "npm exec -- eslint ."},
+		{name: "oxlint rc", packageJSON: `{}`, files: []string{".oxlintrc.jsonc", "biome.json"}, want: "npm exec -- oxlint"},
+		{name: "biome", packageJSON: `{"devDependencies":{"@biomejs/biome":"latest"}}`, want: "npm exec -- biome lint ."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeNodePackage(t, dir, tt.packageJSON)
+			for _, file := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, file), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["lint"]
+
+			if body := ScriptBody(rec.Cmd); !strings.Contains(body, tt.want) {
+				t.Fatalf("lint body = %q, want %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodeBuiltinsInferFmtInOrder(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageJSON string
+		files       []string
+		want        string
+	}{
+		{name: "prettier config", packageJSON: `{"devDependencies":{"@biomejs/biome":"latest"}}`, files: []string{".prettierrc.json"}, want: "npm exec -- prettier --write ."},
+		{name: "oxfmt rc", packageJSON: `{}`, files: []string{".oxfmtrc.jsonc", "biome.json"}, want: "npm exec -- oxfmt"},
+		{name: "biome", packageJSON: `{"devDependencies":{"@biomejs/biome":"latest"}}`, want: "npm exec -- biome format --write ."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeNodePackage(t, dir, tt.packageJSON)
+			for _, file := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, file), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["fmt"]
+
+			if body := ScriptBody(rec.Cmd); !strings.Contains(body, tt.want) {
+				t.Fatalf("fmt body = %q, want %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodeBuiltinsTypecheckScriptWins(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"scripts":{"type-check":"vue-tsc --noEmit"},"devDependencies":{"typescript":"latest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["typecheck"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run type-check -- "$@"`) {
+		t.Fatalf("typecheck body = %q, want type-check script", body)
+	}
+}
+
+func TestNodeBuiltinsComposeTypecheckTools(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"devDependencies":{"vue-tsc":"latest","svelte-check":"latest","typescript":"latest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["typecheck"]
+	body := ScriptBody(rec.Cmd)
+
+	for _, want := range []string{
+		"set -e",
+		`npm exec -- vue-tsc --noEmit "$@"`,
+		`npm exec -- svelte-check "$@"`,
+		`npm exec -- tsc --noEmit "$@"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("typecheck body = %q, missing %q", body, want)
+		}
+	}
+	vueIndex := strings.Index(body, `npm exec -- vue-tsc --noEmit "$@"`)
+	svelteIndex := strings.Index(body, `npm exec -- svelte-check "$@"`)
+	tscIndex := strings.Index(body, `npm exec -- tsc --noEmit "$@"`)
+	if vueIndex > svelteIndex || svelteIndex > tscIndex {
+		t.Fatalf("typecheck body order = %q", body)
+	}
+}
+
+func TestNodeBuiltinsCheckComposesAvailableRecipes(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"scripts":{"test":"vitest"},"devDependencies":{"eslint":"latest","typescript":"latest"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["check"]
+
+	if len(rec.Pre) != 2 || !slices.Equal(rec.Pre[0], Command{"@lint"}) || !slices.Equal(rec.Pre[1], Command{"@typecheck"}) {
+		t.Fatalf("check pre = %#v, want lint then typecheck", rec.Pre)
+	}
+	if !slices.Equal(rec.Cmd, Command{"@test"}) {
+		t.Fatalf("check cmd = %#v, want @test", rec.Cmd)
+	}
+}
+
+func TestNodeBuiltinsPackageScriptsFillGaps(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"scripts":{"test":"custom test","lint:fix":"eslint --fix .","build":"custom build"},"devDependencies":{"vite":"latest"}}`)
+
+	recipes := Builtins(NodeProfile, BuiltinOptions{Dir: dir})
+
+	if body := ScriptBody(recipes["build"].Cmd); !strings.Contains(body, `npm run build -- "$@"`) {
+		t.Fatalf("build body = %q, want package script", body)
+	}
+	if body := ScriptBody(recipes["lint-fix"].Cmd); !strings.Contains(body, `npm run lint:fix -- "$@"`) {
+		t.Fatalf("lint-fix body = %q, want original script key", body)
+	}
+}
+
+func TestNodeBuiltinsPackageScriptNormalizationCollision(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"scripts":{"lint:fix":"colon","lint-fix":"exact"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["lint-fix"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint-fix -- "$@"`) {
+		t.Fatalf("lint-fix body = %q, want exact normalized script", body)
+	}
+}
+
+func TestNodeBuiltinsPackageScriptNormalizationReplacesInvalidCharacters(t *testing.T) {
+	dir := t.TempDir()
+	writeNodePackage(t, dir, `{"scripts":{"pre view":"vite preview","lint---fix":"eslint --fix .","#foo":"node hash.js"}}`)
+
+	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["pre-view"]
+
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run 'pre view' -- "$@"`) {
+		t.Fatalf("pre-view body = %q, want original script key quoted", body)
+	}
+	rec = Builtins(NodeProfile, BuiltinOptions{Dir: dir})["lint-fix"]
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint---fix -- "$@"`) {
+		t.Fatalf("lint-fix body = %q, want original repeated-dash script key", body)
+	}
+	rec = Builtins(NodeProfile, BuiltinOptions{Dir: dir})["foo"]
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run '#foo' -- "$@"`) {
+		t.Fatalf("foo body = %q, want hash-prefixed script key quoted", body)
+	}
+}
+
+func writeNodePackage(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

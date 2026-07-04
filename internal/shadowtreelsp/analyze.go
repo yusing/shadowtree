@@ -711,7 +711,10 @@ func keyCompletions(table string) []completion {
 func valueCompletions(key string) []completion {
 	switch key {
 	case "profile":
-		return []completion{{Label: "go", InsertText: "go", Kind: completionKindValue, Detail: "Go profile", Quote: true}}
+		return []completion{
+			{Label: recipe.GoProfile, InsertText: recipe.GoProfile, Kind: completionKindValue, Detail: "Go profile", Quote: true},
+			{Label: recipe.NodeProfile, InsertText: recipe.NodeProfile, Kind: completionKindValue, Detail: "Node profile", Quote: true},
+		}
 	case "shell":
 		return shellValues
 	case "type":
