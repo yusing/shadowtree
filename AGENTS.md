@@ -45,10 +45,6 @@ Tests use the standard `testing` package and live beside code as `*_test.go`. Na
 
 Schema changes should be checked with a representative Shadowtree TOML file through a schema-aware tool, not only by JSON parsing the schema. Zed query changes should be checked against a sample `.shadowtree.toml` so invalid node names, captures, and predicates fail before review. LSP completion changes should include focused `internal/shadowtreelsp` tests.
 
-## Commit & Pull Request Guidelines
-
-Git history uses Conventional Commit subjects, for example `feat: add typed recipe arguments`. Keep commits focused and imperative. Pull requests should describe the behavior change, list verification commands, note config or sync-out effects, and link any related issue. Include screenshots only for user-visible terminal output changes where text examples are clearer than prose.
-
 ## Agent-Specific Instructions
 
 Sandboxed recipes isolate writes by default. On Linux, namespace overlayfs runs commands at the source checkout path inside the namespace so Go test caching remains stable; writes land in the overlay upperdir unless explicitly synced. When namespace overlayfs is unavailable, Shadowtree warns and falls back to a copied workspace.
