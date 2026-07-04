@@ -102,6 +102,9 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			return nil, err
 		}
 		server.documents[params.TextDocument.URI] = params.TextDocument.Text
+		if err := server.publishDiagnostics(params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	case "textDocument/didChange":
 		var params didChangeParams
@@ -109,7 +112,14 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			return nil, err
 		}
 		if len(params.ContentChanges) > 0 {
-			server.documents[params.TextDocument.URI] = params.ContentChanges[len(params.ContentChanges)-1].Text
+			text := server.documents[params.TextDocument.URI]
+			for _, change := range params.ContentChanges {
+				text = applyContentChange(text, change)
+			}
+			server.documents[params.TextDocument.URI] = text
+			if err := server.publishDiagnostics(params.TextDocument.URI, text, params.TextDocument.Version); err != nil {
+				return nil, err
+			}
 		}
 		return nil, nil
 	case "textDocument/didClose":
@@ -118,6 +128,9 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			return nil, err
 		}
 		delete(server.documents, params.TextDocument.URI)
+		if err := server.publishDiagnostics(params.TextDocument.URI, "", nil); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	case "textDocument/completion":
 		var params completionParams
@@ -141,7 +154,7 @@ func initializeResult() map[string]any {
 		"capabilities": map[string]any{
 			"textDocumentSync": map[string]any{
 				"openClose": true,
-				"change":    1,
+				"change":    2,
 			},
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'"},
@@ -163,18 +176,28 @@ func initializeResult() map[string]any {
 
 type didOpenParams struct {
 	TextDocument struct {
-		URI  string `json:"uri"`
-		Text string `json:"text"`
+		URI     string `json:"uri"`
+		Version *int   `json:"version,omitempty"`
+		Text    string `json:"text"`
 	} `json:"textDocument"`
 }
 
 type didChangeParams struct {
 	TextDocument struct {
-		URI string `json:"uri"`
+		URI     string `json:"uri"`
+		Version *int   `json:"version,omitempty"`
 	} `json:"textDocument"`
-	ContentChanges []struct {
-		Text string `json:"text"`
-	} `json:"contentChanges"`
+	ContentChanges []contentChange `json:"contentChanges"`
+}
+
+type contentChange struct {
+	Range *lspTextRange `json:"range,omitempty"`
+	Text  string        `json:"text"`
+}
+
+type lspTextRange struct {
+	Start lspPosition `json:"start"`
+	End   lspPosition `json:"end"`
 }
 
 type didCloseParams struct {
@@ -375,6 +398,51 @@ func lspToBytePosition(lines []string, position lspPosition) lspPosition {
 		Line:      position.Line,
 		Character: utf16ToByteOffset(line, position.Character),
 	}
+}
+
+func applyContentChange(text string, change contentChange) string {
+	if change.Range == nil {
+		return change.Text
+	}
+	start, end := changeByteRange(text, *change.Range)
+	return text[:start] + change.Text + text[end:]
+}
+
+func changeByteRange(text string, editRange lspTextRange) (int, int) {
+	lines := strings.Split(text, "\n")
+	lineStart := lineByteStart(lines, editRange.Start.Line)
+	lineEnd := lineByteStart(lines, editRange.End.Line)
+	startLine := lineAt(lines, editRange.Start.Line)
+	endLine := lineAt(lines, editRange.End.Line)
+	start := lineStart + utf16ToByteOffset(startLine, editRange.Start.Character)
+	end := lineEnd + utf16ToByteOffset(endLine, editRange.End.Character)
+	if start > len(text) {
+		start = len(text)
+	}
+	if end > len(text) {
+		end = len(text)
+	}
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
+func lineByteStart(lines []string, line int) int {
+	if line <= 0 {
+		return 0
+	}
+	if line > len(lines) {
+		line = len(lines)
+	}
+	start := 0
+	for i := 0; i < line; i++ {
+		start += len(lines[i])
+		if i < len(lines)-1 {
+			start++
+		}
+	}
+	return start
 }
 
 func readMessage(reader *bufio.Reader) ([]byte, error) {

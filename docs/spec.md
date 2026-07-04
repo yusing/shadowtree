@@ -563,9 +563,11 @@ The Zed extension defines a `Shadowtree TOML` language backed by the pinned
 Shell semantic highlighting supports `shell = "bash"`, `shell = "sh"`, and
 `shell = "fish"` without hardcoding a single Zed shell language name.
 
-Zed completion and semantic tokens are provided by `shadowtree-lsp`.
+Zed completion, diagnostics, and semantic tokens are provided by
+`shadowtree-lsp`.
 The Zed extension starts `shadowtree-lsp` from `PATH`; when developing inside
-the Shadowtree checkout, it can also run `go run ./cmd/shadowtree-lsp`.
+the Shadowtree checkout, it runs `go run ./cmd/shadowtree-lsp` so local LSP
+changes take effect before an installed binary on `PATH`.
 
 VS Code support:
 

@@ -1,0 +1,265 @@
+package shadowtreelsp
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestDocumentDiagnosticsRejectNonPositivePosition(t *testing.T) {
+	for _, value := range []string{"-1", "0"} {
+		t.Run(value, func(t *testing.T) {
+			text := `[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.build.arguments.project]
+position = ` + value + `
+`
+			diagnostics := documentDiagnostics(text)
+			if len(diagnostics) != 1 {
+				t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+			}
+			if diagnostics[0].Message != "position must be 1 or greater" {
+				t.Fatalf("message = %q", diagnostics[0].Message)
+			}
+			assertDiagnosticRange(t, diagnostics[0], 4, len("position = "), len("position = ")+len(value))
+		})
+	}
+}
+
+func TestServerPublishesDiagnosticsOnOpen(t *testing.T) {
+	text := `[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.build.arguments.project]
+position = -1
+`
+	var out bytes.Buffer
+	server := &server{
+		output:    &out,
+		documents: map[string]string{},
+	}
+	params := didOpenParams{}
+	params.TextDocument.URI = "file:///shadowtree.toml"
+	params.TextDocument.Version = new(1)
+	params.TextDocument.Text = text
+	body, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.handle(rpcMessage{
+		JSONRPC: "2.0",
+		Method:  "textDocument/didOpen",
+		Params:  body,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	notification := readTestMessage(t, out.Bytes())
+	paramsOut := diagnosticsParams(t, notification)
+	if paramsOut.URI != "file:///shadowtree.toml" {
+		t.Fatalf("uri = %q", paramsOut.URI)
+	}
+	if paramsOut.Version == nil || *paramsOut.Version != 1 {
+		t.Fatalf("version = %#v, want 1", paramsOut.Version)
+	}
+	if len(paramsOut.Diagnostics) != 1 || paramsOut.Diagnostics[0].Message != "position must be 1 or greater" {
+		t.Fatalf("diagnostics = %#v", paramsOut.Diagnostics)
+	}
+}
+
+func TestServerClearsDiagnosticsAfterIncrementalUndo(t *testing.T) {
+	text := `[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.build.arguments.project]
+position = -1
+`
+	var out bytes.Buffer
+	server := &server{
+		output:    &out,
+		documents: map[string]string{"file:///shadowtree.toml": text},
+	}
+	params := didChangeParams{}
+	params.TextDocument.URI = "file:///shadowtree.toml"
+	params.TextDocument.Version = new(2)
+	params.ContentChanges = []contentChange{{
+		Range: &lspTextRange{
+			Start: lspPosition{Line: 4, Character: len("position = ")},
+			End:   lspPosition{Line: 4, Character: len("position = -1")},
+		},
+		Text: "1",
+	}}
+	body, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.handle(rpcMessage{
+		JSONRPC: "2.0",
+		Method:  "textDocument/didChange",
+		Params:  body,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if server.documents["file:///shadowtree.toml"] != strings.Replace(text, "-1", "1", 1) {
+		t.Fatalf("document = %q", server.documents["file:///shadowtree.toml"])
+	}
+
+	paramsOut := diagnosticsParams(t, readTestMessage(t, out.Bytes()))
+	if paramsOut.Version == nil || *paramsOut.Version != 2 {
+		t.Fatalf("version = %#v, want 2", paramsOut.Version)
+	}
+	if paramsOut.Diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(paramsOut.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want cleared", paramsOut.Diagnostics)
+	}
+}
+
+func TestServerClearsDiagnosticsOnClose(t *testing.T) {
+	var out bytes.Buffer
+	server := &server{
+		output:    &out,
+		documents: map[string]string{"file:///shadowtree.toml": "position = -1"},
+	}
+	params := didCloseParams{}
+	params.TextDocument.URI = "file:///shadowtree.toml"
+	body, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.handle(rpcMessage{
+		JSONRPC: "2.0",
+		Method:  "textDocument/didClose",
+		Params:  body,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := server.documents["file:///shadowtree.toml"]; ok {
+		t.Fatalf("document was not removed")
+	}
+
+	paramsOut := diagnosticsParams(t, readTestMessage(t, out.Bytes()))
+	if paramsOut.URI != "file:///shadowtree.toml" {
+		t.Fatalf("uri = %q", paramsOut.URI)
+	}
+	if paramsOut.Version != nil {
+		t.Fatalf("version = %#v, want omitted", paramsOut.Version)
+	}
+	if paramsOut.Diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(paramsOut.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want cleared", paramsOut.Diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectSyntaxError(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.build]
+cmd = [
+`)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if diagnostics[0].Message == "" {
+		t.Fatalf("diagnostic has empty message: %#v", diagnostics[0])
+	}
+}
+
+func TestDocumentDiagnosticsRejectUnknownRecipeField(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.build]
+cmd = ["go", "build"]
+unknown = true
+`)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if diagnostics[0].Message != "unknown field recipes.build.unknown" {
+		t.Fatalf("message = %q", diagnostics[0].Message)
+	}
+	assertDiagnosticRange(t, diagnostics[0], 2, 0, len("unknown"))
+}
+
+func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
+	diagnostics := documentDiagnostics(`"$schema" = "https://example.com/schema.json"
+
+[recipes.build]
+cmd = ["go", "build"]
+`)
+	if diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptValidConfig(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.build.arguments.project]
+position = 1
+`)
+	if diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func assertDiagnosticRange(t *testing.T, diagnostic lspDiagnostic, line, start, end int) {
+	t.Helper()
+	editRange := diagnostic.Range
+	startPos, ok := editRange["start"].(lspPosition)
+	if !ok {
+		t.Fatalf("start has type %T", editRange["start"])
+	}
+	endPos, ok := editRange["end"].(lspPosition)
+	if !ok {
+		t.Fatalf("end has type %T", editRange["end"])
+	}
+	got := []int{startPos.Line, startPos.Character, endPos.Character}
+	want := []int{line, start, end}
+	if !slices.Equal(got, want) {
+		t.Fatalf("range = %#v, want %#v", got, want)
+	}
+}
+
+func diagnosticsParams(t *testing.T, notification rpcMessage) struct {
+	URI         string          `json:"uri"`
+	Version     *int            `json:"version,omitempty"`
+	Diagnostics []lspDiagnostic `json:"diagnostics"`
+} {
+	t.Helper()
+	if notification.Method != "textDocument/publishDiagnostics" {
+		t.Fatalf("method = %q", notification.Method)
+	}
+	var paramsOut struct {
+		URI         string          `json:"uri"`
+		Version     *int            `json:"version,omitempty"`
+		Diagnostics []lspDiagnostic `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(notification.Params, &paramsOut); err != nil {
+		t.Fatal(err)
+	}
+	return paramsOut
+}
+
+func readTestMessage(t *testing.T, data []byte) rpcMessage {
+	t.Helper()
+	body, err := readMessage(bufio.NewReader(bytes.NewReader(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg rpcMessage
+	if err := json.Unmarshal(body, &msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
+}

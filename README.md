@@ -138,9 +138,9 @@ Supported argument types are `string`, `int`, `float`, and `bool`.
 
 Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
 integration files for Zed and VS Code under `editors/`. These provide
-completion, schema validation, Shadowtree-specific highlighting, and shell
-semantic highlighting inside script-valued config fields. See `docs/spec.md` and
-the editor integration READMEs for implementation details.
+completion, diagnostics, schema validation, Shadowtree-specific highlighting,
+and shell semantic highlighting inside script-valued config fields. See
+`docs/spec.md` and the editor integration READMEs for implementation details.
 
 Install the Zed language server with:
 

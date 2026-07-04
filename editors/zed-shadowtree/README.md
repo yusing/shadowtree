@@ -10,11 +10,11 @@ It provides:
   and argument tables.
 - Shell semantic highlighting for script-valued `cmd`, `shell_prelude`, and
   `values` strings with `shell = "sh"`, `shell = "bash"`, or `shell = "fish"`.
-- Completion and semantic tokens through `shadowtree-lsp`.
+- Completion, diagnostics, and semantic tokens through `shadowtree-lsp`.
 
 For installed usage, `shadowtree-lsp` must be available on `PATH`. During
-development inside the Shadowtree checkout, the extension can run the local
-server with:
+development inside the Shadowtree checkout, the extension can fall back to the
+local server when no installed binary is available:
 
 ```sh
 go run ./cmd/shadowtree-lsp
