@@ -157,11 +157,11 @@ func initializeResult() map[string]any {
 				"change":    2,
 			},
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'"},
+				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@"},
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
-					"tokenTypes":     []string{"variable", "keyword", "function", "parameter", "operator", "comment"},
+					"tokenTypes":     []string{"variable", "keyword", "function", "parameter", "operator", "comment", "recipeReference"},
 					"tokenModifiers": []string{},
 				},
 				"full": true,
@@ -236,6 +236,8 @@ func completionResult(text string, position lspPosition) map[string]any {
 			out["textEdit"] = quotedValueTextEdit(text, bytePosition, item.Label)
 		case item.Detail == "Shadowtree placeholder":
 			out["textEdit"] = placeholderTextEdit(text, bytePosition, item.Label)
+		case item.Detail == "Shadowtree recipe reference":
+			out["textEdit"] = recipeReferenceTextEdit(text, bytePosition, item.InsertText)
 		case inTableHeader(text, bytePosition):
 			out["textEdit"] = tableTextEdit(text, bytePosition, item.InsertText)
 		case item.Kind == completionKindKeyword:
@@ -247,6 +249,22 @@ func completionResult(text string, position lspPosition) map[string]any {
 		"isIncomplete": false,
 		"items":        items,
 	}
+}
+
+func recipeReferenceTextEdit(text string, position lspPosition, name string) map[string]any {
+	lines := strings.Split(text, "\n")
+	line := lineAt(lines, position.Line)
+	prefix := linePrefix(line, position.Character)
+	at := strings.LastIndexByte(prefix, '@')
+	if at < 0 {
+		return textEdit(line, position.Line, position.Character, position.Character, "@"+name)
+	}
+	start := at + 1
+	end := position.Character
+	for end < len(line) && isRecipeReferenceNameByte(line[end]) {
+		end++
+	}
+	return textEdit(line, position.Line, start, end, name)
 }
 
 func keyTextEdit(text string, position lspPosition, label, insertText string) map[string]any {

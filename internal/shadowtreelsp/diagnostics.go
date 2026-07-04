@@ -40,12 +40,48 @@ func documentDiagnostics(text string) []lspDiagnostic {
 		return []lspDiagnostic{parseDiagnostic(text, err)}
 	}
 
-	diagnostics := append(positionDiagnostics(text), undecodedDiagnostics(text, md)...)
+	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(text, cfg)...)
+	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
 	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
 		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
 	}
 	if diagnostics == nil {
 		return []lspDiagnostic{}
+	}
+	return diagnostics
+}
+
+func commandReferenceDiagnostics(text string, cfg recipe.Config) []lspDiagnostic {
+	lines := strings.Split(text, "\n")
+	valid := map[string]bool{}
+	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
+		valid[name] = true
+	}
+	for name := range cfg.Recipes {
+		valid[name] = true
+	}
+	var diagnostics []lspDiagnostic
+	for _, ref := range commandReferenceSpans(lines) {
+		if ref.Name == "" {
+			diagnostics = append(diagnostics, lspDiagnostic{
+				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+				Severity: diagnosticSeverityError,
+				Source:   "shadowtree",
+				Message:  "empty recipe reference",
+			})
+			continue
+		}
+		if strings.Contains(ref.Name, "{") {
+			continue
+		}
+		if !valid[ref.Name] {
+			diagnostics = append(diagnostics, lspDiagnostic{
+				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.End),
+				Severity: diagnosticSeverityError,
+				Source:   "shadowtree",
+				Message:  "unknown recipe reference @" + ref.Name,
+			})
+		}
 	}
 	return diagnostics
 }

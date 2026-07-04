@@ -16,6 +16,7 @@ import (
 
 const GoProfile = "go"
 const scriptCommand = "__shadowtree_script__"
+const recipeReferencePrefix = "@"
 
 var ReservedNames = map[string]bool{
 	"run":        true,
@@ -89,6 +90,15 @@ type Resolved struct {
 
 var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var goBuiltinNames = []string{"build", "generate", "lint", "test", "test-race", "tidy", "vet"}
+
+// BuiltinNames returns the built-in recipe names for profile.
+func BuiltinNames(profile string) []string {
+	if profile != GoProfile {
+		return nil
+	}
+	return slices.Clone(goBuiltinNames)
+}
 
 func Builtins(profile string) map[string]Recipe {
 	if profile != GoProfile {
@@ -223,7 +233,7 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
-	cmd = CommandWithShell(cmd, rec.Shell, rec.ShellPrelude)
+	cmd = CommandWithRecipeReference(cmd, rec.Shell, rec.ShellPrelude)
 	fixedArgs, err := expandStrings(rec.Args, values)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
@@ -237,14 +247,14 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
 	for i := range pre {
-		pre[i] = CommandWithShell(pre[i], rec.Shell, rec.ShellPrelude)
+		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, rec.ShellPrelude)
 	}
 	post, err := expandCommands(rec.Post, values)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
 	for i := range post {
-		post[i] = CommandWithShell(post[i], rec.Shell, rec.ShellPrelude)
+		post[i] = CommandWithRecipeReference(post[i], rec.Shell, rec.ShellPrelude)
 	}
 	sandboxed := RecipeSandboxed(rec)
 	var syncOut []string
@@ -501,6 +511,15 @@ func ValidateCommand(command Command) error {
 		}
 		return nil
 	}
+	if ref, _, ok := RecipeReference(command); ok {
+		if ref == "" {
+			return errors.New("empty recipe reference")
+		}
+		if strings.TrimSpace(ref) != ref {
+			return fmt.Errorf("invalid recipe reference %q", ref)
+		}
+		return nil
+	}
 	if strings.TrimSpace(command[0]) == "" {
 		return errors.New("empty executable")
 	}
@@ -542,6 +561,9 @@ func CommandSummary(rec Recipe) string {
 
 func CommandHelpText(command Command) string {
 	if IsScriptCommand(command) {
+		if len(command) >= 2 && IsRecipeReferenceString(command[1]) {
+			return strings.Join(command[1:], " ")
+		}
 		return "<script>"
 	}
 	var parts []string
@@ -553,6 +575,13 @@ func CommandHelpText(command Command) string {
 		parts = append(parts, arg)
 	}
 	return strings.Join(parts, " ")
+}
+
+func RecipeReference(command Command) (string, []string, bool) {
+	if len(command) == 0 || !strings.HasPrefix(command[0], recipeReferencePrefix) {
+		return "", nil, false
+	}
+	return strings.TrimPrefix(command[0], recipeReferencePrefix), slices.Clone(command[1:]), true
 }
 
 func SingleLine(text string) string {
@@ -716,6 +745,13 @@ func CommandWithShell(command Command, shell, shellPrelude string) Command {
 	return out
 }
 
+func CommandWithRecipeReference(command Command, shell, shellPrelude string) Command {
+	if IsScriptCommand(command) && IsRecipeReferenceString(command[1]) {
+		return Command{command[1]}
+	}
+	return CommandWithShell(command, shell, shellPrelude)
+}
+
 func IsScriptCommand(command Command) bool {
 	return len(command) > 0 && command[0] == scriptCommand
 }
@@ -814,6 +850,13 @@ func decodeCommand(value any) (Command, error) {
 	default:
 		return nil, fmt.Errorf("command must be string or string array, got %T", value)
 	}
+}
+
+// IsRecipeReferenceString reports whether value is exactly an @recipe script string.
+func IsRecipeReferenceString(value string) bool {
+	return strings.HasPrefix(value, recipeReferencePrefix) &&
+		strings.TrimSpace(value) == value &&
+		!strings.ContainsAny(value, " \t\r\n")
 }
 
 func mergeStringMaps(base, override map[string]string) map[string]string {

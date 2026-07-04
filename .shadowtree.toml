@@ -60,6 +60,8 @@ cp -R "$skill_src" "$skill_dest"
 echo "installed shadowtree skill to $skill_dest"
 '''
 
+# Below are same as defaults
+
 [recipes.test]
 help = "Run the test suite."
 cmd = ["go", "test"]
@@ -72,8 +74,8 @@ default_args = ["./..."]
 
 [recipes.check]
 help = "Run vet and tests."
-pre = [["go", "vet", "./..."]]
-cmd = ["go", "test"]
+pre = ["@vet"]
+cmd = ["@test"]
 default_args = ["./..."]
 
 [recipes.fmt]

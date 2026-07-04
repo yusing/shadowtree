@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yusing/shadowtree/internal/recipe"
 )
 
 func TestLoadTOML(t *testing.T) {
@@ -68,6 +70,39 @@ default = 1
 	}
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")
+	}
+}
+
+func TestLoadBareRecipeReferenceCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.test]
+cmd = ["true"]
+pre = ["echo 123", "@foo"]
+
+[recipes.foo]
+cmd = ["true"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("test", loaded.Config.Recipes["test"], nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre := resolved.Recipe.Pre
+	if len(pre) != 2 {
+		t.Fatalf("pre = %#v, want two commands", pre)
+	}
+	if len(pre[0]) != 4 || pre[0][0] != "sh" || pre[0][2] != "echo 123" {
+		t.Fatalf("pre[0] = %#v, want shell-wrapped script command", pre[0])
+	}
+	if len(pre[1]) != 1 || pre[1][0] != "@foo" {
+		t.Fatalf("pre[1] = %#v, want recipe reference", pre[1])
 	}
 }
 

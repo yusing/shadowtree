@@ -169,8 +169,8 @@ values = ["cmd", "arg"]
 
 ## Recipe Fields
 
-Commands can be argv arrays or shell script strings. Script strings are executed
-with the configured shell:
+Commands can be argv arrays, recipe references, or shell script strings. Script
+strings are executed with the configured shell:
 
 ```toml
 shell = "bash"
@@ -183,6 +183,41 @@ echo "hello"
 ```
 
 If `shell` is not set, Shadowtree uses `sh`.
+
+An argv array whose first item starts with `@` invokes another Shadowtree recipe
+directly:
+
+```toml
+[recipes.gen-swagger]
+cmd = ["go", "generate", "./internal/api"]
+
+[recipes.test]
+pre = [["@gen-swagger"]]
+cmd = ["go", "test"]
+default_args = ["./..."]
+
+[recipes.build.arguments.project]
+values = ["@list-build-targets"]
+```
+
+The text after `@` is the referenced recipe name. Remaining argv items are
+passed to that recipe as CLI arguments:
+
+```toml
+pre = [["@build-api", "service=public"]]
+```
+
+In command-list fields such as `pre` and `post`, a string command that is
+exactly `@recipe` is also a recipe reference. Other string commands are shell
+scripts:
+
+```toml
+pre = ["echo 123", "@gen-swagger"]
+```
+
+Placeholders can be used in recipe references. Static references such as
+`@gen-swagger` can be validated by the editor; dynamic references such as
+`@{target}` are resolved at run time after placeholder expansion.
 
 Top-level `shell_prelude` is prepended to every script command and every
 `["sh", "-c", "..."]` command. It is intended for shared shell functions and
@@ -214,7 +249,8 @@ top-level vars.
   `false` runs the recipe directly in the source checkout and skips sync-out.
 
 `cmd`
-: Required argv prefix or shell script for the main command.
+: Required argv prefix, `@recipe` reference, or shell script for the main
+  command.
 
 `args`
 : Fixed arguments always inserted after `cmd`.
@@ -272,7 +308,8 @@ Argument fields:
 
 `values`
 : Optional command that produces completion candidates for this argument. Each
-  output line is a value, optionally followed by a tab and help text.
+  output line is a value, optionally followed by a tab and help text. The
+  command can be an `@recipe` reference.
 
 Example:
 
@@ -393,6 +430,13 @@ For a sandboxed recipe:
 5. If all phases succeeded, sync configured/requested paths back.
 6. Remove the temporary workspace.
 
+When a command is an `@recipe` reference, Shadowtree runs the referenced
+recipe's `pre`, main command, and `post` directly in the current workspace. It
+does not start another Shadowtree process, create a nested sandbox, or perform
+the referenced recipe's sync-out. Sync-out is performed only for the top-level
+invoked recipe after all phases succeed. Recursive recipe references fail with a
+cycle error.
+
 Failure behavior:
 
 - If a `pre` command fails, the main command is skipped.
@@ -445,26 +489,25 @@ generate   go generate ./...
 tidy       go mod tidy
 ```
 
-Built-in `tidy` syncs out:
-
-```text
-go.mod
-go.sum
-```
+Built-in `tidy` is unsandboxed by default, so `go mod tidy` updates `go.mod`
+and `go.sum` directly in the host checkout. Other built-in Go recipes are
+sandboxed unless project config overrides them.
 
 ## Help
 
 `shadowtree help` prints CLI usage, active config/profile, and resolved recipes
 with their `help` text.
 
-`shadowtree help <recipe>` prints:
+`shadowtree help <recipe>` prints these fields when present or applicable:
 
 - recipe name
 - recipe help text
 - command summary
+- `sandboxed: false` for unsandboxed recipes
 - pre commands
 - post commands
-- sync-out paths
+- argument definitions and available values
+- sync-out paths for sandboxed recipes
 
 Multi-line command arguments are summarized as `<script>` in help and completion
 output.
@@ -482,15 +525,16 @@ no `help`, Shadowtree falls back to a compact command summary.
 shadowtree --print test ./internal/runner
 ```
 
-The plan includes:
+The plan includes these fields when present or applicable:
 
 - recipe name
 - profile
 - config path
+- `sandboxed: false` for unsandboxed recipes
 - pre commands
 - main command
 - post commands
-- sync-out paths
+- sync-out paths for sandboxed recipes
 
 ## Fish Completion
 
@@ -597,13 +641,17 @@ It:
 Shadowtree currently uses itself for development through `.shadowtree.toml`.
 
 ```text
-build    Build the shadowtree binary into bin/shadowtree.
-install  Install the shadowtree binary and fish completion.
-test     Run the test suite.
-vet      Run go vet.
-check    Run vet and tests.
-fmt      Format Go source files.
-tidy     Tidy module dependencies.
+build          Build the shadowtree binary into bin/shadowtree.
+check          Run vet and tests.
+fmt            Format Go source files.
+generate       Run go generate.
+install        Install the shadowtree binary and fish completion.
+install-skill  Install the Shadowtree agent skill.
+lint           Run Go lint checks.
+test           Run the test suite.
+test-race      Run Go tests with the race detector.
+tidy           Tidy module dependencies.
+vet            Run go vet.
 ```
 
 Recipes that intentionally mutate the host checkout set `sandboxed = false`:

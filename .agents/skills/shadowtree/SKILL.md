@@ -38,7 +38,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 
 - `shadowtree recipes`: list resolved recipes.
 - `shadowtree help`: show CLI help plus resolved recipes.
-- `shadowtree help <recipe>`: show command summary, args, values, pre/post, sandbox marker, and sync-out for one recipe.
+- `shadowtree help <recipe>`: show command summary plus applicable args, values, pre/post, unsandboxed marker, and sync-out for one recipe.
 - `shadowtree config`: print config path, profile, and resolved recipe list.
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
 - `shadowtree completion fish`: emit fish completion script.
@@ -83,9 +83,20 @@ For a recipe:
 2. If all `pre` commands succeed, `cmd + args + selected_args` runs.
 3. `post` commands run even when a `pre` or main command failed.
 4. The first pre/main error wins unless only `post` failed.
-5. Sync-out runs only after all recipe commands finish successfully.
+5. For sandboxed recipes, sync-out runs only after all recipe commands finish successfully.
 
 Command env is `os.Environ()` overlaid by top-level `env`, then recipe `env`.
+
+An argv command whose first item is `@recipe` invokes another resolved
+Shadowtree recipe directly in the current workspace. It does not spawn another
+`shadowtree` process, start a nested sandbox, or run the referenced recipe's
+sync-out. Remaining argv items are passed as that recipe's CLI args. Recursive
+references fail with a cycle error.
+
+In command-list fields such as `pre` and `post`, a string command that is
+exactly `@recipe` is also a recipe reference. Other string commands remain shell
+scripts, so `pre = ["echo 123", "@foo"]` runs `echo 123` as a script and then
+invokes recipe `foo`.
 
 Completion criterion: cleanup or reporting that must run after failure belongs in `post`; generated outputs are copied back only on success.
 
@@ -137,6 +148,25 @@ Use argv arrays for exact execution:
 cmd = ["go", "test"]
 default_args = ["./..."]
 ```
+
+Use `@recipe` as the first argv item to invoke another Shadowtree recipe from
+`cmd`, `pre`, `post`, or argument `values`:
+
+```toml
+[recipes.test]
+pre = [["@generate"]]
+cmd = ["go", "test"]
+default_args = ["./..."]
+
+[recipes.build.arguments.project]
+values = ["@list-build-targets"]
+```
+
+Use `["@build-api", "service=public"]` to pass args to the referenced recipe.
+Use `@{NAME}` only when the recipe name must come from a placeholder; static
+`@recipe` references are easier for LSP diagnostics and completion to validate.
+In `pre` and `post`, `["@recipe"]` and `"@recipe"` both invoke the referenced
+recipe; use the argv form when passing args.
 
 Use script strings for shell workflows:
 

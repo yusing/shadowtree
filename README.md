@@ -131,7 +131,7 @@ go_ldflags = "-buildvcs=false"
 
 [recipes.test]
 help = "Run tests after regenerating code."
-pre = [["go", "generate", "./..."]]
+pre = [["@generate"]]
 cmd = ["go", "test"]
 default_args = ["./..."]
 
@@ -163,6 +163,32 @@ Prefer argv arrays for exact process execution:
 [recipes.test]
 cmd = ["go", "test"]
 default_args = ["./..."]
+```
+
+Use `@recipe` as the first argv item to invoke another Shadowtree recipe
+directly from `cmd`, `pre`, `post`, or argument `values`:
+
+```toml
+[recipes.gen-swagger]
+help = "Regenerate Swagger files."
+cmd = ["go", "generate", "./internal/api"]
+
+[recipes.test]
+help = "Regenerate API files, then test."
+pre = [["@gen-swagger"]]
+cmd = ["go", "test"]
+default_args = ["./..."]
+```
+
+Referenced recipes run in the current workspace. They do not start a nested
+sandbox or run their own sync-out; sync-out is applied only for the top-level
+recipe invocation.
+
+In `pre` and `post` command lists, a string that is exactly `@recipe` is also a
+recipe reference. Other strings remain shell scripts:
+
+```toml
+pre = ["echo 123", "@gen-swagger"]
 ```
 
 Use shell script strings when a workflow needs shared shell logic, conditionals,
@@ -200,6 +226,10 @@ build      go build ./...
 generate   go generate ./...
 tidy       go mod tidy
 ```
+
+`tidy` is unsandboxed by default, so `go.mod` and `go.sum` changes are written
+directly to the host checkout. Other built-in Go recipes are sandboxed unless
+project config overrides them.
 
 Project config can override any built-in recipe field. Use
 `shadowtree --print <recipe>` to inspect the final command.

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/runner"
 )
 
 type Candidate struct {
@@ -193,12 +194,12 @@ func argumentCandidates(ctx context.Context, spec shellSpec, words []string, rec
 		if len(positionals) > 1 && positionals[0] != current {
 			content = strings.Join(append([]string{typedPrefix}, positionals[1:]...), " ")
 		}
-		return groupedArgumentCandidates(ctx, spec, prefix, content, rec, used, opts), true
+		return groupedArgumentCandidates(ctx, spec, prefix, content, rec, recipes, used, opts), true
 	}
-	return spacedArgumentCandidates(ctx, current, rec, used, opts), true
+	return spacedArgumentCandidates(ctx, current, rec, recipes, used, opts), true
 }
 
-func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, content string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
+func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, content string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	before, active := splitGroupedContent(spec, content)
 	tokenPrefix := prefix + before
 	if key, valuePrefix, ok := strings.Cut(active, "="); ok {
@@ -206,7 +207,7 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 		if !exists {
 			return nil
 		}
-		return valueCandidates(ctx, tokenPrefix+key+"=", valuePrefix, arg, rec, opts)
+		return valueCandidates(ctx, tokenPrefix+key+"=", valuePrefix, arg, rec, recipes, opts)
 	}
 	if active != "" {
 		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
@@ -216,13 +217,13 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 	return argumentNameCandidates(tokenPrefix, active, rec, used)
 }
 
-func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
+func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	if key, valuePrefix, ok := strings.Cut(current, "="); ok {
 		arg, exists := rec.Arguments[key]
 		if !exists {
 			return nil
 		}
-		return valueCandidates(ctx, key+"=", valuePrefix, arg, rec, opts)
+		return valueCandidates(ctx, key+"=", valuePrefix, arg, rec, recipes, opts)
 	}
 	if current != "" {
 		if candidates := positionalValueCandidates("", current, rec, used, opts); len(candidates) > 0 {
@@ -274,9 +275,9 @@ func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[
 	return candidates
 }
 
-func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, opts Options) []Candidate {
+func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
 	if len(arg.Values) > 0 {
-		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, opts)
+		return dynamicValueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	switch argumentType(arg) {
 	case "bool":
@@ -291,14 +292,14 @@ func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe
 	}
 }
 
-func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, opts Options) []Candidate {
-	command := recipe.CommandWithShell(arg.Values, rec.Shell, rec.ShellPrelude)
+func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
+	command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)
 	env := maps.Clone(opts.Env)
 	if env == nil {
 		env = map[string]string{}
 	}
 	maps.Copy(env, rec.Env)
-	output, err := recipe.CommandOutput(ctx, opts.Dir, env, command)
+	output, err := runner.CommandOutput(ctx, opts.Dir, env, command, recipes)
 	if err != nil {
 		return nil
 	}

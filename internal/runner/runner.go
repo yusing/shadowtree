@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 type Options struct {
 	Resolved   recipe.Resolved
+	Recipes    map[string]recipe.Recipe
 	SourceDir  string
 	PrintOnly  bool
 	Verbose    bool
@@ -56,7 +58,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		if options.Verbose {
 			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
 		}
-		return runResolvedCommands(ctx, nil, source, env, options, stdin, stdout, stderr)
+		return runResolvedCommands(ctx, nil, source, env, options, stdin, stdout, stderr, []string{options.Resolved.Name})
 	}
 	workDir, err := os.MkdirTemp("", "shadowtree-*")
 	if err != nil {
@@ -73,7 +75,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 			runErr = err
 		}
 	}()
-	if err := runResolvedCommands(ctx, sandbox, sandbox.root, env, options, stdin, stdout, stderr); err != nil {
+	if err := runResolvedCommands(ctx, sandbox, sandbox.root, env, options, stdin, stdout, stderr, []string{options.Resolved.Name}); err != nil {
 		return err
 	}
 	if options.SyncOutAll {
@@ -160,32 +162,35 @@ func (sandbox *sandboxWorkspace) materialize(dst string) error {
 	return applyOverlayUpper(sandbox.upper, dst, nil)
 }
 
-func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
+func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
 	var firstErr error
 	for i, command := range options.Resolved.Recipe.Pre {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options.Verbose, "pre", i); err != nil {
+		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, "pre", i, stack); err != nil {
 			firstErr = err
 			break
 		}
 	}
 	if firstErr == nil {
-		firstErr = runCommand(ctx, sandbox, dir, env, options.Resolved.Main, stdin, stdout, stderr, options.Verbose, "main", 0)
+		firstErr = runCommand(ctx, sandbox, dir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
 	}
 	for i, command := range options.Resolved.Recipe.Post {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options.Verbose, "post", i); err != nil && firstErr == nil {
+		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, "post", i, stack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, verbose bool, phase string, index int) error {
-	if verbose {
+func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
+	if options.Verbose {
 		label := phase
 		if phase != "main" {
 			label = fmt.Sprintf("%s[%d]", phase, index)
 		}
 		fmt.Fprintf(stderr, "shadowtree: %s: %s\n", label, strings.Join(command, " "))
+	}
+	if _, _, ok := recipe.RecipeReference(command); ok && options.Recipes != nil {
+		return runRecipeReference(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, stack)
 	}
 	if sandbox != nil && sandbox.overlay {
 		return sandbox.runNamespaceCommand(ctx, env, command, stdin, stdout, stderr)
@@ -204,6 +209,50 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 		return err
 	}
 	return nil
+}
+
+func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
+	name, args, _ := recipe.RecipeReference(command)
+	if slices.Contains(stack, name) {
+		cycle := append(slices.Clone(stack), name)
+		return fmt.Errorf("recipe reference cycle: %s", strings.Join(cycle, " -> "))
+	}
+	rec, ok := options.Recipes[name]
+	if !ok {
+		return fmt.Errorf("unknown recipe reference: @%s", name)
+	}
+	resolved, err := recipe.Resolve(name, rec, args, nil, nil, options.Resolved.ConfigPath, options.Resolved.Profile)
+	if err != nil {
+		return err
+	}
+	nested := options
+	nested.Resolved = resolved
+	nested.SyncOutAll = false
+	nested.PrintOnly = false
+	nestedEnv := mergedEnv(env, nil, resolved.Recipe.Env)
+	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), name))
+}
+
+func CommandOutput(ctx context.Context, dir string, env map[string]string, command recipe.Command, recipes map[string]recipe.Recipe) (string, error) {
+	if _, _, ok := recipe.RecipeReference(command); !ok || recipes == nil {
+		return recipe.CommandOutput(ctx, dir, env, command)
+	}
+	name, args, _ := recipe.RecipeReference(command)
+	rec, ok := recipes[name]
+	if !ok {
+		return "", fmt.Errorf("unknown recipe reference: @%s", name)
+	}
+	resolved, err := recipe.Resolve(name, rec, args, nil, env, "", "")
+	if err != nil {
+		return "", err
+	}
+	var stdout bytes.Buffer
+	envList := mergedEnv(os.Environ(), resolved.GlobalEnv, resolved.Recipe.Env)
+	err = runResolvedCommands(ctx, nil, dir, envList, Options{Resolved: resolved, Recipes: recipes}, nil, &stdout, io.Discard, []string{name})
+	if err != nil {
+		return "", err
+	}
+	return stdout.String(), nil
 }
 
 func printPlan(w io.Writer, resolved recipe.Resolved) {

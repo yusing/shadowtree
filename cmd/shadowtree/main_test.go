@@ -119,6 +119,29 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpShowsBareRecipeReferences(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "check", recipe.Recipe{
+		Help:        "Run vet and tests.",
+		Pre:         []recipe.Command{recipe.ScriptCommand("@vet")},
+		Cmd:         recipe.Command{"@test"},
+		DefaultArgs: []string{"./..."},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"command: @test ./...  +1 pre",
+		"pre[0]: @vet",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "tidy", recipe.Recipe{

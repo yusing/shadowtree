@@ -12,6 +12,10 @@
     "style": ["function"]
   },
   {
+    "token_type": "recipeReference",
+    "style": ["function.special", "function", "keyword"]
+  },
+  {
     "token_type": "parameter",
     "style": ["variable.parameter", "variable"]
   },

@@ -6,7 +6,7 @@ path_suffixes = [
 ]
 line_comments = ["# "]
 autoclose_before = ",]}"
-word_characters = ["_", "-"]
+word_characters = ["_", "-", "@"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
@@ -15,4 +15,4 @@ brackets = [
 ]
 
 [overrides.string]
-completion_query_characters = ["{", "_", "-"]
+completion_query_characters = ["{", "@", "_", "-"]

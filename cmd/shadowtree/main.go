@@ -39,8 +39,9 @@ type options struct {
 type multiFlag []string
 
 type recipeHelpOptions struct {
-	Dir string
-	Env map[string]string
+	Dir     string
+	Env     map[string]string
+	Recipes map[string]recipe.Recipe
 }
 
 func (flag *multiFlag) String() string {
@@ -112,8 +113,9 @@ func run(ctx context.Context, args []string) error {
 				return fmt.Errorf("unknown recipe: %s", rest[1])
 			}
 			return printRecipeHelp(ctx, os.Stdout, rest[1], rec, recipeHelpOptions{
-				Dir: mustGetwd(),
-				Env: loaded.Config.Env,
+				Dir:     mustGetwd(),
+				Env:     loaded.Config.Env,
+				Recipes: resolvedSet,
 			})
 		}
 		return printHelp(os.Stdout, loaded, profile, resolvedSet)
@@ -156,6 +158,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		return runner.Run(ctx, runner.Options{
 			Resolved:   resolved,
+			Recipes:    resolvedSet,
 			SourceDir:  mustGetwd(),
 			PrintOnly:  opts.printOnly,
 			Verbose:    opts.verbose,
@@ -420,7 +423,7 @@ func printArgumentValues(ctx context.Context, w io.Writer, arg recipe.Argument, 
 
 func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) ([]completion.Candidate, error) {
 	if len(arg.Values) > 0 {
-		command := recipe.CommandWithShell(arg.Values, rec.Shell, rec.ShellPrelude)
+		command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)
 		env := maps.Clone(opts.Env)
 		if env == nil {
 			env = map[string]string{}
@@ -428,7 +431,7 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 		maps.Copy(env, rec.Env)
 		valueCtx, cancel := context.WithTimeout(ctx, argumentValuesTimeout)
 		defer cancel()
-		output, err := recipe.CommandOutput(valueCtx, opts.Dir, env, command)
+		output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, opts.Recipes)
 		if err != nil {
 			return nil, err
 		}

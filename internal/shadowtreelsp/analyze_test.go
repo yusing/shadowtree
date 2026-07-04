@@ -48,6 +48,73 @@ cmd = '''go build {'''
 	assertLabels(t, items, "{PROJECT}", "{BIN}", "{pkg}")
 }
 
+func TestCompletionsIncludeRecipeReferences(t *testing.T) {
+	text := `[recipes.gen-swagger]
+cmd = ["go", "generate", "./..."]
+
+[recipes.vet]
+cmd = ["go", "vet"]
+
+[recipes.test]
+pre = ["echo 123", "@gen"]
+`
+	items := completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["echo 123", "@`)})
+	assertLabels(t, items, "@gen-swagger", "@vet")
+
+	items = completionsAt(text, lspPosition{Line: 7, Character: len(`pre = ["echo 123", "@gen`)})
+	assertLabels(t, items, "@gen-swagger")
+}
+
+func TestCompletionsFilterRecipeReferencePrefix(t *testing.T) {
+	text := `[recipes.vet]
+cmd = ["go", "vet"]
+
+[recipes.check]
+pre = ["@v"]
+`
+	items := completionsAt(text, lspPosition{Line: 4, Character: len(`pre = ["@v`)})
+	assertLabels(t, items, "@vet")
+}
+
+func TestCompletionsIncludeStringRecipeReferences(t *testing.T) {
+	text := `[recipes.test]
+cmd = ["go", "test"]
+
+[recipes.check]
+cmd = "@t"
+`
+	items := completionsAt(text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
+	assertLabels(t, items, "@test")
+}
+
+func TestCompletionsIgnoreRecipeReferencesOutsideRecipeTables(t *testing.T) {
+	text := `[recipes.test]
+cmd = ["go", "test"]
+
+[vars]
+cmd = "@t"
+`
+	items := completionsAt(text, lspPosition{Line: 4, Character: len(`cmd = "@t`)})
+	if len(items) != 0 {
+		t.Fatalf("items = %#v, want none", items)
+	}
+}
+
+func TestRecipeReferenceTextEditReplacesNameAfterAt(t *testing.T) {
+	text := `[recipes.gen-swagger]
+cmd = ["go", "generate", "./..."]
+
+[recipes.test]
+pre = [["@gen"]]
+`
+	result := completionResult(text, lspPosition{Line: 4, Character: len(`pre = [["@gen`)})
+	edit := completionTextEdit(t, result, "@gen-swagger")
+	if edit["newText"] != "gen-swagger" {
+		t.Fatalf("newText = %#v, want recipe name", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`pre = [["@`), len(`pre = [["@gen`))
+}
+
 func TestCompletionsIncludeSupportedShellValues(t *testing.T) {
 	items := completionsAt("shell = ", lspPosition{Line: 0, Character: len("shell = ")})
 	assertLabels(t, items, "sh", "bash", "fish")
@@ -117,6 +184,69 @@ cmd = '''go build {PROJECT}'''
 	}
 	if !hasSemanticToken(tokens, 4, len("cmd = '''go build "), len("{PROJECT}"), semanticTokenVariable) {
 		t.Fatalf("missing placeholder token in %#v", tokens)
+	}
+}
+
+func TestSemanticTokensHighlightRecipeReferences(t *testing.T) {
+	text := `[recipes.test]
+pre = ["echo 123", "@{target}"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 1, len(`pre = ["echo 123", "`), len("@{target}"), semanticTokenRecipeReference)
+	if hasSemanticToken(tokens, 1, len(`pre = ["echo 123", "@`), len("{target}"), semanticTokenVariable) {
+		t.Fatalf("@{target} was also highlighted as a placeholder in %#v", tokens)
+	}
+}
+
+func TestSemanticTokensHighlightCheckRecipeReferences(t *testing.T) {
+	text := `[recipes.check]
+pre = ["@vet"]
+cmd = ["@test"]
+default_args = ["./..."]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("@vet"), semanticTokenRecipeReference)
+	assertSemanticToken(t, tokens, 2, len(`cmd = ["`), len("@test"), semanticTokenRecipeReference)
+}
+
+func TestSemanticTokensHighlightScalarRecipeReferences(t *testing.T) {
+	text := `[recipes.check]
+cmd = "@test"
+
+[recipes.check.arguments.target]
+values = "@targets"
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 1, len(`cmd = "`), len("@test"), semanticTokenRecipeReference)
+	assertSemanticToken(t, tokens, 4, len(`values = "`), len("@targets"), semanticTokenRecipeReference)
+}
+
+func TestSemanticTokensIgnoreShellStringStartingWithAt(t *testing.T) {
+	text := `[recipes.check]
+pre = ["@echo hi"]
+cmd = ["go", "test"]
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	if hasSemanticToken(tokens, 1, len(`pre = ["`), len("@echo hi"), semanticTokenRecipeReference) {
+		t.Fatalf("@echo hi was highlighted as a recipe reference in %#v", tokens)
+	}
+}
+
+func TestSemanticTokensHighlightPlaceholderAfterAtOutsideRecipeReference(t *testing.T) {
+	text := `[vars]
+URL = "@{host}"
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 1, len(`URL = "@`), len("{host}"), semanticTokenVariable)
+}
+
+func TestSemanticTokensIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
+	text := `[vars]
+cmd = "@missing"
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	if hasSemanticToken(tokens, 1, len(`cmd = "`), len("@missing"), semanticTokenRecipeReference) {
+		t.Fatalf("@missing was highlighted as a recipe reference in %#v", tokens)
 	}
 }
 

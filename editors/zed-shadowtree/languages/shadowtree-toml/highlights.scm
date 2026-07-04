@@ -28,6 +28,10 @@
   "}"
 ] @punctuation.bracket
 
+; Shadowtree recipe references.
+((string) @function @function.special
+  (#match? @function "^['\"]@[^'\"[:space:]]+['\"]$"))
+
 ; Shadowtree config keys.
 (pair
   (bare_key) @keyword

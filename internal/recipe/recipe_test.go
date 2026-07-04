@@ -53,6 +53,25 @@ func TestResolveUsesCLIArgsInsteadOfDefaultArgs(t *testing.T) {
 	}
 }
 
+func TestRecipeReferenceSplitsNameAndArgs(t *testing.T) {
+	name, args, ok := RecipeReference(Command{"@gen-swagger", "service=api"})
+	if !ok {
+		t.Fatal("RecipeReference did not detect @ command")
+	}
+	if name != "gen-swagger" {
+		t.Fatalf("name = %q", name)
+	}
+	if !slices.Equal(args, []string{"service=api"}) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestValidateCommandRejectsEmptyRecipeReference(t *testing.T) {
+	if err := ValidateCommand(Command{"@"}); err == nil {
+		t.Fatal("ValidateCommand accepted empty recipe reference")
+	}
+}
+
 func TestResolveDefaultsToSandboxed(t *testing.T) {
 	got, err := Resolve("test", Recipe{Cmd: Command{"go", "test"}}, nil, nil, nil, "", GoProfile)
 	if err != nil {

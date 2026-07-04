@@ -125,6 +125,59 @@ func TestRunUnsandboxedMutatesSourceWithoutSyncOut(t *testing.T) {
 	}
 }
 
+func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"cat", "out.txt"},
+			Pre:       []recipe.Command{{"@gen", "shadow"}},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"gen": {Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunRejectsRecipeReferenceCycle(t *testing.T) {
+	resolved, err := recipe.Resolve("a", recipe.Recipe{Cmd: recipe.Command{"@b"}, Sandboxed: new(false)}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"a": {Cmd: recipe.Command{"@b"}},
+			"b": {Cmd: recipe.Command{"@a"}},
+		},
+		SourceDir: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "recipe reference cycle: a -> b -> a") {
+		t.Fatalf("err = %v, want cycle", err)
+	}
+}
+
 func TestRunSyncsExplicitPath(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve("run", recipe.Recipe{Cmd: recipe.Command{"sh", "-c", "printf shadow > out.txt"}}, nil, []string{"out.txt"}, nil, "", "")

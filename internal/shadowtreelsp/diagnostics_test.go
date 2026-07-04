@@ -184,6 +184,86 @@ unknown = true
 	assertDiagnosticRange(t, diagnostics[0], 2, 0, len("unknown"))
 }
 
+func TestDocumentDiagnosticsRejectUnknownRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = ["echo 123", "@missing"]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["echo 123", "`), len(`pre = ["echo 123", "@missing`))
+}
+
+func TestDocumentDiagnosticsRejectUnknownMultilineRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = [
+  ["@missing"]
+]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 2, len(`  ["`), len(`  ["@missing`))
+}
+
+func TestDocumentDiagnosticsRejectUnknownScalarRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+cmd = "@missing"
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "`), len(`cmd = "@missing`))
+}
+
+func TestDocumentDiagnosticsRejectUnknownScalarValuesRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test.arguments.target]
+values = "@missing"
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`values = "`), len(`values = "@missing`))
+}
+
+func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
+	diagnostics := documentDiagnostics(`[vars]
+cmd = "@missing"
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	if diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsIgnoreShellStringStartingWithAt(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = ["@echo hi"]
+cmd = ["go", "test"]
+`)
+	if diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptDynamicRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(`[recipes.test]
+pre = [["@{target}"]]
+cmd = ["go", "test"]
+`)
+	if diagnostics == nil {
+		t.Fatalf("diagnostics = nil, want empty slice")
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
 	diagnostics := documentDiagnostics(`"$schema" = "https://example.com/schema.json"
 
@@ -228,6 +308,16 @@ func assertDiagnosticRange(t *testing.T, diagnostic lspDiagnostic, line, start, 
 	want := []int{line, start, end}
 	if !slices.Equal(got, want) {
 		t.Fatalf("range = %#v, want %#v", got, want)
+	}
+}
+
+func assertOneDiagnostic(t *testing.T, diagnostics []lspDiagnostic, message string) {
+	t.Helper()
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if diagnostics[0].Message != message {
+		t.Fatalf("message = %q, want %q", diagnostics[0].Message, message)
 	}
 }
 
