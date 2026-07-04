@@ -21,14 +21,6 @@ impl zed::Extension for ShadowtreeExtension {
             return Err(format!("unknown language server ID {language_server_id}"));
         }
 
-        if let Some(command) = worktree.which(SHADOWTREE_LSP_ID) {
-            return Ok(zed::Command {
-                command,
-                args: vec![],
-                env: worktree.shell_env(),
-            });
-        }
-
         if matches!(
             worktree.read_text_file("go.mod"),
             Ok(go_mod) if go_mod.lines().any(|line| line.trim() == SHADOWTREE_MODULE_DECL)
@@ -40,6 +32,14 @@ impl zed::Extension for ShadowtreeExtension {
             return Ok(zed::Command {
                 command,
                 args: vec!["run".into(), "./cmd/shadowtree-lsp".into()],
+                env: worktree.shell_env(),
+            });
+        }
+
+        if let Some(command) = worktree.which(SHADOWTREE_LSP_ID) {
+            return Ok(zed::Command {
+                command,
+                args: vec![],
                 env: worktree.shell_env(),
             });
         }
