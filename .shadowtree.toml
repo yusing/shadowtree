@@ -21,26 +21,17 @@ type = "string"
 default = "shadowtree"
 
 [recipes.install]
-help = "Install the shadowtree binary and fish completion."
-pre = ["@build"]
-cmd = '''
+help = "Install the Shadowtree CLI and language server."
+sandboxed = false
+cmd = ["go", "install"]
+args = ["./cmd/shadowtree", "./cmd/shadowtree-lsp"]
+post = ['''
 set -eu
-destdir=${DESTDIR:-}
-prefix=${PREFIX:-"$HOME/.local"}
-bindir=${BINDIR:-"$prefix/bin"}
-xdg_config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
-fish_config_dir=${FISH_CONFIG_DIR:-"$xdg_config_home/fish"}
-fish_completions_dir=${FISH_COMPLETIONS_DIR:-"$fish_config_dir/completions"}
-
-install -d "$destdir$bindir"
-install -m 0755 bin/shadowtree "$destdir$bindir/shadowtree"
-
-if [ -d "$destdir$fish_config_dir" ]; then
-	install -d "$destdir$fish_completions_dir"
-	bin/shadowtree completion fish > "$destdir$fish_completions_dir/shadowtree.fish"
-	chmod 0644 "$destdir$fish_completions_dir/shadowtree.fish"
+if fish -v >/dev/null 2>&1; then
+	mkdir -p "$HOME/.config/fish/completions"
+	go run ./cmd/shadowtree completion fish > "$HOME/.config/fish/completions/shadowtree.fish"
 fi
-'''
+''']
 
 [recipes.install-skill]
 help = "Install the Shadowtree agent skill."
