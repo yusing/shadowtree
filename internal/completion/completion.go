@@ -208,7 +208,8 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 		if !exists {
 			return nil
 		}
-		return valueCandidates(ctx, tokenPrefix+key+"=", valuePrefix, arg, rec, recipes, opts)
+		valuePrefix, prefix = splitQuotedValuePrefix(valuePrefix, tokenPrefix+key+"=")
+		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	if active != "" {
 		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
@@ -218,26 +219,11 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 	return argumentNameCandidates(tokenPrefix, active, rec, used)
 }
 
-// GroupedArgumentCandidates completes bracket-style recipe arguments without
-// evaluating dynamic values commands.
-func GroupedArgumentCandidates(prefix, content string, rec recipe.Recipe, opts Options) []Candidate {
+// GroupedArgumentCandidates completes bracket-style recipe arguments.
+func GroupedArgumentCandidates(ctx context.Context, prefix, content string, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
 	before, _ := splitGroupedContent(fishShell, content)
 	used := usedArguments(fishShell, []string{before}, "", rec)
-	before, active := splitGroupedContent(fishShell, content)
-	tokenPrefix := prefix + before
-	if key, valuePrefix, ok := strings.Cut(active, "="); ok {
-		arg, exists := rec.Arguments[key]
-		if !exists || len(arg.Values) > 0 {
-			return nil
-		}
-		return staticValueCandidates(tokenPrefix+key+"=", valuePrefix, arg, opts)
-	}
-	if active != "" {
-		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
-			return candidates
-		}
-	}
-	return argumentNameCandidates(tokenPrefix, active, rec, used)
+	return groupedArgumentCandidates(ctx, fishShell, prefix, content, rec, recipes, used, opts)
 }
 
 func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
@@ -246,7 +232,8 @@ func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Re
 		if !exists {
 			return nil
 		}
-		return valueCandidates(ctx, key+"=", valuePrefix, arg, rec, recipes, opts)
+		valuePrefix, prefix := splitQuotedValuePrefix(valuePrefix, key+"=")
+		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	if current != "" {
 		if candidates := positionalValueCandidates("", current, rec, used, opts); len(candidates) > 0 {
@@ -254,6 +241,13 @@ func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Re
 		}
 	}
 	return argumentNameCandidates("", current, rec, used)
+}
+
+func splitQuotedValuePrefix(valuePrefix, prefix string) (string, string) {
+	if valuePrefix == "" || (valuePrefix[0] != '\'' && valuePrefix[0] != '"') {
+		return valuePrefix, prefix
+	}
+	return valuePrefix[1:], prefix + valuePrefix[:1]
 }
 
 func splitGroupedContent(spec shellSpec, content string) (string, string) {

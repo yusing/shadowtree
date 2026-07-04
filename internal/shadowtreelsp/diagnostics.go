@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	recipecompletion "github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
@@ -66,13 +67,11 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 
 func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
-	valid := map[string]bool{}
-	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
-		valid[name] = true
+	recipes, ok := diagnosticRecipes(cfg)
+	if !ok {
+		return nil
 	}
-	for name := range cfg.Recipes {
-		valid[name] = true
-	}
+	completionOpts := completionOptionsForURI(opts.URI)
 	var diagnostics []lspDiagnostic
 	for _, ref := range commandReferenceSpans(lines) {
 		if ref.Name == "" {
@@ -101,16 +100,114 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 			}
 			continue
 		}
-		if !valid[ref.Name] {
+		rec, ok := recipes[ref.Name]
+		if !ok {
 			diagnostics = append(diagnostics, lspDiagnostic{
 				Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
 				Severity: diagnosticSeverityError,
 				Source:   "shadowtree",
 				Message:  "unknown recipe reference @" + ref.Name,
 			})
+			continue
+		}
+		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes, completionOpts)...)
+	}
+	return diagnostics
+}
+
+func diagnosticRecipes(cfg recipe.Config) (map[string]recipe.Recipe, bool) {
+	profile := cfg.Profile
+	if profile == "" {
+		profile = recipe.GoProfile
+	}
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), cfg.Recipes)
+	if err != nil {
+		return nil, false
+	}
+	return recipe.ApplyGlobals(recipes, cfg.Vars, cfg.Shell, cfg.ShellPrelude), true
+}
+
+func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
+	if len(ref.Args) == 0 || len(rec.Arguments) == 0 {
+		return nil
+	}
+	positionals := recipe.PositionalArguments(rec.Arguments)
+	nextPositional := 0
+	var diagnostics []lspDiagnostic
+	for _, argSpan := range ref.Args {
+		text := strings.TrimSpace(argSpan.Text)
+		if text == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(text, "=")
+		if !ok {
+			if nextPositional >= len(positionals) {
+				diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, "unexpected positional argument "+strconv.Quote(text)))
+				continue
+			}
+			name = positionals[nextPositional]
+			value = text
+			nextPositional++
+		}
+		arg, exists := rec.Arguments[name]
+		if !exists {
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, "unknown argument "+strconv.Quote(name)))
+			continue
+		}
+		value = unquoteRecipeReferenceArgumentValue(value)
+		if err := validateRecipeReferenceArgumentValue(name, arg, value); err != nil {
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
+			continue
+		}
+		if len(arg.Values) > 0 && value != "" && !recipeReferenceArgumentValueExists(ctx, name, value, rec, recipes, opts) {
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, fmt.Sprintf("%s: invalid value %q", name, value)))
 		}
 	}
 	return diagnostics
+}
+
+func commandReferenceArgumentDiagnostic(lines []string, arg commandReferenceArgumentSpan, message string) lspDiagnostic {
+	return lspDiagnostic{
+		Range:    lspRange(lineAt(lines, arg.Line), arg.Line, arg.Start, arg.End),
+		Severity: diagnosticSeverityError,
+		Source:   "shadowtree",
+		Message:  message,
+	}
+}
+
+func validateRecipeReferenceArgumentValue(name string, arg recipe.Argument, value string) error {
+	arg.Default = nil
+	arg.Required = false
+	_, _, err := recipe.ResolveArguments(recipe.Recipe{Arguments: map[string]recipe.Argument{name: arg}}, []string{name + "=" + value})
+	return err
+}
+
+func recipeReferenceArgumentValueExists(ctx context.Context, name, value string, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) bool {
+	candidates := recipecompletion.GroupedArgumentCandidates(
+		ctx,
+		"",
+		name+"="+value,
+		rec,
+		recipes,
+		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+	)
+	for _, candidate := range candidates {
+		if candidate.Value == name+"="+value {
+			return true
+		}
+	}
+	return false
+}
+
+func unquoteRecipeReferenceArgumentValue(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+	quote := value[0]
+	if quote != '\'' && quote != '"' || value[len(value)-1] != quote {
+		return value
+	}
+	return value[1 : len(value)-1]
 }
 
 func validateCrossConfigReference(ctx context.Context, ref commandReferenceSpan, opts diagnosticOptions) error {

@@ -281,6 +281,42 @@ cmd = '''
 	assertLabels(t, items, "true", "false")
 }
 
+func TestCompletionsIncludeValuesScriptRecipeReferenceDynamicArgumentValues(t *testing.T) {
+	text := `[recipes.minify.arguments.component]
+type = "string"
+values = "printf '%s\\n' godoxy agent socket-proxy cli"
+
+[recipes.minify]
+cmd = ["true"]
+
+[recipes.test.arguments.target]
+type = "string"
+values = '''
+@minify component="
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`@minify component="`)})
+	assertLabels(t, items, "godoxy", "agent", "socket-proxy", "cli")
+}
+
+func TestCompletionsIncludeValuesScriptRecipeReferenceDynamicBracketArgumentValues(t *testing.T) {
+	text := `[recipes.minify.arguments.component]
+type = "string"
+values = "printf '%s\\n' godoxy agent socket-proxy cli"
+
+[recipes.minify]
+cmd = ["true"]
+
+[recipes.test.arguments.target]
+type = "string"
+values = '''
+@minify[component="
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`@minify[component="`)})
+	assertLabels(t, items, "godoxy", "agent", "socket-proxy", "cli")
+}
+
 func TestCompletionsIncludeShellPreludeRecipeReferenceArguments(t *testing.T) {
 	text := `shell_prelude = '''
 @build[

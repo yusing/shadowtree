@@ -21,6 +21,14 @@ type Reference struct {
 	End        Position // end of the full shell command
 	TargetEnd  Position // end of the @recipe word
 	Value      string   // literal @recipe word
+	Args       []Argument
+}
+
+// Argument describes a shell word passed to a recipe reference.
+type Argument struct {
+	Start Position
+	End   Position
+	Value string
 }
 
 // SupportedShell reports whether shell can be parsed for recipe references.
@@ -66,13 +74,21 @@ func References(file *syntax.File) []Reference {
 		if !strings.HasPrefix(value, "@") {
 			return true
 		}
-		references = append(references, Reference{
+		ref := Reference{
 			CommandPos: call.Pos(),
 			Start:      position(target.Pos()),
 			End:        position(call.End()),
 			TargetEnd:  position(target.End()),
 			Value:      value,
-		})
+		}
+		for _, arg := range call.Args[1:] {
+			ref.Args = append(ref.Args, Argument{
+				Start: position(arg.Pos()),
+				End:   position(arg.End()),
+				Value: arg.Lit(),
+			})
+		}
+		references = append(references, ref)
 		return true
 	})
 	return references

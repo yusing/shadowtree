@@ -222,10 +222,12 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		return nil, true
 	}
 	candidates := recipecompletion.GroupedArgumentCandidates(
+		ctx,
 		name+"[",
 		content,
 		rec,
-		recipecompletion.Options{Dir: opts.Dir},
+		recipes,
+		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
 	)
 	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character), true
 }
@@ -256,23 +258,31 @@ func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis
 }
 
 func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
-	fakePrefix := `cmd = "@` + prefix
-	fakeBase := len(`cmd = "@`)
-	fakePos := lspPosition{Line: pos.Line, Character: len(fakePrefix)}
-	items, ok := recipeArgumentReferenceCompletions(ctx, text, "recipes.__script", fakePrefix, fakePos, opts)
+	name, content, ok := cutReferenceGroup(prefix)
 	if !ok {
 		return nil
 	}
-	for i := range items {
-		if items[i].Edit == nil {
-			continue
-		}
-		items[i].Edit = &completionEdit{
-			Start: start + 1 + max(items[i].Edit.Start-fakeBase, 0),
-			End:   pos.Character,
-		}
+	recipes, ok := completionRecipes(text)
+	if !ok {
+		return nil
 	}
-	return items
+	ref := recipeReferenceForCompletion(name)
+	rec, ok := recipes[ref.Name]
+	if ref.Path != "" {
+		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
+	}
+	if !ok || len(rec.Arguments) == 0 {
+		return nil
+	}
+	candidates := recipecompletion.GroupedArgumentCandidates(
+		ctx,
+		name+"[",
+		content,
+		rec,
+		recipes,
+		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+	)
+	return recipeArgumentCompletions(candidates, start+1, pos.Character)
 }
 
 func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
@@ -305,7 +315,7 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	if before != "" {
 		content = strings.Join(strings.Fields(before), ", ") + ", " + active
 	}
-	candidates := recipecompletion.GroupedArgumentCandidates("", content, rec, recipecompletion.Options{Dir: opts.Dir})
+	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, recipes, recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath})
 	editStart := start + 1 + len(name) + 1 + currentStart
 	return recipeArgumentCompletions(candidates, editStart, pos.Character)
 }
@@ -422,7 +432,7 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 		return 0, "", false
 	}
 	prefix := line[activeStart+1 : end]
-	if strings.ContainsAny(prefix, "\r\n;|&()<>\"'") {
+	if strings.ContainsAny(prefix, "\r\n;|&()<>") {
 		return 0, "", false
 	}
 	return activeStart, prefix, true
@@ -461,6 +471,7 @@ func recipeArgumentCompletionLabel(value string) string {
 	}
 	value = strings.TrimSpace(strings.TrimSuffix(value, "]"))
 	if _, suffix, ok := strings.Cut(value, "="); ok && suffix != "" {
+		suffix = strings.TrimPrefix(strings.TrimPrefix(suffix, `"`), `'`)
 		return suffix
 	}
 	return value
@@ -1420,10 +1431,18 @@ func spansOverlap(a, b span) bool {
 type commandReferenceSpan struct {
 	Path      string
 	Name      string
+	Args      []commandReferenceArgumentSpan
 	Line      int
 	Start     int
 	End       int
 	TargetEnd int
+}
+
+type commandReferenceArgumentSpan struct {
+	Text  string
+	Line  int
+	Start int
+	End   int
 }
 
 func (ref commandReferenceSpan) Target() string {
@@ -1477,13 +1496,29 @@ func commandReferenceSpansWithScriptRegions(lines []string, regions []scriptRegi
 }
 
 func uniqueCommandReferenceSpans(spans []commandReferenceSpan) []commandReferenceSpan {
-	seen := map[commandReferenceSpan]bool{}
+	type spanKey struct {
+		path      string
+		name      string
+		line      int
+		start     int
+		end       int
+		targetEnd int
+	}
+	seen := map[spanKey]bool{}
 	out := make([]commandReferenceSpan, 0, len(spans))
 	for _, span := range spans {
-		if seen[span] {
+		key := spanKey{
+			path:      span.Path,
+			name:      span.Name,
+			line:      span.Line,
+			start:     span.Start,
+			end:       span.End,
+			targetEnd: span.TargetEnd,
+		}
+		if seen[key] {
 			continue
 		}
-		seen[span] = true
+		seen[key] = true
 		out = append(out, span)
 	}
 	return out
@@ -1544,6 +1579,7 @@ func commandReferenceSpanFromString(value string, lineNo, start, end int) comman
 	return commandReferenceSpan{
 		Path:      ref.Path,
 		Name:      ref.Name,
+		Args:      commandReferenceArgumentSpans(value, ref.Args, lineNo, start),
 		Line:      lineNo,
 		Start:     start,
 		End:       end,
@@ -1559,6 +1595,47 @@ func recipeReferenceLookupValue(value string) string {
 		return value[:1+space]
 	}
 	return value
+}
+
+func commandReferenceArgumentSpans(value string, args []string, lineNo, start int) []commandReferenceArgumentSpan {
+	if len(args) == 0 {
+		return nil
+	}
+	open := strings.IndexByte(value, '[')
+	if open < 0 {
+		return nil
+	}
+	close := strings.LastIndexByte(value, ']')
+	if close < open {
+		close = len(value)
+	}
+	contentStart := open + 1
+	content := value[contentStart:close]
+	spans := make([]commandReferenceArgumentSpan, 0, len(args))
+	offset := 0
+	for part := range strings.SplitSeq(content, ",") {
+		partStart := offset
+		partEnd := partStart + len(part)
+		trimmedStart := partStart
+		for trimmedStart < partEnd && isShellSpace(content[trimmedStart]) {
+			trimmedStart++
+		}
+		trimmedEnd := partEnd
+		for trimmedEnd > trimmedStart && isShellSpace(content[trimmedEnd-1]) {
+			trimmedEnd--
+		}
+		text := content[trimmedStart:trimmedEnd]
+		if text != "" {
+			spans = append(spans, commandReferenceArgumentSpan{
+				Text:  text,
+				Line:  lineNo,
+				Start: start + contentStart + trimmedStart,
+				End:   start + contentStart + trimmedEnd,
+			})
+		}
+		offset = partEnd + 1
+	}
+	return spans
 }
 
 func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []commandReferenceSpan {
@@ -1608,6 +1685,19 @@ func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion
 	}
 	span := commandReferenceSpanFromString(ref.Value, startLine, startCol, endCol)
 	span.TargetEnd = targetEndCol
+	for _, arg := range ref.Args {
+		argStartLine, argStartCol := scriptPosition(region, arg.Start)
+		argEndLine, argEndCol := scriptPosition(region, arg.End)
+		if argStartLine != argEndLine {
+			continue
+		}
+		span.Args = append(span.Args, commandReferenceArgumentSpan{
+			Text:  arg.Value,
+			Line:  argStartLine,
+			Start: argStartCol,
+			End:   argEndCol,
+		})
+	}
 	return span
 }
 

@@ -317,6 +317,71 @@ cmd = ["go", "test"]
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`values = "`), len(`values = "@missing`))
 }
 
+func TestDocumentDiagnosticsRejectUnknownValuesScriptRecipeReferenceWithQuotedArgument(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = '''
+@missing component="godoxy"
+'''
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 2, 0, len(`@missing`))
+}
+
+func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceArgumentValue(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.minify.arguments.component]
+type = "string"
+values = "printf '%s\\n' godoxy agent socket-proxy cli"
+
+[recipes.minify]
+cmd = ["true"]
+
+[recipes.test.arguments.target]
+type = "string"
+values = '''
+@minify component=foo
+'''
+`)
+	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
+	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify `), len(`@minify component=foo`))
+}
+
+func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceBracketArgumentValue(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.minify.arguments.component]
+type = "string"
+values = "printf '%s\\n' godoxy agent socket-proxy cli"
+
+[recipes.minify]
+cmd = ["true"]
+
+[recipes.test.arguments.target]
+type = "string"
+values = '''
+@minify[component=foo]
+'''
+`)
+	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
+	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify[`), len(`@minify[component=foo`))
+}
+
+func TestDocumentDiagnosticsRejectInvalidScriptRecipeReferenceArgumentType(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@build mode=nope
+'''
+
+[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["go", "build"]
+`)
+	assertOneDiagnostic(t, diagnostics, `mode: want bool, got "nope"`)
+	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build `), len(`@build mode=nope`))
+}
+
 func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[vars]
 cmd = "@missing"
