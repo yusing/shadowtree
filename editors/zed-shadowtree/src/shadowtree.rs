@@ -21,6 +21,21 @@ impl zed::Extension for ShadowtreeExtension {
             return Err(format!("unknown language server ID {language_server_id}"));
         }
 
+        let settings = zed::settings::LspSettings::for_worktree(SHADOWTREE_LSP_ID, worktree)?;
+        if let Some(binary) = settings.binary {
+            let mut env = worktree.shell_env();
+            if let Some(binary_env) = binary.env {
+                env.extend(binary_env);
+            }
+            let args = binary.arguments.unwrap_or_default();
+            if let Some(command) = binary.path.filter(|path| !path.trim().is_empty()) {
+                return Ok(zed::Command { command, args, env });
+            }
+            if let Some(command) = worktree.which(SHADOWTREE_LSP_ID) {
+                return Ok(zed::Command { command, args, env });
+            }
+        }
+
         if matches!(
             worktree.read_text_file("go.mod"),
             Ok(go_mod) if go_mod.lines().any(|line| line.trim() == SHADOWTREE_MODULE_DECL)
@@ -44,7 +59,7 @@ impl zed::Extension for ShadowtreeExtension {
             });
         }
 
-        Err("install shadowtree-lsp on PATH, or open the Shadowtree repository for local development".into())
+        Err("could not resolve shadowtree-lsp; configure lsp.shadowtree-lsp.binary.path, install it on Zed's PATH, or open the Shadowtree repository for local development".into())
     }
 }
 

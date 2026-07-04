@@ -1,7 +1,7 @@
 # Shadowtree TOML for VS Code
 
 This companion extension binds the Shadowtree JSON Schema to `.shadowtree.toml`
-and `shadowtree.toml` files through Even Better TOML.
+files through Even Better TOML.
 
 It contributes only schema metadata. Completion, hover, and validation are
 provided by `tamasfe.even-better-toml`, which is listed as an extension

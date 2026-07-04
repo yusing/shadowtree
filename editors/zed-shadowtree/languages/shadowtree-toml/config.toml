@@ -2,7 +2,6 @@ name = "Shadowtree TOML"
 grammar = "toml"
 path_suffixes = [
     ".shadowtree.toml",
-    "shadowtree.toml",
 ]
 line_comments = ["# "]
 autoclose_before = ",]}"
