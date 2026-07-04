@@ -77,9 +77,10 @@ shadowtree help [recipe [color=false]]
 shadowtree recipes
 shadowtree config
 shadowtree init [path]
-shadowtree completion bash|fish
+shadowtree completion bash|fish|zsh
 shadowtree __complete fish <words...>
 shadowtree __complete bash <cursor> <line> [current]
+shadowtree __complete zsh <words...>
 ```
 
 `__complete` is internal and used by generated shell completion.
@@ -620,18 +621,21 @@ The plan includes these fields when present or applicable:
 
 ## Shell Completion
 
-Shadowtree can generate bash and fish completion:
+Shadowtree can generate bash, fish, and zsh completion:
 
 ```sh
-shadowtree completion bash > ~/.config/shadowtree/completion.bash
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion bash)"
 ```
 
-The repository `install` recipe installs
-`${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a
-guarded source block to `~/.bashrc`.
+The repository `install` recipe appends the same guarded eval line to
+`~/.bashrc`.
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+```
+
+```sh
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
 The generated shell scripts call back into Shadowtree:
@@ -639,6 +643,7 @@ The generated shell scripts call back into Shadowtree:
 ```sh
 shadowtree __complete fish <words...>
 shadowtree __complete bash <cursor> <line> [current]
+shadowtree __complete zsh <words...>
 ```
 
 Completion is dynamic and uses:
@@ -717,21 +722,18 @@ and provides schema-backed validation, hover, and completion.
 
 ## Install Recipe Convention
 
-This repository's own `.shadowtree.toml` includes an `install` recipe modeled
-after `git-agent`.
+This repository's own `.shadowtree.toml` includes an `install` recipe.
 
 It:
 
-- installs the binaries to `${PREFIX:-$HOME/.local}/bin`
-- honors `DESTDIR`
-- honors `BINDIR`
-- honors `XDG_CONFIG_HOME`
+- installs the binaries with default `go install`
 - honors `FISH_CONFIG_DIR`
 - honors `FISH_COMPLETIONS_DIR`
-- generates completion from the installed `shadowtree` binary
-- installs bash completion under the user config directory and sources it from
-  `~/.bashrc`
+- generates completion from `shadowtree` on `PATH`
 - installs fish completion when `fish` is available
+- appends one guarded bash completion eval line to `~/.bashrc`
+- appends one guarded zsh completion eval line to `~/.zshrc` when `zsh` is
+  available
 
 ## Current Project Recipes
 
@@ -742,7 +744,7 @@ build          Build the shadowtree binary into bin/shadowtree.
 check          Run vet and tests.
 fmt            Format Go source files.
 generate       Run go generate.
-install        Install the shadowtree binary and shell completion.
+install        Install the Shadowtree CLI and language server.
 install-skill  Install the Shadowtree agent skill.
 lint           Run Go lint checks.
 run            Run a Go command.

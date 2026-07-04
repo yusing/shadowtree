@@ -54,12 +54,21 @@ var bashShell = shellSpec{
 	normalize:  func(word string) string { return word },
 }
 
+var zshShell = shellSpec{
+	name:       "zsh",
+	groupOpen:  "[",
+	groupClose: "]",
+	normalize:  func(word string) string { return word },
+}
+
 func shellFor(name string) (shellSpec, error) {
 	switch name {
 	case "bash":
 		return bashShell, nil
 	case "fish":
 		return fishShell, nil
+	case "zsh":
+		return zshShell, nil
 	default:
 		return shellSpec{}, fmt.Errorf("unsupported shell: %s", name)
 	}
@@ -71,6 +80,8 @@ func Script(w io.Writer, shell string) error {
 		return bashScript(w)
 	case "fish":
 		return fishScript(w)
+	case "zsh":
+		return zshScript(w)
 	default:
 		return fmt.Errorf("unsupported shell: %s", shell)
 	}
@@ -103,6 +114,48 @@ complete -c shadowtree -f -a '(__shadowtree_complete)'
 	return nil
 }
 
+func zshScript(w io.Writer) error {
+	_, err := io.WriteString(w, `#compdef shadowtree
+
+_shadowtree() {
+    local command_name value description record ret=1
+    local -a nospace_records space_records
+
+    command_name=${words[1]:-shadowtree}
+    while IFS=$'\t' read -r value description; do
+        if [[ -z $value ]]; then
+            continue
+        fi
+        record=${value//\\/\\\\}
+        record=${record//:/\\:}
+        if [[ -n $description ]]; then
+            record+=":${description}"
+        fi
+        if [[ $value == *= || $value == */ ]]; then
+            nospace_records+=("$record")
+        else
+            space_records+=("$record")
+        fi
+    done < <("$command_name" __complete zsh "${words[@]}")
+
+    if (( ${#nospace_records} )); then
+        _describe -t commands 'shadowtree candidate' nospace_records -S '' && ret=0
+    fi
+    if (( ${#space_records} )); then
+        _describe -t commands 'shadowtree candidate' space_records && ret=0
+    fi
+    return ret
+}
+
+if ! whence -w compdef >/dev/null 2>&1; then
+    autoload -Uz compinit
+    compinit
+fi
+compdef _shadowtree shadowtree
+`)
+	return err
+}
+
 func bashScript(w io.Writer) error {
 	_, err := io.WriteString(w, `_shadowtree_complete() {
     local candidate candidate_line command_name
@@ -126,8 +179,8 @@ complete -F _shadowtree_complete shadowtree
 
 func WriteCandidates(w io.Writer, shell string, candidates []Candidate) error {
 	switch shell {
-	case "bash":
-		return writeBashCandidates(w, candidates)
+	case "bash", "zsh":
+		return writeTabCandidates(w, candidates)
 	case "fish":
 		return writeFishCandidates(w, candidates)
 	default:
@@ -146,7 +199,7 @@ func writeFishCandidates(w io.Writer, candidates []Candidate) error {
 	return nil
 }
 
-func writeBashCandidates(w io.Writer, candidates []Candidate) error {
+func writeTabCandidates(w io.Writer, candidates []Candidate) error {
 	for _, candidate := range candidates {
 		desc := sanitizeCandidateHelp(candidate.Help)
 		if _, err := fmt.Fprintf(w, "%s\t%s\n", candidate.Value, desc); err != nil {
@@ -280,7 +333,7 @@ func staticCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
 }
 
 func flagCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
-	if spec.name != "bash" {
+	if spec.name == "fish" {
 		return nil, false
 	}
 	current := currentWord(words)
@@ -650,15 +703,26 @@ func argumentType(arg recipe.Argument) string {
 }
 
 func completesProfile(words []string) bool {
-	return len(words) > 0 && words[len(words)-1] == "--profile"
+	return completesFlagValue(words, globalflag.Profile)
 }
 
 func completesConfig(words []string) bool {
-	return len(words) > 0 && words[len(words)-1] == "--config"
+	return completesFlagValue(words, globalflag.Config)
 }
 
 func completesSyncOut(words []string) bool {
-	return len(words) > 0 && words[len(words)-1] == "--sync-out"
+	return completesFlagValue(words, globalflag.SyncOut)
+}
+
+func completesFlagValue(words []string, name string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	flag := "--" + name
+	if words[len(words)-1] == flag {
+		return true
+	}
+	return len(words) > 1 && words[len(words)-1] == "" && words[len(words)-2] == flag
 }
 
 func commandSelected(words []string) bool {

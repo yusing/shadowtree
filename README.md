@@ -18,17 +18,21 @@ go install github.com/yusing/shadowtree/cmd/shadowtree@latest
 Bash completion:
 
 ```sh
-shadowtree completion bash > ~/.config/shadowtree/completion.bash
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion bash)"
 ```
 
-The `install` recipe writes
-`${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash` and appends a
-guarded source block to `~/.bashrc` so fresh Bash shells load it directly.
+The `install` recipe appends the same guarded eval line to `~/.bashrc`.
 
 Fish completion:
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+```
+
+Zsh completion:
+
+```sh
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
 Completion is dynamic: it uses configured recipes plus recipes from the detected
@@ -305,12 +309,10 @@ shadowtree install-skill
 Recipes that intentionally change the host checkout set `sandboxed = false` in
 `.shadowtree.toml`.
 
-The `install` recipe follows the same convention as `git-agent`: it installs the
-binaries to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
-`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, generates
-completion from the installed `shadowtree` binary, installs bash completion
-through a guarded `~/.bashrc` source block, and installs fish completion when
-`fish` is available.
+The `install` recipe uses default `go install`, honors `FISH_CONFIG_DIR` and
+`FISH_COMPLETIONS_DIR`, generates completion from `shadowtree` on `PATH`,
+installs fish completion when `fish` is available, and appends single guarded
+eval lines to `~/.bashrc` and `~/.zshrc` when those shells are available.
 
 The `install-skill` recipe installs the local Shadowtree agent skill to
 `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}/shadowtree`.

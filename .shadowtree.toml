@@ -23,46 +23,35 @@ default = "shadowtree"
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
 sandboxed = false
-cmd = '''
-set -eu
-prefix=${PREFIX:-"$HOME/.local"}
-bindir=${BINDIR:-"$prefix/bin"}
-destdir=${DESTDIR:-}
-install_bin="$destdir$bindir"
-mkdir -p "$install_bin"
-GOBIN="$install_bin" go install ./cmd/shadowtree ./cmd/shadowtree-lsp
-'''
+cmd = ["go", "install", "./cmd/shadowtree", "./cmd/shadowtree-lsp"]
 post = ['''
 set -eu
-prefix=${PREFIX:-"$HOME/.local"}
-bindir=${BINDIR:-"$prefix/bin"}
-destdir=${DESTDIR:-}
-shadowtree_bin="$destdir$bindir/shadowtree"
-if fish -v >/dev/null 2>&1; then
+go_bin=$(go env GOBIN)
+if [ -z "$go_bin" ]; then
+	go_bin="$(go env GOPATH)/bin"
+fi
+PATH="$go_bin:$PATH"
+export PATH
+
+if command -v fish >/dev/null 2>&1; then
 	fish_config_dir=${FISH_CONFIG_DIR:-"$HOME/.config/fish"}
 	fish_completions_dir=${FISH_COMPLETIONS_DIR:-"$fish_config_dir/completions"}
 	mkdir -p "$fish_completions_dir"
-	"$shadowtree_bin" completion fish > "$fish_completions_dir/shadowtree.fish"
+	shadowtree completion fish > "$fish_completions_dir/shadowtree.fish"
 fi
-config_home=${XDG_CONFIG_HOME:-"$HOME/.config"}
-bash_completion_file="$config_home/shadowtree/completion.bash"
-mkdir -p "$(dirname "$bash_completion_file")"
-"$shadowtree_bin" completion bash > "$bash_completion_file"
+if command -v zsh >/dev/null 2>&1; then
+	zshrc=${ZSHRC:-"$HOME/.zshrc"}
+	zsh_completion_line='command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"'
+	if ! grep -Fqs "$zsh_completion_line" "$zshrc" 2>/dev/null; then
+		mkdir -p "$(dirname "$zshrc")"
+		printf '%s\n' "$zsh_completion_line" >> "$zshrc"
+	fi
+fi
 bashrc=${BASHRC:-"$HOME/.bashrc"}
-marker="# shadowtree bash completion"
-if ! grep -Fqs "$marker" "$bashrc" 2>/dev/null; then
+bash_completion_line='command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion bash)"'
+if ! grep -Fqs "$bash_completion_line" "$bashrc" 2>/dev/null; then
 	mkdir -p "$(dirname "$bashrc")"
-	cat >> "$bashrc" <<'EOF'
-
-# shadowtree bash completion
-if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-	_shadowtree_completion="$XDG_CONFIG_HOME/shadowtree/completion.bash"
-else
-	_shadowtree_completion="$HOME/.config/shadowtree/completion.bash"
-fi
-[ -r "$_shadowtree_completion" ] && . "$_shadowtree_completion"
-unset _shadowtree_completion
-EOF
+	printf '%s\n' "$bash_completion_line" >> "$bashrc"
 fi
 ''']
 

@@ -600,7 +600,7 @@ func printBasicHelp(w io.Writer) {
        shadowtree help [recipe [color=false]]
        shadowtree recipes
        shadowtree init [path]
-       shadowtree completion bash|fish
+       shadowtree completion bash|fish|zsh
 
 flags:
 `)

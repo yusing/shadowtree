@@ -43,6 +43,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
 - `shadowtree completion bash`: emit bash completion script.
 - `shadowtree completion fish`: emit fish completion script.
+- `shadowtree completion zsh`: emit zsh completion script.
 - `shadowtree exec -- <cmd> [args...]`: run an explicit command as a sandboxed ad hoc recipe.
 - `shadowtree <recipe> [args...]`: run a resolved recipe.
 
@@ -328,16 +329,20 @@ Completion criterion: use `shadowtree recipes` or `shadowtree --print <recipe>` 
 
 ## Completion
 
-Bash and fish completion are implemented:
+Bash, fish, and zsh completion are implemented:
 
 ```sh
-shadowtree completion bash > ~/.config/shadowtree/completion.bash
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion bash)"
 ```
 
-The repository `install` recipe generates completion from the installed `shadowtree` binary, installs `${XDG_CONFIG_HOME:-$HOME/.config}/shadowtree/completion.bash`, and appends a guarded source block to `~/.bashrc`.
+The repository `install` recipe uses default `go install`, generates completion from `shadowtree` on `PATH`, installs fish completion when `fish` is available, and appends one guarded completion eval line to `~/.bashrc` and `~/.zshrc` when those shells are available.
 
 ```sh
 shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+```
+
+```sh
+command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
 Completion includes commands, resolved recipes, `--profile go`, typed argument names, bool values, path/rel_path filesystem candidates, and dynamic `values` output. Completion reads `--config` and `--profile` when they appear before the command.

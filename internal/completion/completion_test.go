@@ -36,10 +36,21 @@ func TestCandidatesCompleteRecipePrefix(t *testing.T) {
 }
 
 func TestCandidatesCompleteProfileValues(t *testing.T) {
-	candidates := complete(t, []string{"shadowtree", "--profile"}, nil)
+	tests := []struct {
+		name  string
+		words []string
+	}{
+		{name: "current flag", words: []string{"shadowtree", "--profile"}},
+		{name: "after space", words: []string{"shadowtree", "--profile", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidates := complete(t, tt.words, nil)
 
-	if !hasCandidate(candidates, "go") {
-		t.Fatalf("candidates = %#v, want go", candidates)
+			if !hasCandidate(candidates, "go") {
+				t.Fatalf("candidates = %#v, want go", candidates)
+			}
+		})
 	}
 }
 
@@ -552,7 +563,7 @@ func TestCandidatesFilterPathArgumentValuesByKind(t *testing.T) {
 }
 
 func TestCandidatesRejectUnsupportedShell(t *testing.T) {
-	_, err := Candidates(t.Context(), "zsh", []string{"shadowtree", ""}, nil, Options{})
+	_, err := Candidates(t.Context(), "tcsh", []string{"shadowtree", ""}, nil, Options{})
 	if err == nil {
 		t.Fatal("Candidates succeeded for unsupported shell")
 	}
@@ -572,20 +583,24 @@ func TestCandidatesCompleteBashFlags(t *testing.T) {
 	}
 }
 
-func TestStaticCandidatesCompleteBashFlags(t *testing.T) {
-	candidates, ok, err := StaticCandidates("bash", []string{"shadowtree", "--p"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("StaticCandidates returned ok=false")
-	}
+func TestStaticCandidatesCompleteFlags(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			candidates, ok, err := StaticCandidates(shell, []string{"shadowtree", "--p"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("StaticCandidates returned ok=false")
+			}
 
-	if !hasCandidate(candidates, "--profile") || !hasCandidate(candidates, "--print") {
-		t.Fatalf("candidates = %#v, want --profile and --print", candidates)
-	}
-	if hasCandidate(candidates, "--config") {
-		t.Fatalf("candidates = %#v, want prefix-filtered flags", candidates)
+			if !hasCandidate(candidates, "--profile") || !hasCandidate(candidates, "--print") {
+				t.Fatalf("candidates = %#v, want --profile and --print", candidates)
+			}
+			if hasCandidate(candidates, "--config") {
+				t.Fatalf("candidates = %#v, want prefix-filtered flags", candidates)
+			}
+		})
 	}
 }
 
@@ -629,6 +644,33 @@ func TestBashScriptCallsInternalCompletion(t *testing.T) {
 	}
 	if !strings.Contains(script, "compopt -o nospace 2>/dev/null || true; break") {
 		t.Fatalf("bash script = %q, want one compopt call per completion attempt", script)
+	}
+}
+
+func TestZshScriptCallsInternalCompletion(t *testing.T) {
+	var out bytes.Buffer
+	if err := Script(&out, "zsh"); err != nil {
+		t.Fatal(err)
+	}
+
+	script := out.String()
+	if !strings.Contains(script, `"$command_name" __complete zsh "${words[@]}"`) {
+		t.Fatalf("zsh script = %q, want internal zsh completion callback", script)
+	}
+	if !strings.Contains(script, "compdef _shadowtree shadowtree") {
+		t.Fatalf("zsh script = %q, want compdef function registration", script)
+	}
+	if !strings.Contains(script, "autoload -Uz compinit") {
+		t.Fatalf("zsh script = %q, want compinit fallback before compdef", script)
+	}
+	if !strings.Contains(script, `_describe -t commands 'shadowtree candidate' space_records`) {
+		t.Fatalf("zsh script = %q, want zsh description-aware completion", script)
+	}
+	if !strings.Contains(script, `record=${record//:/\\:}`) {
+		t.Fatalf("zsh script = %q, want escaped colons in candidate values", script)
+	}
+	if !strings.Contains(script, "_describe -t commands 'shadowtree candidate' nospace_records -S ''") {
+		t.Fatalf("zsh script = %q, want no-space completions for argument names and directories", script)
 	}
 }
 
@@ -732,19 +774,23 @@ func TestFishCandidatesSanitizeNewlines(t *testing.T) {
 	}
 }
 
-func TestBashCandidatesPreserveValueWhitespace(t *testing.T) {
-	var out bytes.Buffer
-	err := WriteCandidates(&out, "bash", []Candidate{{
-		Value: "file=My Project/",
-		Help:  "directory\nchild",
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestTabCandidatesPreserveValueWhitespace(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			var out bytes.Buffer
+			err := WriteCandidates(&out, shell, []Candidate{{
+				Value: "file=My Project/",
+				Help:  "directory\nchild",
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	want := "file=My Project/\tdirectory child\n"
-	if out.String() != want {
-		t.Fatalf("output = %q, want %q", out.String(), want)
+			want := "file=My Project/\tdirectory child\n"
+			if out.String() != want {
+				t.Fatalf("output = %q, want %q", out.String(), want)
+			}
+		})
 	}
 }
 
