@@ -11,8 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"go.yaml.in/yaml/v4"
 )
 
 const GoProfile = "go"
@@ -40,61 +38,40 @@ func (command *Command) UnmarshalTOML(value any) error {
 	return nil
 }
 
-func (command *Command) UnmarshalYAML(value *yaml.Node) error {
-	switch value.Kind {
-	case yaml.ScalarNode:
-		var script string
-		if err := value.Decode(&script); err != nil {
-			return err
-		}
-		*command = ScriptCommand(script)
-		return nil
-	case yaml.SequenceNode:
-		var args []string
-		if err := value.Decode(&args); err != nil {
-			return err
-		}
-		*command = Command(args)
-		return nil
-	default:
-		return fmt.Errorf("command must be string or string array")
-	}
-}
-
 type Config struct {
-	Profile      string             `toml:"profile" yaml:"profile"`
-	Env          map[string]string  `toml:"env" yaml:"env"`
-	Vars         map[string]string  `toml:"vars" yaml:"vars"`
-	VarCommands  map[string]Command `toml:"var_commands" yaml:"var_commands"`
-	Shell        string             `toml:"shell" yaml:"shell"`
-	ShellPrelude string             `toml:"shell_prelude" yaml:"shell_prelude"`
-	SyncOut      []string           `toml:"sync_out" yaml:"sync_out"`
-	Recipes      map[string]Recipe  `toml:"recipes" yaml:"recipes"`
+	Profile      string             `toml:"profile"`
+	Env          map[string]string  `toml:"env"`
+	Vars         map[string]string  `toml:"vars"`
+	VarCommands  map[string]Command `toml:"var_commands"`
+	Shell        string             `toml:"shell"`
+	ShellPrelude string             `toml:"shell_prelude"`
+	SyncOut      []string           `toml:"sync_out"`
+	Recipes      map[string]Recipe  `toml:"recipes"`
 }
 
 type Recipe struct {
-	Help         string              `toml:"help" yaml:"help"`
-	Arguments    map[string]Argument `toml:"arguments" yaml:"arguments"`
-	Vars         map[string]string   `toml:"vars" yaml:"vars"`
-	Shell        string              `toml:"shell" yaml:"shell"`
-	ShellPrelude string              `toml:"shell_prelude" yaml:"shell_prelude"`
-	Sandboxed    *bool               `toml:"sandboxed" yaml:"sandboxed"`
-	Cmd          Command             `toml:"cmd" yaml:"cmd"`
-	Args         []string            `toml:"args" yaml:"args"`
-	DefaultArgs  []string            `toml:"default_args" yaml:"default_args"`
-	Pre          []Command           `toml:"pre" yaml:"pre"`
-	Post         []Command           `toml:"post" yaml:"post"`
-	Env          map[string]string   `toml:"env" yaml:"env"`
-	SyncOut      []string            `toml:"sync_out" yaml:"sync_out"`
+	Help         string              `toml:"help"`
+	Arguments    map[string]Argument `toml:"arguments"`
+	Vars         map[string]string   `toml:"vars"`
+	Shell        string              `toml:"shell"`
+	ShellPrelude string              `toml:"shell_prelude"`
+	Sandboxed    *bool               `toml:"sandboxed"`
+	Cmd          Command             `toml:"cmd"`
+	Args         []string            `toml:"args"`
+	DefaultArgs  []string            `toml:"default_args"`
+	Pre          []Command           `toml:"pre"`
+	Post         []Command           `toml:"post"`
+	Env          map[string]string   `toml:"env"`
+	SyncOut      []string            `toml:"sync_out"`
 }
 
 type Argument struct {
-	Help     string  `toml:"help" yaml:"help"`
-	Type     string  `toml:"type" yaml:"type"`
-	Position int     `toml:"position" yaml:"position"`
-	Required bool    `toml:"required" yaml:"required"`
-	Default  any     `toml:"default" yaml:"default"`
-	Values   Command `toml:"values" yaml:"values"`
+	Help     string  `toml:"help"`
+	Type     string  `toml:"type"`
+	Position int     `toml:"position"`
+	Required bool    `toml:"required"`
+	Default  any     `toml:"default"`
+	Values   Command `toml:"values"`
 }
 
 type Resolved struct {

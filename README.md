@@ -26,9 +26,16 @@ or selected profile.
 
 ## Quick Start
 
+Create a default TOML config in a project:
+
+```sh
+shadowtree init
+```
+
 In a project with Shadowtree config:
 
 ```sh
+shadowtree config
 shadowtree recipes
 shadowtree help test
 shadowtree test
@@ -97,11 +104,14 @@ Prefer narrow `--sync-out PATH` or recipe `sync_out` over `--sync-out-all`.
 
 Shadowtree discovers config upward from the current directory:
 
-1. `.shadowtree.toml`
-2. `.shadowtree.yaml`
-3. `.shadowtree.yml`
+```text
+.shadowtree.toml
+```
 
-TOML is the default format:
+Discovery stops at the git root when the current directory is inside a Git
+repository.
+
+Shadowtree config is TOML:
 
 ```toml
 profile = "go"
@@ -192,9 +202,14 @@ Project config can override any built-in recipe field. Use
 ## Editor Support
 
 Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
-integration files for Zed and VS Code under `editors/`. These provide
-completion, diagnostics, schema validation, Shadowtree-specific highlighting,
-and shell semantic highlighting inside script-valued config fields.
+integration files for Zed and VS Code under `editors/`.
+
+The Zed extension provides a dedicated `Shadowtree TOML` language, syntax
+highlighting, Shadowtree-specific highlighting, shell semantic highlighting for
+script-valued fields, and LSP completion, diagnostics, and semantic tokens.
+
+The VS Code extension binds the shared schema to Shadowtree TOML files through
+Even Better TOML. Completion, hover, and validation come from that extension.
 
 Install the Zed language server with:
 

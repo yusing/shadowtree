@@ -108,8 +108,6 @@ Discovery order:
 
 ```text
 .shadowtree.toml
-.shadowtree.yaml
-.shadowtree.yml
 ```
 
 An explicit `--config PATH` bypasses discovery.
@@ -167,17 +165,6 @@ position = 1
 required = false
 default = "value"
 values = ["cmd", "arg"]
-```
-
-YAML uses the same field names:
-
-```yaml
-profile: go
-recipes:
-  test:
-    help: Run the test suite.
-    cmd: [go, test]
-    default_args: [./...]
 ```
 
 ## Recipe Fields

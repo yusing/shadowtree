@@ -3,6 +3,7 @@ package configfile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,35 +71,14 @@ default = 1
 	}
 }
 
-func TestLoadYAML(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".shadowtree.yaml")
-	if err := os.WriteFile(path, []byte(`
-profile: go
-recipes:
-  test:
-    help: Run tests.
-    cmd: [go, test]
-    default_args: [./...]
-    arguments:
-      race:
-        help: Enable race detector.
-        type: bool
-        default: false
-`), 0o644); err != nil {
+func TestLoadRejectsUnsupportedExtension(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shadowtree.json")
+	if err := os.WriteFile(path, []byte(`{"profile":"go"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	loaded, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := loaded.Config.Recipes["test"].Cmd[0]; got != "go" {
-		t.Fatalf("cmd[0] = %q", got)
-	}
-	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
-		t.Fatalf("Help = %q", got)
-	}
-	if got := loaded.Config.Recipes["test"].Arguments["race"].Type; got != "bool" {
-		t.Fatalf("race type = %q", got)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported config extension: .json") {
+		t.Fatalf("Load() error = %v, want unsupported extension", err)
 	}
 }

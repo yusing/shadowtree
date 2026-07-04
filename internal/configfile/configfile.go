@@ -10,10 +10,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/yusing/shadowtree/internal/detect"
 	"github.com/yusing/shadowtree/internal/recipe"
-	"go.yaml.in/yaml/v4"
 )
 
-var Names = []string{".shadowtree.toml", ".shadowtree.yaml", ".shadowtree.yml"}
+var Names = []string{".shadowtree.toml"}
 
 type Loaded struct {
 	Path   string
@@ -29,10 +28,6 @@ func Load(path string) (Loaded, error) {
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
 	case ".toml":
 		if err := toml.Unmarshal(data, &cfg); err != nil {
-			return Loaded{}, err
-		}
-	case ".yaml", ".yml":
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return Loaded{}, err
 		}
 	default:
