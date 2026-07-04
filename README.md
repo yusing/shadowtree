@@ -1,23 +1,73 @@
 # Shadowtree
 
 Shadowtree runs development recipes in a disposable workspace for the current
-project. On Linux it uses overlayfs in a user and mount namespace by default,
-and falls back to a copied workspace when namespace overlayfs is unavailable.
-It is intended for codegen, tests, builds, and linting without mutating the
-host checkout by default.
+project. It is meant for tests, builds, linting, code generation, and cleanup
+commands that should not mutate the host checkout unless you explicitly ask for
+that.
 
-## Usage
+On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
+When namespace overlayfs is unavailable, it warns and falls back to a copied
+workspace with the same isolation contract.
+
+## Install
 
 ```sh
-shadowtree test
-shadowtree test -v ./internal/...
-shadowtree lint
-shadowtree run -- go test ./...
+go install github.com/yusing/shadowtree/cmd/shadowtree@latest
 ```
 
-By default, recipe writes stay inside the sandbox. On hosts that do not support
-namespace overlayfs, Shadowtree warns and uses the same sandbox contract with a
-copied workspace. Recipes that should edit the checkout directly can opt out:
+Fish completion:
+
+```sh
+shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+```
+
+Completion is dynamic: it uses configured recipes plus recipes from the detected
+or selected profile.
+
+## Quick Start
+
+In a project with Shadowtree config:
+
+```sh
+shadowtree recipes
+shadowtree help test
+shadowtree test
+shadowtree build
+shadowtree lint
+```
+
+Run one-off commands without adding a recipe:
+
+```sh
+shadowtree run -- go test ./...
+shadowtree run -- npm test
+```
+
+Inspect the resolved plan before running a recipe:
+
+```sh
+shadowtree --print test
+shadowtree --verbose build
+```
+
+CLI args replace `default_args`:
+
+```sh
+shadowtree test ./internal/recipe
+```
+
+runs:
+
+```sh
+go test ./internal/recipe
+```
+
+## Sandboxed By Default
+
+Sandboxed recipe writes stay inside the temporary workspace. The host checkout
+is unchanged unless sync-out is requested.
+
+Recipes that intentionally edit the checkout can opt out:
 
 ```toml
 [recipes.tidy]
@@ -25,39 +75,25 @@ sandboxed = false
 cmd = ["go", "mod", "tidy"]
 ```
 
-## Development
-
-This project uses Shadowtree for its own development tasks. Before installing a
-`shadowtree` binary, run the local CLI with `go run`:
+Use sync-out when a sandboxed recipe should copy selected results back:
 
 ```sh
-go run ./cmd/shadowtree recipes
-go run ./cmd/shadowtree test
-go run ./cmd/shadowtree check
-go run ./cmd/shadowtree build
-go run ./cmd/shadowtree install
+shadowtree --sync-out internal/generated generate
+shadowtree --sync-out dist --sync-out schema.json build-assets
 ```
 
-After installing or building `shadowtree`, use the shorter form:
+Recipe-level sync-out:
 
-```sh
-shadowtree test
-shadowtree check
-shadowtree build
-shadowtree install
-shadowtree fmt
-shadowtree tidy
+```toml
+[recipes.generate]
+cmd = ["go", "generate", "./..."]
+sync_out = ["internal/generated"]
 ```
 
-Recipes that intentionally change the host checkout set `sandboxed = false` in
-`.shadowtree.toml`.
+A selected path missing from the sandbox is mirrored as a deletion on the host.
+Prefer narrow `--sync-out PATH` or recipe `sync_out` over `--sync-out-all`.
 
-The `install` recipe follows the same convention as `git-agent`: it installs the
-binary to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
-`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, and installs
-fish completion only when the fish config directory exists.
-
-## Config
+## Configure Recipes
 
 Shadowtree discovers config upward from the current directory:
 
@@ -111,20 +147,21 @@ sandboxed = false
 cmd = ["go", "mod", "tidy"]
 ```
 
-CLI args replace `default_args`:
+Prefer argv arrays for exact process execution:
 
-```sh
-shadowtree test ./internal/recipe
+```toml
+[recipes.test]
+cmd = ["go", "test"]
+default_args = ["./..."]
 ```
 
-runs:
+Use shell script strings when a workflow needs shared shell logic, conditionals,
+pipes, or multiple statements.
 
-```sh
-go test ./internal/recipe
-```
+## Typed Arguments
 
-Recipes can define typed arguments. Arguments can be passed positionally,
-by name, or with bracket-style syntax:
+Recipes can define typed arguments. Arguments can be passed positionally, by
+name, or with bracket-style syntax:
 
 ```sh
 shadowtree build ./cmd/shadowtree
@@ -133,20 +170,6 @@ shadowtree 'build[project=./cmd/shadowtree]'
 ```
 
 Supported argument types are `string`, `int`, `float`, and `bool`.
-
-## Editor Support
-
-Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
-integration files for Zed and VS Code under `editors/`. These provide
-completion, diagnostics, schema validation, Shadowtree-specific highlighting,
-and shell semantic highlighting inside script-valued config fields. See
-`docs/spec.md` and the editor integration READMEs for implementation details.
-
-Install the Zed language server with:
-
-```sh
-go install github.com/yusing/shadowtree/cmd/shadowtree-lsp@latest
-```
 
 ## Built-In Go Recipes
 
@@ -163,13 +186,57 @@ generate   go generate ./...
 tidy       go mod tidy
 ```
 
-Project config can override any built-in recipe field.
+Project config can override any built-in recipe field. Use
+`shadowtree --print <recipe>` to inspect the final command.
 
-## Fish Completion
+## Editor Support
+
+Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
+integration files for Zed and VS Code under `editors/`. These provide
+completion, diagnostics, schema validation, Shadowtree-specific highlighting,
+and shell semantic highlighting inside script-valued config fields.
+
+Install the Zed language server with:
 
 ```sh
-shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
+go install github.com/yusing/shadowtree/cmd/shadowtree-lsp@latest
 ```
 
-Completion is dynamic: it uses configured recipes plus recipes from the detected
-or specified profile.
+See `docs/spec.md` and the editor integration READMEs for implementation
+details.
+
+## Development
+
+This project uses Shadowtree for its own development tasks. Before installing a
+`shadowtree` binary, run the local CLI with `go run`:
+
+```sh
+go run ./cmd/shadowtree recipes
+go run ./cmd/shadowtree test
+go run ./cmd/shadowtree check
+go run ./cmd/shadowtree build
+go run ./cmd/shadowtree install
+```
+
+After installing or building `shadowtree`, use the shorter form:
+
+```sh
+shadowtree test
+shadowtree check
+shadowtree build
+shadowtree install
+shadowtree fmt
+shadowtree tidy
+shadowtree install-skill
+```
+
+Recipes that intentionally change the host checkout set `sandboxed = false` in
+`.shadowtree.toml`.
+
+The `install` recipe follows the same convention as `git-agent`: it installs the
+binary to `${PREFIX:-$HOME/.local}/bin`, honors `DESTDIR`, `BINDIR`,
+`XDG_CONFIG_HOME`, `FISH_CONFIG_DIR`, and `FISH_COMPLETIONS_DIR`, and installs
+fish completion only when the fish config directory exists.
+
+The `install-skill` recipe installs the local Shadowtree agent skill to
+`${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}/shadowtree`.
