@@ -769,7 +769,7 @@ func ensureRootParent(root *os.Root, name string) error {
 		return nil
 	}
 	current := ""
-	for _, part := range strings.Split(dir, "/") {
+	for part := range strings.SplitSeq(dir, "/") {
 		if part == "" || part == "." {
 			continue
 		}
@@ -812,7 +812,7 @@ func removeRootPathIfPresent(root *os.Root, name string) error {
 	dir := pathDirSlash(name)
 	if dir != "." {
 		current := ""
-		for _, part := range strings.Split(dir, "/") {
+		for part := range strings.SplitSeq(dir, "/") {
 			if part == "" || part == "." {
 				continue
 			}

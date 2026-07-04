@@ -3,13 +3,12 @@ package runner
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/scriptref"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -20,14 +19,15 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 	if shell == "" {
 		shell = "sh"
 	}
-	if !scriptShellSupported(shell) {
+	if !scriptref.SupportedShell(shell) {
 		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
 	}
 	body := recipe.ScriptBody(command)
-	file, references, err := parseScriptReferences(shell, body)
+	file, refs, err := scriptref.Parse(shell, body)
 	if err != nil {
 		return err
 	}
+	references := scriptReferencePositions(refs)
 	if len(references) == 0 {
 		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
 	}
@@ -51,42 +51,12 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 	return nil
 }
 
-func parseScriptReferences(shell, body string) (*syntax.File, map[syntax.Pos]struct{}, error) {
-	parser, err := scriptParser(shell)
-	if err != nil {
-		return nil, nil, err
-	}
-	file, err := parser.Parse(strings.NewReader(body), "shadowtree")
-	if err != nil {
-		return nil, nil, err
-	}
+func scriptReferencePositions(refs []scriptref.Reference) map[syntax.Pos]struct{} {
 	references := map[syntax.Pos]struct{}{}
-	syntax.Walk(file, func(node syntax.Node) bool {
-		call, ok := node.(*syntax.CallExpr)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-		if strings.HasPrefix(call.Args[0].Lit(), "@") {
-			references[call.Pos()] = struct{}{}
-		}
-		return true
-	})
-	return file, references, nil
-}
-
-func scriptParser(shell string) (*syntax.Parser, error) {
-	switch shell {
-	case "", "sh":
-		return syntax.NewParser(syntax.Variant(syntax.LangPOSIX)), nil
-	case "bash":
-		return syntax.NewParser(syntax.Variant(syntax.LangBash)), nil
-	default:
-		return nil, fmt.Errorf("script recipe references require shell sh or bash, got %q", shell)
+	for _, ref := range refs {
+		references[ref.CommandPos] = struct{}{}
 	}
-}
-
-func scriptShellSupported(shell string) bool {
-	return shell == "" || shell == "sh" || shell == "bash"
+	return references
 }
 
 func scriptParams(command recipe.Command) []string {

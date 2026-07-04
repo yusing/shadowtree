@@ -308,7 +308,7 @@ func mkdirOverlayParents(source, upper, rel string) error {
 		return nil
 	}
 	current := ""
-	for _, part := range strings.Split(filepath.ToSlash(parent), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(parent), "/") {
 		if part == "" || part == "." {
 			continue
 		}

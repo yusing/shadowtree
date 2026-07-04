@@ -12,6 +12,7 @@ import (
 	recipecompletion "github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/scriptref"
 )
 
 type documentAnalysis struct {
@@ -1443,20 +1444,54 @@ func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []comma
 		if region.Shell != "" && region.Shell != "sh" && region.Shell != "bash" {
 			continue
 		}
-		var state scriptCommandScanState
-		for lineNo := region.StartLine; lineNo <= region.EndLine && lineNo < len(lines); lineNo++ {
-			line := lines[lineNo]
-			start, end := 0, len(line)
-			if lineNo == region.StartLine {
-				start = region.StartCol
-			}
-			if lineNo == region.EndLine {
-				end = region.EndCol
-			}
-			spans = append(spans, scriptLineCommandReferenceSpans(line, lineNo, start, end, &state)...)
+		_, refs, err := scriptref.Parse(region.Shell, scriptRegionText(lines, region))
+		if err != nil {
+			continue
+		}
+		for _, ref := range refs {
+			spans = append(spans, commandReferenceSpanFromScriptReference(lines, region, ref))
 		}
 	}
 	return spans
+}
+
+func scriptRegionText(lines []string, region scriptRegion) string {
+	if region.StartLine == region.EndLine {
+		return lineAt(lines, region.StartLine)[region.StartCol:region.EndCol]
+	}
+	var b strings.Builder
+	b.WriteString(lineAt(lines, region.StartLine)[region.StartCol:])
+	for lineNo := region.StartLine + 1; lineNo < region.EndLine; lineNo++ {
+		b.WriteByte('\n')
+		b.WriteString(lineAt(lines, lineNo))
+	}
+	b.WriteByte('\n')
+	b.WriteString(lineAt(lines, region.EndLine)[:region.EndCol])
+	return b.String()
+}
+
+func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion, ref scriptref.Reference) commandReferenceSpan {
+	startLine, startCol := scriptPosition(region, ref.Start)
+	endLine, endCol := scriptPosition(region, ref.End)
+	targetEndLine, targetEndCol := scriptPosition(region, ref.TargetEnd)
+	if endLine != startLine {
+		endCol = len(lineAt(lines, startLine))
+	}
+	if targetEndLine != startLine {
+		targetEndCol = endCol
+	}
+	span := commandReferenceSpanFromString(ref.Value, startLine, startCol, endCol)
+	span.TargetEnd = targetEndCol
+	return span
+}
+
+func scriptPosition(region scriptRegion, pos scriptref.Position) (int, int) {
+	line := region.StartLine + pos.Line
+	col := pos.Col
+	if pos.Line == 0 {
+		col += region.StartCol
+	}
+	return line, col
 }
 
 func recipeScriptReferenceRegion(region scriptRegion) bool {
@@ -1470,142 +1505,6 @@ func recipeScriptReferenceRegion(region scriptRegion) bool {
 		return region.Key == "values"
 	}
 	return false
-}
-
-type scriptCommandScanState struct {
-	quote    byte
-	heredocs []string
-}
-
-func scriptLineCommandReferenceSpans(line string, lineNo, start, end int, state *scriptCommandScanState) []commandReferenceSpan {
-	var spans []commandReferenceSpan
-	commandPosition := true
-	if state.quote != 0 {
-		next, closed := skipShellStringBody(line, start, end, state.quote)
-		if !closed {
-			return nil
-		}
-		state.quote = 0
-		commandPosition = false
-		start = next
-	}
-	if len(state.heredocs) > 0 {
-		if strings.TrimSpace(line[start:end]) == state.heredocs[0] {
-			state.heredocs = state.heredocs[1:]
-		}
-		return nil
-	}
-	for col := start; col < end; {
-		ch := line[col]
-		if ch == '#' {
-			break
-		}
-		if isShellSpace(ch) {
-			col++
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			next, closed := skipShellStringWithClose(line, col, end, ch)
-			if !closed {
-				state.quote = ch
-				return spans
-			}
-			col = next
-			commandPosition = false
-			continue
-		}
-		if commandPosition {
-			if next, ok := scanShellAssignment(line, col, end); ok {
-				col = next
-				continue
-			}
-			if ch == '@' {
-				refEnd := shellRecipeReferenceEnd(line, col, end)
-				if refEnd > col+1 {
-					spans = append(spans, commandReferenceSpanFromString(line[col:refEnd], lineNo, col, refEnd))
-				}
-				col = refEnd
-				commandPosition = false
-				continue
-			}
-		}
-		if ch == '<' && col+1 < end && line[col+1] == '<' {
-			if delimiter, next, ok := scanHereDocDelimiter(line, col+2, end); ok {
-				state.heredocs = append(state.heredocs, delimiter)
-				col = next
-				commandPosition = false
-				continue
-			}
-		}
-		if ch == '$' {
-			if token, ok := shellVariableToken(line, lineNo, col, end, "sh"); ok {
-				col += token.Length
-				commandPosition = false
-				continue
-			}
-		}
-		if isShellOperator(ch) {
-			commandPosition = true
-			col++
-			continue
-		}
-		if isShellWordStart(ch) {
-			wordStart := col
-			for col < end && isShellWordPart(line[col]) {
-				col++
-			}
-			word := line[wordStart:col]
-			commandPosition = shellKeyword("sh", word) && commandContinuesAfterKeyword("sh", word)
-			continue
-		}
-		col++
-	}
-	return spans
-}
-
-func skipShellStringWithClose(line string, start, end int, quote byte) (int, bool) {
-	for col := start + 1; col < end; col++ {
-		if quote == '"' && line[col] == '\\' {
-			col++
-			continue
-		}
-		if line[col] == quote {
-			return col + 1, true
-		}
-	}
-	return end, false
-}
-
-func skipShellStringBody(line string, start, end int, quote byte) (int, bool) {
-	for col := start; col < end; col++ {
-		if quote == '"' && line[col] == '\\' {
-			col++
-			continue
-		}
-		if line[col] == quote {
-			return col + 1, true
-		}
-	}
-	return end, false
-}
-
-func scanHereDocDelimiter(line string, start, end int) (string, int, bool) {
-	col := start
-	if col < end && line[col] == '-' {
-		col++
-	}
-	for col < end && isShellSpace(line[col]) {
-		col++
-	}
-	if col >= end {
-		return "", col, false
-	}
-	delimiterStart := col
-	for col < end && !isShellSpace(line[col]) && !isShellOperator(line[col]) {
-		col++
-	}
-	delimiter := strings.Trim(line[delimiterStart:col], `'"`)
-	return delimiter, col, delimiter != ""
 }
 
 func scanShellAssignment(line string, start, end int) (int, bool) {
@@ -1632,55 +1531,6 @@ func scanShellAssignment(line string, start, end int) (int, bool) {
 		col++
 	}
 	return col, true
-}
-
-func shellRecipeReferenceEnd(line string, start, end int) int {
-	col := start
-	bracket := false
-	for col < end {
-		ch := line[col]
-		if ch == '[' {
-			bracket = true
-			col++
-			continue
-		}
-		if ch == ']' {
-			col++
-			break
-		}
-		if !bracket && (isShellSpace(ch) || isShellOperator(ch) || ch == '\'' || ch == '"' || ch == '#') {
-			break
-		}
-		if bracket && (ch == '\'' || ch == '"' || ch == '#') {
-			break
-		}
-		col++
-	}
-	if bracket {
-		return col
-	}
-	refEnd := col
-	for col < end {
-		for col < end && isShellSpace(line[col]) {
-			col++
-		}
-		if col >= end || line[col] == '#' || isShellOperator(line[col]) {
-			return refEnd
-		}
-		for col < end {
-			ch := line[col]
-			if isShellSpace(ch) || isShellOperator(ch) || ch == '#' {
-				break
-			}
-			if ch == '\'' || ch == '"' {
-				col = skipShellString(line, col, end, ch)
-				continue
-			}
-			col++
-		}
-		refEnd = col
-	}
-	return refEnd
 }
 
 func recipeReferenceSemanticTokens(lines []string, ref commandReferenceSpan) []semanticToken {
@@ -1936,10 +1786,10 @@ func byteToUTF16Offset(line string, offset int) int {
 
 func openTablePrefix(prefix string) (string, bool) {
 	trimmed := strings.TrimSpace(prefix)
-	if strings.HasPrefix(trimmed, "[[") {
-		trimmed = strings.TrimPrefix(trimmed, "[[")
-	} else if strings.HasPrefix(trimmed, "[") {
-		trimmed = strings.TrimPrefix(trimmed, "[")
+	if after, ok := strings.CutPrefix(trimmed, "[["); ok {
+		trimmed = after
+	} else if after, ok := strings.CutPrefix(trimmed, "["); ok {
+		trimmed = after
 	} else {
 		return "", false
 	}

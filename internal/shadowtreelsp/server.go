@@ -377,8 +377,8 @@ func tableTextEdit(text string, position lspPosition, insertText string) map[str
 	end := position.Character
 	if close := strings.IndexByte(line[position.Character:], ']'); close >= 0 {
 		end = position.Character + close
-		if strings.HasSuffix(insertText, "]") {
-			insertText = strings.TrimSuffix(insertText, "]")
+		if before, ok := strings.CutSuffix(insertText, "]"); ok {
+			insertText = before
 		}
 	}
 	return textEdit(line, position.Line, start, end, insertText)
