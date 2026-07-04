@@ -38,6 +38,7 @@ In a project with Shadowtree config:
 shadowtree config
 shadowtree recipes
 shadowtree help test
+shadowtree help test color=false
 shadowtree test
 shadowtree build
 shadowtree lint

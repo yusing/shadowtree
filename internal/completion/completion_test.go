@@ -65,6 +65,36 @@ func TestCandidatesCompleteRecipesAfterHelp(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteHelpColorOptionAfterRecipe(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "help", "test", ""}, map[string]recipe.Recipe{
+		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "color=false" {
+		t.Fatalf("candidates = %#v, want color=false", candidates)
+	}
+}
+
+func TestCandidatesCompletePartialHelpColorOption(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "help", "test", "col"}, map[string]recipe.Recipe{
+		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "color=false" {
+		t.Fatalf("candidates = %#v, want color=false", candidates)
+	}
+}
+
+func TestCandidatesSkipHelpColorOptionAfterUnknownRecipe(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "help", "missing", ""}, map[string]recipe.Recipe{
+		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
+	})
+
+	if hasCandidate(candidates, "color=false") {
+		t.Fatalf("candidates = %#v, want no color=false", candidates)
+	}
+}
+
 func TestCandidatesCompleteSpacedRecipeArguments(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build", ""}, map[string]recipe.Recipe{
 		"build": {

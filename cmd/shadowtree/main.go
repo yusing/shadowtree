@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,11 @@ type recipeHelpOptions struct {
 	ConfigPath string
 	Env        map[string]string
 	Recipes    map[string]recipe.Recipe
+	Color      bool
+}
+
+type helpColors struct {
+	enabled bool
 }
 
 func (flag *multiFlag) String() string {
@@ -103,6 +109,14 @@ func run(ctx context.Context, args []string) error {
 		}
 		return configfile.Init(path)
 	}
+	recipeHelpColor := true
+	if len(rest) > 2 && rest[0] == "help" {
+		color, err := parseRecipeHelpOptions(rest[2:])
+		if err != nil {
+			return err
+		}
+		recipeHelpColor = color
+	}
 	resolvedSet, loaded, profile, err := resolveSet(ctx, opts, true)
 	if err != nil {
 		return err
@@ -143,6 +157,7 @@ func run(ctx context.Context, args []string) error {
 				ConfigPath: loaded.Path,
 				Env:        loaded.Config.Env,
 				Recipes:    resolvedSet,
+				Color:      recipeHelpColor,
 			})
 		}
 		return printHelp(os.Stdout, loaded, profile, resolvedSet)
@@ -221,6 +236,27 @@ func globalFlagTakesValue(arg string) bool {
 	default:
 		return false
 	}
+}
+
+func parseRecipeHelpOptions(args []string) (bool, error) {
+	color := true
+	for _, arg := range args {
+		key, value, ok := strings.Cut(arg, "=")
+		if !ok {
+			return color, fmt.Errorf("unknown help argument %q", arg)
+		}
+		switch key {
+		case "color":
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return color, fmt.Errorf("color: want bool, got %q", value)
+			}
+			color = parsed
+		default:
+			return color, fmt.Errorf("unknown help argument %q", key)
+		}
+	}
+	return color, nil
 }
 
 func resolveSet(ctx context.Context, opts options, evalDynamicVars bool) (map[string]recipe.Recipe, configfile.Loaded, string, error) {
@@ -339,72 +375,143 @@ func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes ma
 }
 
 func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.Recipe, opts recipeHelpOptions) error {
-	fmt.Fprintf(w, "%s\n", name)
-	fmt.Fprintf(w, "  %s\n", recipe.Help(rec))
-	fmt.Fprintf(w, "\ncommand: %s\n", recipe.CommandSummary(rec))
+	colors := helpColors{enabled: opts.Color}
+	fmt.Fprintf(w, "%s\n\n", colors.title(name))
+	fmt.Fprintf(w, "  %s\n", recipeHelpText(rec))
+	fmt.Fprintf(w, "\n%s\n\n", colors.section("- Command:"))
+	fmt.Fprintf(w, "    %s\n", colors.literal(recipe.CommandSummary(rec)))
 	if !recipe.RecipeSandboxed(rec) {
-		fmt.Fprintln(w, "sandboxed: false")
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sandboxed:"))
+		fmt.Fprintf(w, "    %s\n", colors.literal("false"))
 	}
-	for i, command := range rec.Pre {
-		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.CommandHelpText(command))
+	if len(rec.Pre) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Pre commands:"))
+		for i, command := range rec.Pre {
+			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.CommandHelpText(command)))
+		}
 	}
-	for i, command := range rec.Post {
-		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.CommandHelpText(command))
+	if len(rec.Post) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Post commands:"))
+		for i, command := range rec.Post {
+			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.CommandHelpText(command)))
+		}
 	}
 	argNames := mapsKeys(rec.Arguments)
 	slices.Sort(argNames)
-	for _, argName := range argNames {
+	if len(argNames) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Arguments:"))
+	}
+	for i, argName := range argNames {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
 		arg := rec.Arguments[argName]
-		fmt.Fprintf(w, "arg %s", argName)
-		if arg.Type != "" {
-			fmt.Fprintf(w, ":%s", arg.Type)
+		if arg.Help != "" {
+			fmt.Fprintf(w, "    %s - %s\n", colors.argument(argName), strings.TrimSuffix(recipe.SingleLine(arg.Help), "."))
 		} else {
-			fmt.Fprint(w, ":string")
+			fmt.Fprintf(w, "    %s\n", colors.argument(argName))
 		}
-		if arg.PathKind != "" {
-			fmt.Fprintf(w, " path_kind=%s", arg.PathKind)
-		}
-		if arg.Position > 0 {
-			fmt.Fprintf(w, " position=%d", arg.Position)
-		}
-		if arg.Required {
-			fmt.Fprint(w, " required")
-		}
-		if arg.Default != nil {
-			fmt.Fprintf(w, " default=%v", arg.Default)
-		}
-		fmt.Fprintf(w, "  %s\n", recipe.ArgumentHelp(arg))
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "      %s ", colors.label("info:"))
+		printArgumentInfo(w, arg, colors)
+		fmt.Fprintln(w)
 		if err := printArgumentValues(ctx, w, arg, rec, opts); err != nil {
 			return fmt.Errorf("arg %s values: %w", argName, err)
 		}
 	}
 	if recipe.RecipeSandboxed(rec) {
-		for _, path := range rec.SyncOut {
-			fmt.Fprintf(w, "sync_out: %s\n", path)
+		if len(rec.SyncOut) > 0 {
+			fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sync out:"))
+			for _, path := range rec.SyncOut {
+				fmt.Fprintf(w, "    %s\n", colors.literal(path))
+			}
 		}
 	}
 	return nil
 }
 
+func recipeHelpText(rec recipe.Recipe) string {
+	if rec.Help == "" {
+		return recipe.CommandSummary(rec)
+	}
+	return strings.TrimSuffix(recipe.SingleLine(rec.Help), ".")
+}
+
+func printArgumentInfo(w io.Writer, arg recipe.Argument, colors helpColors) {
+	typeName := arg.Type
+	if typeName == "" {
+		typeName = "string"
+	}
+	fmt.Fprintf(w, "type=%s", colors.literal(typeName))
+	if arg.PathKind != "" {
+		fmt.Fprintf(w, " path_kind=%s", colors.literal(arg.PathKind))
+	}
+	if arg.Position > 0 {
+		fmt.Fprintf(w, " position=%s", colors.literal(strconv.Itoa(arg.Position)))
+	}
+	if arg.Required {
+		fmt.Fprintf(w, " %s", colors.literal("required"))
+	}
+	if arg.Default != nil {
+		if value, ok := arg.Default.(string); ok {
+			fmt.Fprintf(w, " default=%s", colors.literal(strconv.Quote(value)))
+		} else {
+			fmt.Fprintf(w, " default=%s", colors.literal(fmt.Sprint(arg.Default)))
+		}
+	}
+}
+
 func printArgumentValues(ctx context.Context, w io.Writer, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) error {
+	colors := helpColors{enabled: opts.Color}
 	values, err := argumentValues(ctx, arg, rec, opts)
 	if err != nil {
-		fmt.Fprintf(w, "  values: <unavailable: %v>\n", err)
+		fmt.Fprintf(w, "      %s <unavailable: %v>\n", colors.label("values:"), err)
 		return nil
 	}
 	if len(values) == 0 {
 		return nil
 	}
-	fmt.Fprintln(w, "  values:")
+	fmt.Fprintf(w, "      %s\n", colors.label("values:"))
 	valueColumn := argumentValueColumn(values)
 	for _, value := range values {
 		if value.Help == "" {
-			fmt.Fprintf(w, "    %s\n", value.Value)
+			fmt.Fprintf(w, "        %s\n", colors.literal(value.Value))
 			continue
 		}
-		fmt.Fprintf(w, "    %-*s%s\n", valueColumn, value.Value, value.Help)
+		fmt.Fprintf(w, "        %s%s\n", colors.literal(fmt.Sprintf("%-*s", valueColumn, value.Value)), value.Help)
 	}
 	return nil
+}
+
+func (colors helpColors) title(text string) string {
+	return colors.color("\x1b[1;36m", text)
+}
+
+func (colors helpColors) section(text string) string {
+	return colors.color("\x1b[1;33m", text)
+}
+
+func (colors helpColors) argument(text string) string {
+	return colors.color("\x1b[1;32m", text)
+}
+
+func (colors helpColors) label(text string) string {
+	return colors.color("\x1b[36m", text)
+}
+
+func (colors helpColors) literal(text string) string {
+	return colors.color("\x1b[32m", text)
+}
+
+func (colors helpColors) index(index int) string {
+	return colors.color("\x1b[2m", fmt.Sprintf("[%d]", index))
+}
+
+func (colors helpColors) color(code, text string) string {
+	if !colors.enabled {
+		return text
+	}
+	return code + text + "\x1b[0m"
 }
 
 func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) ([]completion.Candidate, error) {
@@ -465,7 +572,7 @@ func argumentValueColumn(values []completion.Candidate) int {
 func printBasicHelp(w io.Writer) {
 	fmt.Fprint(w, `usage: shadowtree [flags] <recipe> [args...]
        shadowtree [flags] exec -- <cmd> [args...]
-       shadowtree help [recipe]
+       shadowtree help [recipe [color=false]]
        shadowtree recipes
        shadowtree init [path]
        shadowtree completion fish

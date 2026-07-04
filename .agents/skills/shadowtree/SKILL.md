@@ -38,7 +38,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 
 - `shadowtree recipes`: list resolved recipes.
 - `shadowtree help`: show CLI help plus resolved recipes.
-- `shadowtree help <recipe>`: show command summary plus applicable args, configured values, pre/post, unsandboxed marker, and sync-out for one recipe.
+- `shadowtree help <recipe> [color=false]`: show command summary plus applicable args, configured values, pre/post, unsandboxed marker, and sync-out for one recipe. Recipe help uses color by default; `color=false` disables it.
 - `shadowtree config`: print config path, profile, and resolved recipe list.
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
 - `shadowtree completion fish`: emit fish completion script.

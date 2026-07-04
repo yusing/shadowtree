@@ -136,8 +136,8 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	if completesConfig(words) || completesSyncOut(words) {
 		return nil, nil
 	}
-	if completesHelpRecipe(words) {
-		return recipeCandidates(words, recipes), nil
+	if candidates, ok := helpCandidates(words, recipes); ok {
+		return candidates, nil
 	}
 	if candidates, ok := argumentCandidates(ctx, spec, words, recipes, opts); ok {
 		return candidates, nil
@@ -527,9 +527,30 @@ func commandSelected(words []string) bool {
 	return true
 }
 
-func completesHelpRecipe(words []string) bool {
+func helpCandidates(words []string, recipes map[string]recipe.Recipe) ([]Candidate, bool) {
 	positionals := positionalWords(words)
-	return len(positionals) > 0 && positionals[0] == "help" && len(positionals) <= 2
+	current := currentWord(words)
+	if len(positionals) == 0 || positionals[0] != "help" {
+		return nil, false
+	}
+
+	optionPositionals := positionals
+	if current != "" && optionPositionals[len(optionPositionals)-1] == current {
+		optionPositionals = optionPositionals[:len(optionPositionals)-1]
+	}
+	if len(optionPositionals) == 2 {
+		if _, ok := recipes[optionPositionals[1]]; ok {
+			candidates := filterPrefix([]Candidate{{Value: "color=false", Help: "Disable help color"}}, current)
+			if len(candidates) > 0 {
+				return candidates, true
+			}
+		}
+	}
+
+	if len(positionals) <= 2 {
+		return recipeCandidates(words, recipes), true
+	}
+	return nil, false
 }
 
 func recipeCandidates(words []string, recipes map[string]recipe.Recipe) []Candidate {

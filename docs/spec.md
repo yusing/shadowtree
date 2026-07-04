@@ -73,7 +73,7 @@ require VCS stamping should use `-buildvcs=false`.
 ```sh
 shadowtree [flags] <recipe> [args...]
 shadowtree [flags] exec -- <cmd> [args...]
-shadowtree help [recipe]
+shadowtree help [recipe [color=false]]
 shadowtree recipes
 shadowtree config
 shadowtree init [path]
@@ -576,16 +576,19 @@ positional `command` argument with `rel_path` type.
 `shadowtree help` prints CLI usage, active config/profile, and resolved recipes
 with their `help` text.
 
-`shadowtree help <recipe>` prints these fields when present or applicable:
+`shadowtree help <recipe>` prints a sectioned recipe page with ANSI color by
+default. Pass `color=false` after the recipe name to disable color.
+
+It prints these fields when present or applicable:
 
 - recipe name
 - recipe help text
-- command summary
-- `sandboxed: false` for unsandboxed recipes
-- pre commands
-- post commands
-- argument definitions and configured available values
-- sync-out paths for sandboxed recipes
+- command section
+- sandboxed section for unsandboxed recipes
+- pre command section
+- post command section
+- argument section with `name - help`, `info:`, and configured `values:`
+- sync-out section for sandboxed recipes
 
 Multi-line command arguments are summarized as `<script>` in help and completion
 output.
@@ -639,6 +642,7 @@ Supported completion behavior:
 - `shadowtree <TAB>` completes core commands and resolved recipes.
 - `shadowtree te<TAB>` completes matching recipe names such as `test`.
 - `shadowtree help <TAB>` completes recipe names.
+- `shadowtree help test <TAB>` completes `color=false`.
 - `shadowtree --profile <TAB>` completes `go`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.

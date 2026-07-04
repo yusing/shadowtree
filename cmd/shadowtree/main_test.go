@@ -37,6 +37,38 @@ func TestParseGlobalStopsAfterRecipe(t *testing.T) {
 	}
 }
 
+func TestParseRecipeHelpOptions(t *testing.T) {
+	color, err := parseRecipeHelpOptions([]string{"color=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if color {
+		t.Fatal("color = true, want false")
+	}
+
+	color, err = parseRecipeHelpOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !color {
+		t.Fatal("color = false, want true")
+	}
+}
+
+func TestParseRecipeHelpOptionsRejectsUnknown(t *testing.T) {
+	_, err := parseRecipeHelpOptions([]string{"theme=dark"})
+	if err == nil || !strings.Contains(err.Error(), `unknown help argument "theme"`) {
+		t.Fatalf("error = %v, want unknown help argument", err)
+	}
+}
+
+func TestParseRecipeHelpOptionsRejectsInvalidColor(t *testing.T) {
+	_, err := parseRecipeHelpOptions([]string{"color=maybe"})
+	if err == nil || !strings.Contains(err.Error(), `color: want bool, got "maybe"`) {
+		t.Fatalf("error = %v, want invalid color", err)
+	}
+}
+
 func TestPrintHelpIncludesRecipeHelp(t *testing.T) {
 	var out bytes.Buffer
 	err := printHelp(&out, zeroLoaded(), "go", map[string]recipe.Recipe{
@@ -100,6 +132,7 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 		Help:    "Install Shadowtree.",
 		Pre:     []recipe.Command{{"go", "build"}},
 		Cmd:     recipe.Command{"sh", "-c", "set -eu\ninstall -d bin\n"},
+		Post:    []recipe.Command{{"echo", "done"}},
 		SyncOut: []string{"bin/shadowtree"},
 	}, recipeHelpOptions{})
 	if err != nil {
@@ -108,13 +141,57 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"Install Shadowtree.",
-		"command: sh -c <script>",
-		"pre[0]: go build",
-		"sync_out: bin/shadowtree",
+		"Install Shadowtree",
+		"- Command:\n\n    sh -c <script>",
+		"- Pre commands:\n\n    [0] go build",
+		"- Post commands:\n\n    [0] echo done",
+		"- Sync out:\n\n    bin/shadowtree",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrintRecipeHelpPreservesFallbackCommandSummary(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "test", recipe.Recipe{
+		Cmd: recipe.Command{"go", "test", "."},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if text := out.String(); !strings.Contains(text, "  go test .\n") {
+		t.Fatalf("recipe help output missing preserved fallback command summary:\n%s", text)
+	}
+}
+
+func TestPrintRecipeHelpColorsWhenEnabled(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		Arguments: map[string]recipe.Argument{
+			"project": {
+				Help: "Go package to build.",
+				Type: "rel_path",
+			},
+		},
+	}, recipeHelpOptions{Color: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"\x1b[1;36mbuild\x1b[0m",
+		"\x1b[1;33m- Arguments:\x1b[0m",
+		"\x1b[1;32mproject\x1b[0m - Go package to build",
+		"\x1b[36minfo:\x1b[0m type=\x1b[32mrel_path\x1b[0m",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("colored recipe help output missing %q:\n%s", want, text)
 		}
 	}
 }
@@ -133,8 +210,8 @@ func TestPrintRecipeHelpShowsBareRecipeReferences(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"command: @test ./...  +1 pre",
-		"pre[0]: @vet",
+		"- Command:\n\n    @test ./...  +1 pre",
+		"- Pre commands:\n\n    [0] @vet",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)
@@ -155,10 +232,10 @@ func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	}
 
 	text := out.String()
-	if !strings.Contains(text, "sandboxed: false") {
+	if !strings.Contains(text, "- Sandboxed:\n\n    false") {
 		t.Fatalf("recipe help output missing sandboxed marker:\n%s", text)
 	}
-	if strings.Contains(text, "sync_out:") {
+	if strings.Contains(text, "- Sync out:") {
 		t.Fatalf("recipe help output shows ignored sync_out:\n%s", text)
 	}
 }
@@ -182,10 +259,59 @@ func TestPrintRecipeHelpIncludesDynamicArgumentValues(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"arg project:string",
-		"  values:",
-		"    cmd/api     API server",
-		"    cmd/worker  Worker service",
+		"- Arguments:",
+		"    project - Go main package",
+		"    project - Go main package\n\n      info: type=string",
+		"      values:",
+		"        cmd/api     API server",
+		"        cmd/worker  Worker service",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrintRecipeHelpFormatsArgumentBlocks(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Help: "Build binary.",
+		Cmd:  recipe.Command{"go", "build"},
+		SyncOut: []string{
+			"bin/{name}",
+		},
+		Arguments: map[string]recipe.Argument{
+			"component": {
+				Help:     "Binary component to build.",
+				Type:     "string",
+				Position: 1,
+				Default:  "godoxy",
+				Values:   recipe.ScriptCommand("printf 'godoxy\\nmain\\n'"),
+			},
+			"docker": {
+				Help:    "Move the binary to /app/run for container images.",
+				Type:    "bool",
+				Default: false,
+			},
+			"name": {
+				Help:    "Override output binary name under bin/.",
+				Type:    "string",
+				Default: "",
+			},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"    component - Binary component to build",
+		"info: type=string position=1 default=\"godoxy\"",
+		"      values:",
+		"        main\n\n    docker - Move the binary to /app/run for container images\n\n      info: type=bool default=false",
+		`    name - Override output binary name under bin/` + "\n\n" + `      info: type=string default=""`,
+		`info: type=string default=""` + "\n\n- Sync out:\n\n    bin/{name}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)
@@ -211,9 +337,9 @@ func TestPrintRecipeHelpIncludesEnumArgumentValues(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"    api",
-		"    worker",
-		"    admin ui",
+		"        api",
+		"        worker",
+		"        admin ui",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)
@@ -243,7 +369,7 @@ func TestPrintRecipeHelpDynamicValuesUseDirEnvAndPrelude(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "    root/recipe/" + filepath.Base(dir) + "  from command"
+	want := "        root/recipe/" + filepath.Base(dir) + "  from command"
 	if text := out.String(); !strings.Contains(text, want) {
 		t.Fatalf("recipe help output missing %q:\n%s", want, text)
 	}
@@ -273,8 +399,8 @@ func TestPrintRecipeHelpDynamicValuesUseScriptRecipeReference(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"    api  API service",
-		"    web  Web service",
+		"        api  API service",
+		"        web  Web service",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)
@@ -321,8 +447,11 @@ func TestPrintRecipeHelpSkipsImplicitBoolArgumentValues(t *testing.T) {
 	if strings.Contains(text, "  values:") {
 		t.Fatalf("recipe help output includes implicit bool values:\n%s", text)
 	}
-	if !strings.Contains(text, "arg race:bool  bool") {
+	if !strings.Contains(text, "    race\n\n      info: type=bool") {
 		t.Fatalf("recipe help output missing bool argument:\n%s", text)
+	}
+	if strings.Contains(text, "\n      bool") {
+		t.Fatalf("recipe help output includes fallback bool help:\n%s", text)
 	}
 }
 
