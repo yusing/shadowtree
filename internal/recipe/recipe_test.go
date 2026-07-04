@@ -171,9 +171,45 @@ func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
+	builtins := Builtins(GoProfile)
+	for _, name := range []string{"check", "fmt", "run"} {
+		if _, ok := builtins[name]; !ok {
+			t.Fatalf("built-in %q is missing", name)
+		}
+	}
+	if RecipeSandboxed(builtins["fmt"]) {
+		t.Fatal("built-in fmt is sandboxed, want unsandboxed")
+	}
+
+	run := builtins["run"]
+	if !slices.Equal(run.Cmd, Command{"go", "run"}) {
+		t.Fatalf("run Cmd = %#v", run.Cmd)
+	}
+	if !slices.Equal(run.DefaultArgs, []string{"{command}"}) {
+		t.Fatalf("run DefaultArgs = %#v", run.DefaultArgs)
+	}
+	command := run.Arguments["command"]
+	if command.Type != "rel_path" || command.Position != 1 || !command.Required {
+		t.Fatalf("run command argument = %#v", command)
+	}
+}
+
 func TestMergeRecipesRejectsReservedNames(t *testing.T) {
-	if _, err := MergeRecipes(nil, map[string]Recipe{"run": {Cmd: Command{"go"}}}); err == nil {
+	if _, err := MergeRecipes(nil, map[string]Recipe{"exec": {Cmd: Command{"go"}}}); err == nil {
 		t.Fatal("MergeRecipes succeeded with reserved name")
+	}
+}
+
+func TestMergeRecipesAllowsRunOverride(t *testing.T) {
+	merged, err := MergeRecipes(Builtins(GoProfile), map[string]Recipe{
+		"run": {Help: "Run custom command."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := merged["run"].Help; got != "Run custom command." {
+		t.Fatalf("run Help = %q", got)
 	}
 }
 

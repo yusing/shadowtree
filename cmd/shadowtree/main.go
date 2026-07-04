@@ -107,6 +107,30 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if rest[0] == "exec" {
+		if len(rest) < 2 || rest[1] != "--" {
+			return errors.New("usage: shadowtree exec -- <cmd> [args...]")
+		}
+		command := rest[2:]
+		if len(command) == 0 {
+			return errors.New("exec requires a command")
+		}
+		rec := recipe.Recipe{Cmd: recipe.Command(command)}
+		resolved, err := recipe.Resolve("exec", rec, nil, opts.syncOut, loaded.Config.Env, loaded.Path, profile)
+		if err != nil {
+			return err
+		}
+		return runner.Run(ctx, runner.Options{
+			Resolved:   resolved,
+			SourceDir:  mustGetwd(),
+			PrintOnly:  opts.printOnly,
+			Verbose:    opts.verbose,
+			SyncOutAll: opts.syncOutAll,
+			Stdin:      os.Stdin,
+			Stdout:     os.Stdout,
+			Stderr:     os.Stderr,
+		})
+	}
 	switch rest[0] {
 	case "help":
 		if len(rest) > 1 {
@@ -126,29 +150,6 @@ func run(ctx context.Context, args []string) error {
 		return printRecipes(os.Stdout, resolvedSet)
 	case "config":
 		return printConfig(os.Stdout, loaded, profile, resolvedSet)
-	case "run":
-		command := rest[1:]
-		if len(command) > 0 && command[0] == "--" {
-			command = command[1:]
-		}
-		if len(command) == 0 {
-			return errors.New("run requires a command")
-		}
-		rec := recipe.Recipe{Cmd: recipe.Command(command)}
-		resolved, err := recipe.Resolve("run", rec, nil, opts.syncOut, loaded.Config.Env, loaded.Path, profile)
-		if err != nil {
-			return err
-		}
-		return runner.Run(ctx, runner.Options{
-			Resolved:   resolved,
-			SourceDir:  mustGetwd(),
-			PrintOnly:  opts.printOnly,
-			Verbose:    opts.verbose,
-			SyncOutAll: opts.syncOutAll,
-			Stdin:      os.Stdin,
-			Stdout:     os.Stdout,
-			Stderr:     os.Stderr,
-		})
 	default:
 		name, recipeArgs := recipe.Invocation(rest)
 		rec, ok := resolvedSet[name]
@@ -461,7 +462,7 @@ func argumentValueColumn(values []completion.Candidate) int {
 
 func printBasicHelp(w io.Writer) {
 	fmt.Fprint(w, `usage: shadowtree [flags] <recipe> [args...]
-       shadowtree [flags] run -- <cmd> [args...]
+       shadowtree [flags] exec -- <cmd> [args...]
        shadowtree help [recipe]
        shadowtree recipes
        shadowtree init [path]

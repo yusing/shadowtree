@@ -70,7 +70,7 @@
     },
     "recipes": {
       "type": "object",
-      "description": "Named development recipes. Reserved names such as run, recipes, init, config, completion, help, version, and __complete are not valid recipe names.",
+      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, help, version, and __complete are not valid recipe names.",
       "additionalProperties": {
         "$ref": "#/definitions/recipe"
       },

@@ -42,6 +42,19 @@ func TestCandidatesCompleteProfileValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesSeparateExecCommandFromRunRecipe(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", ""}, map[string]recipe.Recipe{
+		"run": {Help: "Run a Go command.", Cmd: recipe.Command{"go", "run"}},
+	})
+
+	if !hasCandidate(candidates, "exec") {
+		t.Fatalf("candidates = %#v, want exec", candidates)
+	}
+	if got := helpFor(candidates, "run"); got != "Run a Go command." {
+		t.Fatalf("run help = %q", got)
+	}
+}
+
 func TestCandidatesCompleteRecipesAfterHelp(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "help", ""}, map[string]recipe.Recipe{
 		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},

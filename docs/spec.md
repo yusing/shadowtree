@@ -72,7 +72,7 @@ require VCS stamping should use `-buildvcs=false`.
 
 ```sh
 shadowtree [flags] <recipe> [args...]
-shadowtree [flags] run -- <cmd> [args...]
+shadowtree [flags] exec -- <cmd> [args...]
 shadowtree help [recipe]
 shadowtree recipes
 shadowtree config
@@ -262,15 +262,15 @@ top-level vars.
 
 `help`
 : Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
-  and shell completion.
+and shell completion.
 
 `sandboxed`
 : Whether to run the recipe in a temporary workspace. Defaults to `true`.
-  `false` runs the recipe directly in the source checkout and skips sync-out.
+`false` runs the recipe directly in the source checkout and skips sync-out.
 
 `cmd`
 : Required argv prefix, `@recipe` reference, or shell script for the main
-  command.
+command.
 
 `args`
 : Fixed arguments always inserted after `cmd`.
@@ -289,8 +289,8 @@ top-level vars.
 
 `sync_out`
 : Paths mirrored back to the host checkout after a successful sandboxed recipe.
-  If a selected path is deleted in the sandbox, it is deleted from the host
-  checkout. Ignored when `sandboxed = false`.
+If a selected path is deleted in the sandbox, it is deleted from the host
+checkout. Ignored when `sandboxed = false`.
 
 ## Recipe Arguments
 
@@ -307,18 +307,18 @@ Argument fields:
 
 `type`
 : Optional type. Supported values are `string`, `int`, `float`, `bool`, `path`,
-  and `rel_path`. The default is `string`. `path` accepts absolute and relative
-  paths. `rel_path` accepts relative paths only and rejects absolute paths and
-  `~` home paths.
+and `rel_path`. The default is `string`. `path` accepts absolute and relative
+paths. `rel_path` accepts relative paths only and rejects absolute paths and
+`~` home paths.
 
 `path_kind`
 : Optional completion filter for `path` and `rel_path` arguments. Supported
-  values are `any`, `file`, `dir`, and `executable`. The default is `any`.
-  `file` and `executable` still include directories as traversal candidates.
+values are `any`, `file`, `dir`, and `executable`. The default is `any`.
+`file` and `executable` still include directories as traversal candidates.
 
 `position`
 : Optional 1-based positional index. Arguments with a position can be supplied
-  positionally.
+positionally.
 
 `required`
 : Whether the argument must be supplied by the user. Defaults to `false`.
@@ -328,8 +328,8 @@ Argument fields:
 
 `values`
 : Optional command that produces completion candidates for this argument. Each
-  output line is a value, optionally followed by a tab and help text. The
-  command can be an `@recipe` reference.
+output line is a value, optionally followed by a tab and help text. The
+command can be an `@recipe` reference.
 
 Example:
 
@@ -479,10 +479,10 @@ not performed because command writes already target the host checkout.
 The following names are reserved and cannot be used as recipes:
 
 ```text
-run
 recipes
 init
 config
+exec
 completion
 help
 version
@@ -502,18 +502,22 @@ Only the `go` profile is supported currently.
 Built-in Go recipes:
 
 ```text
+build      go build ./...
+check      @vet && @test ./...
+fmt        gofmt -w .
+generate   go generate ./...
+lint       golangci-lint run ./... if available, otherwise go vet ./...
+run        go run {command}
 test       go test ./...
 test-race  go test -race ./...
-vet        go vet ./...
-lint       golangci-lint run ./... if available, otherwise go vet ./...
-build      go build ./...
-generate   go generate ./...
 tidy       go mod tidy
+vet        go vet ./...
 ```
 
-Built-in `tidy` is unsandboxed by default, so `go mod tidy` updates `go.mod`
-and `go.sum` directly in the host checkout. Other built-in Go recipes are
-sandboxed unless project config overrides them.
+Built-in `fmt` and `tidy` are unsandboxed by default, so `gofmt -w` and
+`go mod tidy` update the host checkout directly. Other built-in Go recipes are
+sandboxed unless project config overrides them. Built-in `run` has a required
+positional `command` argument with `rel_path` type.
 
 ## Help
 
@@ -670,6 +674,7 @@ generate       Run go generate.
 install        Install the shadowtree binary and fish completion.
 install-skill  Install the Shadowtree agent skill.
 lint           Run Go lint checks.
+run            Run a Go command.
 test           Run the test suite.
 test-race      Run Go tests with the race detector.
 tidy           Tidy module dependencies.

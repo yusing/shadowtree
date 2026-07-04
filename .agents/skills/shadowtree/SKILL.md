@@ -42,7 +42,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 - `shadowtree config`: print config path, profile, and resolved recipe list.
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
 - `shadowtree completion fish`: emit fish completion script.
-- `shadowtree run -- <cmd> [args...]`: run an explicit command as a sandboxed ad hoc recipe.
+- `shadowtree exec -- <cmd> [args...]`: run an explicit command as a sandboxed ad hoc recipe.
 - `shadowtree <recipe> [args...]`: run a resolved recipe.
 
 Use `--print` before commands that may write, delete, install, publish, regenerate, sync out, or use unfamiliar args. Use `--verbose` to see workspace and phase commands.
@@ -137,7 +137,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
 
-Reserved recipe names: `run`, `recipes`, `init`, `config`, `completion`, `help`, `version`, `__complete`.
+Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `help`, `version`, `__complete`. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses `args` for fixed args versus `default_args` for caller-replaceable args.
 
@@ -281,16 +281,19 @@ Completion criterion: sync-out paths are narrow and deletion semantics are inten
 When profile is `go`, built-ins are:
 
 ```text
+build      go build ./...
+check      @vet && @test ./...
+fmt        gofmt -w .
+generate   go generate ./...
+lint       golangci-lint run ./... or go vet ./...
+run        go run {command}
 test       go test ./...
 test-race  go test -race ./...
-vet        go vet ./...
-lint       golangci-lint run ./... or go vet ./...
-build      go build ./...
-generate   go generate ./...
 tidy       go mod tidy
+vet        go vet ./...
 ```
 
-`tidy` is unsandboxed by default. Project config can override any built-in recipe field; partial overrides preserve unspecified built-in fields.
+`fmt` and `tidy` are unsandboxed by default. `run` has a required positional `command` argument with `rel_path` type. Project config can override any built-in recipe field; partial overrides preserve unspecified built-in fields.
 
 Completion criterion: use `shadowtree recipes` or `shadowtree --print <recipe>` to confirm the built-in or overridden behavior before relying on it.
 

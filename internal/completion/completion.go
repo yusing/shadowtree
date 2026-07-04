@@ -146,7 +146,7 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 		return nil, nil
 	}
 	candidates := []Candidate{
-		{Value: "run", Help: "Run an explicit command in a shadow workspace"},
+		{Value: "exec", Help: "Run an explicit command in a shadow workspace"},
 		{Value: "help", Help: "Show CLI and recipe help"},
 		{Value: "recipes", Help: "List resolved recipes"},
 		{Value: "init", Help: "Create .shadowtree.toml"},

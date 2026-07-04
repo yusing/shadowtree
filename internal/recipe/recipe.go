@@ -19,10 +19,10 @@ const scriptCommand = "__shadowtree_script__"
 const recipeReferencePrefix = "@"
 
 var ReservedNames = map[string]bool{
-	"run":        true,
 	"recipes":    true,
 	"init":       true,
 	"config":     true,
+	"exec":       true,
 	"completion": true,
 	"help":       true,
 	"version":    true,
@@ -97,7 +97,7 @@ type RecipeReferenceTarget struct {
 
 var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var goBuiltinNames = []string{"build", "generate", "lint", "test", "test-race", "tidy", "vet"}
+var goBuiltinNames = []string{"build", "check", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
 
 // BuiltinNames returns the built-in recipe names for profile.
 func BuiltinNames(profile string) []string {
@@ -124,6 +124,12 @@ func Builtins(profile string) map[string]Recipe {
 		}
 	}
 	return map[string]Recipe{
+		"check": {
+			Help:        "Run vet and tests.",
+			Pre:         []Command{{"@vet"}},
+			Cmd:         Command{"@test"},
+			DefaultArgs: []string{"./..."},
+		},
 		"test": {
 			Help:        "Run Go tests.",
 			Cmd:         Command{"go", "test"},
@@ -141,6 +147,12 @@ func Builtins(profile string) map[string]Recipe {
 			DefaultArgs: []string{"./..."},
 		},
 		"lint": lint,
+		"fmt": {
+			Help:        "Format Go source files.",
+			Cmd:         Command{"gofmt", "-w"},
+			DefaultArgs: []string{"."},
+			Sandboxed:   new(false),
+		},
 		"build": {
 			Help:        "Build Go packages.",
 			Cmd:         Command{"go", "build"},
@@ -150,6 +162,18 @@ func Builtins(profile string) map[string]Recipe {
 			Help:        "Run go generate.",
 			Cmd:         Command{"go", "generate"},
 			DefaultArgs: []string{"./..."},
+		},
+		"run": {
+			Help:        "Run a Go command.",
+			Cmd:         Command{"go", "run"},
+			DefaultArgs: []string{"{command}"},
+			Arguments: map[string]Argument{
+				"command": {
+					Type:     "rel_path",
+					Position: 1,
+					Required: true,
+				},
+			},
 		},
 		"tidy": {
 			Help:      "Tidy Go module files.",

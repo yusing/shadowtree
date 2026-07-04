@@ -2,9 +2,9 @@ profile = "go"
 shell = "sh"
 
 [recipes.build]
-help = "Build the shadowtree binary into bin/shadowtree."
+help = "Build the shadowtree binary into bin/."
 cmd = ["go", "build"]
-args = ["-buildvcs=false", "-o", "bin/{binary}"]
+args = [ "-ldflags=-s -w", "-buildvcs=false", "-o", "bin/{binary}"]
 default_args = ["{project}"]
 sync_out = ["bin/{binary}"]
 
@@ -22,7 +22,7 @@ default = "shadowtree"
 
 [recipes.install]
 help = "Install the shadowtree binary and fish completion."
-pre = [["go", "build", "-buildvcs=false", "-ldflags=-s -w", "-o", "bin/shadowtree", "./cmd/shadowtree"]]
+pre = ["@build"]
 cmd = '''
 set -eu
 destdir=${DESTDIR:-}
@@ -62,29 +62,29 @@ echo "installed shadowtree skill to $skill_dest"
 
 # Below are same as defaults
 
-[recipes.test]
-help = "Run the test suite."
-cmd = ["go", "test"]
-default_args = ["./..."]
+# [recipes.test]
+# help = "Run the test suite."
+# cmd = ["go", "test"]
+# default_args = ["./..."]
 
-[recipes.vet]
-help = "Run go vet."
-cmd = ["go", "vet"]
-default_args = ["./..."]
+# [recipes.vet]
+# help = "Run go vet."
+# cmd = ["go", "vet"]
+# default_args = ["./..."]
 
-[recipes.check]
-help = "Run vet and tests."
-pre = ["@vet"]
-cmd = ["@test"]
-default_args = ["./..."]
+# [recipes.check]
+# help = "Run vet and tests."
+# pre = ["@vet"]
+# cmd = ["@test"]
+# default_args = ["./..."]
 
-[recipes.fmt]
-help = "Format Go source files."
-sandboxed = false
-cmd = ["gofmt", "-w"]
-default_args = ["cmd", "internal"]
+# [recipes.fmt]
+# help = "Format Go source files."
+# sandboxed = false
+# cmd = ["gofmt", "-w"]
+# default_args = ["."]
 
-[recipes.tidy]
-help = "Tidy module dependencies."
-sandboxed = false
-cmd = ["go", "mod", "tidy"]
+# [recipes.tidy]
+# help = "Tidy module dependencies."
+# sandboxed = false
+# cmd = ["go", "mod", "tidy"]
