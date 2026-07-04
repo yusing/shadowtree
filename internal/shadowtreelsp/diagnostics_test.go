@@ -463,6 +463,57 @@ cmd = ["@webui:gen-schema"]
 	}
 }
 
+func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentValue(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetConfig := `[recipes.minify.arguments.component]
+type = "string"
+values = "printf '%s\\n' godoxy agent socket-proxy cli"
+
+[recipes.minify]
+cmd = ["true"]
+`
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(targetConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+cmd = ["@webui:minify[component=foo]"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["@webui:minify[`), len(`cmd = ["@webui:minify[component=foo`))
+}
+
+func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentType(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetConfig := `[recipes.build.arguments.mode]
+type = "bool"
+
+[recipes.build]
+cmd = ["true"]
+`
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(targetConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+cmd = '''
+@webui:build mode=nope
+'''
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, `mode: want bool, got "nope"`)
+	assertDiagnosticRange(t, diagnostics[0], 2, len(`@webui:build `), len(`@webui:build mode=nope`))
+}
+
 func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `"$schema" = "https://example.com/schema.json"
 

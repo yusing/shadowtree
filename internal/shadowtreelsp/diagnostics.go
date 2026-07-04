@@ -97,7 +97,18 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 					Source:   "shadowtree",
 					Message:  err.Error(),
 				})
+				continue
 			}
+			crossRecipes, ok := crossConfigCompletionRecipes(ctx, ref.Path, completionOpts)
+			if !ok {
+				continue
+			}
+			rec, ok := crossRecipes[ref.Name]
+			if !ok {
+				continue
+			}
+			targetOpts := crossConfigDiagnosticCompletionOptions(ref.Path, completionOpts)
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes, targetOpts)...)
 			continue
 		}
 		rec, ok := recipes[ref.Name]
@@ -125,6 +136,21 @@ func diagnosticRecipes(cfg recipe.Config) (map[string]recipe.Recipe, bool) {
 		return nil, false
 	}
 	return recipe.ApplyGlobals(recipes, cfg.Vars, cfg.Shell, cfg.ShellPrelude), true
+}
+
+func crossConfigDiagnosticCompletionOptions(path string, opts completionOptions) completionOptions {
+	base := completionBaseDir(opts)
+	if base == "" {
+		return completionOptions{}
+	}
+	targetDir := path
+	if !filepath.IsAbs(targetDir) {
+		targetDir = filepath.Join(base, targetDir)
+	}
+	return completionOptions{
+		Dir:        targetDir,
+		ConfigPath: filepath.Join(targetDir, ".shadowtree.toml"),
+	}
 }
 
 func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
