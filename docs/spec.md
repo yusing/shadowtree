@@ -433,7 +433,8 @@ placeholder.
 Recipe resolution order:
 
 ```text
-built-in recipes for the selected/detected profile
+built-in recipes for the selected profile, or for a detected profile when no
+config is loaded
 then config recipe overrides
 then CLI flags
 then trailing recipe args
@@ -549,7 +550,8 @@ The Go profile is selected when:
 
 - `--profile go` is provided, or
 - config has `profile = "go"`, or
-- Shadowtree detects `go.mod` or `go.work` upward from the current directory.
+- no config is loaded and Shadowtree detects `go.mod` or `go.work` upward from
+  the current directory.
 
 Only the `go` profile is supported currently.
 
@@ -649,7 +651,8 @@ shadowtree __complete zsh <words...>
 Completion is dynamic and uses:
 
 - configured recipes
-- built-in recipes from the detected or specified profile
+- built-in recipes from the selected profile, or from a detected profile when no
+  config is loaded
 - recipe `help` text
 
 Supported completion behavior:

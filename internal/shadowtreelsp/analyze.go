@@ -191,7 +191,7 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return items
 	}
 	if recipePrefix, key, ok := recipeReferencePrefix(analysis.CurrentTable, prefix); ok {
-		return recipeReferenceCompletionsWithOptions(ctx, text, analysis, recipePrefix, valueBuiltinReferenceContext(analysis.CurrentTable, key), opts)
+		return recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, recipePrefix, valueBuiltinReferenceContext(analysis.CurrentTable, key), opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix)
@@ -219,7 +219,7 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		return nil, false
 	}
 	fragment := strings.TrimPrefix(value, "@")
-	recipes, ok := completionRecipes(text)
+	recipes, ok := completionRecipes(ctx, text, opts)
 	if !ok {
 		return nil, true
 	}
@@ -264,7 +264,7 @@ func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis
 		items := spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, opts)
 		return items, true
 	}
-	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis, prefix, valueBuiltinReferenceContext(region.Table, region.Key), opts)
+	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, prefix, valueBuiltinReferenceContext(region.Table, region.Key), opts)
 	for i := range items {
 		items[i].Edit = &completionEdit{Start: start + 1, End: pos.Character}
 	}
@@ -276,7 +276,7 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 	if !ok {
 		return nil
 	}
-	recipes, ok := completionRecipes(text)
+	recipes, ok := completionRecipes(ctx, text, opts)
 	if !ok {
 		return nil
 	}
@@ -307,7 +307,7 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	if !ok || strings.TrimSpace(name) == "" {
 		return nil
 	}
-	recipes, ok := completionRecipes(text)
+	recipes, ok := completionRecipes(ctx, text, opts)
 	if !ok {
 		return nil
 	}
@@ -452,20 +452,21 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 	return activeStart, prefix, true
 }
 
-func completionRecipes(text string) (map[string]recipe.Recipe, bool) {
+func completionRecipes(ctx context.Context, text string, opts completionOptions) (map[string]recipe.Recipe, bool) {
 	var cfg recipe.Config
 	if _, err := toml.Decode(text, &cfg); err != nil {
 		return nil, false
 	}
-	profile := cfg.Profile
-	if profile == "" {
-		profile = recipe.GoProfile
+	path := opts.ConfigPath
+	if path == "" {
+		path = configfile.Names[0]
 	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), cfg.Recipes)
+	loaded := configfile.Loaded{Path: path, Config: cfg}
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, completionBaseDir(opts), configfile.ResolveOptions{})
 	if err != nil {
 		return nil, false
 	}
-	return recipe.ApplyGlobals(recipes, cfg.Vars, cfg.Shell, cfg.ShellPrelude), true
+	return recipes, true
 }
 
 func cutReferenceGroup(value string) (string, string, bool) {
@@ -538,14 +539,14 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 	return recipeSubtableCompletions()
 }
 
-func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, analysis documentAnalysis, prefix string, includeValueBuiltins bool, opts completionOptions) []completion {
+func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fallbackRecipeNames []string, prefix string, includeValueBuiltins bool, opts completionOptions) []completion {
 	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
 		return crossConfigRecipeReferenceCompletions(ctx, pathPrefix, recipePrefix, opts)
 	}
-	recipes, _ := completionRecipes(text)
-	names := slices.Clone(analysis.Recipes)
-	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
-		names = appendUnique(names, name)
+	recipes, ok := completionRecipes(ctx, text, opts)
+	names := mapsKeys(recipes)
+	if !ok {
+		names = slices.Clone(fallbackRecipeNames)
 	}
 	if includeValueBuiltins {
 		for _, name := range recipe.BuiltinReferenceNames() {

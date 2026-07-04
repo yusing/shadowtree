@@ -67,11 +67,11 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 
 func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
-	recipes, ok := diagnosticRecipes(cfg)
+	completionOpts := completionOptionsForURI(opts.URI)
+	recipes, ok := diagnosticRecipes(ctx, cfg, completionOpts)
 	if !ok {
 		return nil
 	}
-	completionOpts := completionOptionsForURI(opts.URI)
 	var diagnostics []lspDiagnostic
 	for _, ref := range commandReferenceSpans(lines) {
 		if ref.isArgumentValuesBuiltin() {
@@ -133,16 +133,17 @@ func (ref commandReferenceSpan) isArgumentValuesBuiltin() bool {
 	return ref.Path == "" && recipe.IsBuiltinReferenceName(ref.Name) && recipeArgumentTable(ref.Table) && ref.Key == "values"
 }
 
-func diagnosticRecipes(cfg recipe.Config) (map[string]recipe.Recipe, bool) {
-	profile := cfg.Profile
-	if profile == "" {
-		profile = recipe.GoProfile
+func diagnosticRecipes(ctx context.Context, cfg recipe.Config, opts completionOptions) (map[string]recipe.Recipe, bool) {
+	path := opts.ConfigPath
+	if path == "" {
+		path = configfile.Names[0]
 	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile), cfg.Recipes)
+	loaded := configfile.Loaded{Path: path, Config: cfg}
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, completionBaseDir(opts), configfile.ResolveOptions{})
 	if err != nil {
 		return nil, false
 	}
-	return recipe.ApplyGlobals(recipes, cfg.Vars, cfg.Shell, cfg.ShellPrelude), true
+	return recipes, true
 }
 
 func crossConfigDiagnosticCompletionOptions(path string, opts completionOptions) completionOptions {

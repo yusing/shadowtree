@@ -35,8 +35,9 @@ Zsh completion:
 command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
-Completion is dynamic: it uses configured recipes plus recipes from the detected
-or selected profile.
+Completion is dynamic: it uses configured recipes plus recipes from the selected
+profile. Without a config file, Shadowtree can detect a Go project and expose Go
+built-ins.
 
 ## Quick Start
 
@@ -236,8 +237,8 @@ filter completion candidates.
 
 ## Built-In Go Recipes
 
-When Shadowtree detects `go.mod` or `go.work`, or when `--profile go` is set, it
-adds these recipes:
+When `--profile go` is set, config has `profile = "go"`, or Shadowtree runs in a
+detected Go project without a config file, it adds these recipes:
 
 ```text
 build      go build ./...

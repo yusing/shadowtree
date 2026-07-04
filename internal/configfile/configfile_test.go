@@ -117,3 +117,105 @@ func TestLoadRejectsUnsupportedExtension(t *testing.T) {
 		t.Fatalf("Load() error = %v, want unsupported extension", err)
 	}
 }
+
+func TestResolveRecipesDoesNotDetectProfileWhenConfigOmitsProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.assets]
+cmd = ["npm", "test"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != "" {
+		t.Fatalf("profile = %q, want none", profile)
+	}
+	if _, ok := recipes["assets"]; !ok {
+		t.Fatalf("recipes missing configured recipe: %#v", recipes)
+	}
+	if _, ok := recipes["test"]; ok {
+		t.Fatalf("recipes include Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesDetectsProfileWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.GoProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.GoProfile)
+	}
+	if _, ok := recipes["test"]; !ok {
+		t.Fatalf("recipes missing Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesUsesExplicitConfigProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`profile = "go"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.GoProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.GoProfile)
+	}
+	if _, ok := recipes["test"]; !ok {
+		t.Fatalf("recipes missing Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesUsesOptionsProfileWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.assets]
+cmd = ["npm", "test"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{Profile: recipe.GoProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.GoProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.GoProfile)
+	}
+	if _, ok := recipes["assets"]; !ok {
+		t.Fatalf("recipes missing configured recipe: %#v", recipes)
+	}
+	if _, ok := recipes["test"]; !ok {
+		t.Fatalf("recipes missing Go builtin test: %#v", recipes)
+	}
+}

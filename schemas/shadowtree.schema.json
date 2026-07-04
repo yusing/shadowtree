@@ -13,8 +13,7 @@
     "profile": {
       "type": "string",
       "enum": ["go"],
-      "description": "Recipe profile. Shadowtree currently provides built-in defaults for Go projects.",
-      "default": "go"
+      "description": "Recipe profile. Set to \"go\" to enable built-in Go recipes for this config."
     },
     "shell": {
       "$ref": "#/definitions/shell"

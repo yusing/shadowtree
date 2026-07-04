@@ -159,6 +159,59 @@ cmd = "@"
 	assertLabels(t, items, "@test")
 }
 
+func TestCompletionsExcludeGoBuiltinsWhenConfigOmitsProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.assets]
+cmd = ["npm", "test"]
+
+[recipes.check]
+cmd = "@f"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 4, Character: len(`cmd = "@f`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	for _, item := range items {
+		if item.Label == "@fmt" {
+			t.Fatalf("items include Go builtin @fmt: %#v", items)
+		}
+	}
+}
+
+func TestCompletionsIncludeGoBuiltinsWhenConfigSetsProfile(t *testing.T) {
+	root := t.TempDir()
+	text := `profile = "go"
+
+[recipes.check]
+cmd = "@f"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`cmd = "@f`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@fmt")
+}
+
+func TestCompletionsIncludeLocalRecipeReferencesWhenTOMLIsIncomplete(t *testing.T) {
+	text := `[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.check]
+cmd = "@b"
+
+[recipes.
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`cmd = "@b`)})
+	assertLabels(t, items, "@build")
+}
+
 func TestCompletionsIncludeRecipeReferenceArguments(t *testing.T) {
 	text := `[recipes.build.arguments.component]
 type = "string"

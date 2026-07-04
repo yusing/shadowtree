@@ -198,6 +198,30 @@ cmd = ["go", "test"]
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["echo 123", "`), len(`pre = ["echo 123", "@missing`))
 }
 
+func TestDocumentDiagnosticsRejectGoBuiltinWhenConfigOmitsProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.assets]
+cmd = "@fmt"
+`
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @fmt")
+}
+
+func TestDocumentDiagnosticsAcceptGoBuiltinWhenConfigSetsProfile(t *testing.T) {
+	text := `profile = "go"
+
+[recipes.assets]
+cmd = "@fmt"
+`
+	diagnostics := documentDiagnostics(t.Context(), text)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsAcceptKnownBracketRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@build[component=godoxy, mode=dev]"]

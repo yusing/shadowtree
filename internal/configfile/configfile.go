@@ -53,7 +53,7 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 	if profile == "" {
 		profile = loaded.Config.Profile
 	}
-	if profile == "" {
+	if profile == "" && loaded.Path == "" {
 		profile = detect.Profile(dir)
 	}
 	if profile != "" && profile != recipe.GoProfile {

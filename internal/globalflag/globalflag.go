@@ -34,7 +34,7 @@ func (spec Spec) Usage() string {
 
 var specs = []Spec{
 	{Name: Config, ValueName: "PATH", Help: "Use config file", UsageHelp: "use config file", FishOptions: "-r"},
-	{Name: Profile, ValueName: "PROFILE", Help: "Use profile", UsageHelp: "use detected/profile built-ins, initially: go", FishOptions: "-x -a 'go'"},
+	{Name: Profile, ValueName: "PROFILE", Help: "Use profile", UsageHelp: "use profile built-ins, supported: go", FishOptions: "-x -a 'go'"},
 	{Name: SyncOut, ValueName: "PATH", Help: "Copy path back after success", UsageHelp: "copy path back after success; repeatable or comma-separated", FishOptions: "-r"},
 	{Name: SyncOutAll, Help: "Copy entire workspace back after success", UsageHelp: "copy entire workspace back after success"},
 	{Name: Print, Help: "Print resolved plan without running", UsageHelp: "print resolved plan without running"},
