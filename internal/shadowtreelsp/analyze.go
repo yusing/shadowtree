@@ -923,7 +923,7 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 			insertText += "}"
 		}
 		items = append(items, completion{
-			Label:       "@",
+			Label:       "{@}",
 			InsertText:  insertText,
 			Kind:        completionKindVariable,
 			Detail:      "Remaining recipe args",
@@ -1710,11 +1710,12 @@ func (ref commandReferenceSpan) Target() string {
 }
 
 type commandReferenceScan struct {
-	depth   int
-	list    bool
-	pending bool
-	table   string
-	key     string
+	depth       int
+	list        bool
+	pending     bool
+	table       string
+	key         string
+	tripleQuote string
 }
 
 func commandReferenceSpans(lines []string) []commandReferenceSpan {
@@ -1793,8 +1794,28 @@ func commandReferenceSpansInText(text string, lineNo, offset int, scan *commandR
 	var spans []commandReferenceSpan
 	followsOpen := false
 	for i := 0; i < len(text); i++ {
+		if scan.tripleQuote != "" {
+			end := strings.Index(text[i:], scan.tripleQuote)
+			if end < 0 {
+				return spans
+			}
+			i += end + len(scan.tripleQuote) - 1
+			scan.tripleQuote = ""
+			continue
+		}
 		switch text[i] {
 		case '"', '\'':
+			quote := quoteAt(text, i)
+			if quote.Triple {
+				end := strings.Index(text[i+len(quote.Delimiter):], quote.Delimiter)
+				if end < 0 {
+					scan.tripleQuote = quote.Delimiter
+					return spans
+				}
+				i += len(quote.Delimiter) + end + len(quote.Delimiter) - 1
+				followsOpen = false
+				continue
+			}
 			start := i + 1
 			end := findStringEnd(text, start, text[i])
 			value := text[start:end]
@@ -2098,15 +2119,25 @@ func recipeReferenceArgumentPartTokens(line string, lineNo, start, end int) []se
 	}
 	eq := strings.IndexByte(line[start:end], '=')
 	if eq < 0 {
-		return []semanticToken{{Line: lineNo, Start: start, Length: end - start, Type: semanticTokenString}}
+		return recipeReferenceArgumentValueTokens(line, lineNo, start, end)
 	}
 	eq += start
 	tokens := []semanticToken{{Line: lineNo, Start: start, Length: eq - start, Type: semanticTokenParameter}}
 	valueStart := eq + 1
 	if valueStart < end {
-		tokens = append(tokens, semanticToken{Line: lineNo, Start: valueStart, Length: end - valueStart, Type: semanticTokenString})
+		tokens = append(tokens, recipeReferenceArgumentValueTokens(line, lineNo, valueStart, end)...)
 	}
 	return tokens
+}
+
+func recipeReferenceArgumentValueTokens(line string, lineNo, start, end int) []semanticToken {
+	for _, item := range placeholderSpans(line[start:end]) {
+		if item.Length == end-start {
+			item.Start += start
+			return []semanticToken{{Line: lineNo, Start: item.Start, Length: item.Length, Type: semanticTokenVariable}}
+		}
+	}
+	return []semanticToken{{Line: lineNo, Start: start, Length: end - start, Type: semanticTokenString}}
 }
 
 func recipeReferencePrefix(table, prefix string) (string, string, bool) {

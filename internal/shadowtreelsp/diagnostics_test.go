@@ -458,6 +458,19 @@ cmd = "go test"
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`values = "`), len(`values = "@missing`))
 }
 
+func TestDocumentDiagnosticsRejectUnknownScriptValuesRecipeReference(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = '''
+@missing
+'''
+
+[recipes.test]
+cmd = "go test"
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+	assertDiagnosticRange(t, diagnostics[0], 2, 0, len(`@missing`))
+}
+
 func TestDocumentDiagnosticsAcceptEnumArgumentValues(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@enum api worker \"admin ui\""
@@ -488,6 +501,43 @@ cmd = "go build"
 	}
 }
 
+func TestDocumentDiagnosticsAcceptDiscoveryArgumentValuesWithoutRecipeCommand(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.pkg]
+values = "@go-modules"
+default = "./..."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptScriptDiscoveryArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.pkg]
+values = '''
+@go-modules
+'''
+default = "./..."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptGoModulesAfterTripleQuotedCommandList(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.install]
+post = ['''
+echo installed
+''']
+
+[recipes.test.arguments.pkg]
+values = "@go-modules"
+default = "./..."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsAcceptComposedBuiltinArgumentValues(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@go-modules; @enum all='all modules'"
@@ -503,6 +553,28 @@ cmd = "go test"
 func TestDocumentDiagnosticsAcceptComposedBuiltinForEach(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.lint]
 for_each = "@go-modules; @enum all='all modules'"
+cmd = "go test"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptDiscoveryForEach(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.lint]
+for_each = "@go-modules"
+cmd = "go test"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptScriptDiscoveryForEach(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.lint]
+for_each = '''
+@go-modules
+'''
 cmd = "go test"
 `)
 	if len(diagnostics) != 0 {

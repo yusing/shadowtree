@@ -231,10 +231,10 @@ func TestCompletionsIncludeVariadicArgsPlaceholder(t *testing.T) {
 	text := `[recipes.test]
 cmd = "echo {`
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "echo {`)})
-	assertLabels(t, items, "@")
+	assertLabels(t, items, "{@}")
 
 	result := completionResult(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "echo {`)})
-	edit := completionTextEdit(t, result, "@")
+	edit := completionTextEdit(t, result, "{@}")
 	if edit["newText"] != "@}" {
 		t.Fatalf("newText = %#v, want variadic placeholder suffix", edit["newText"])
 	}
@@ -244,11 +244,7 @@ func TestCompletionsExcludeVariadicArgsPlaceholderInSyncOut(t *testing.T) {
 	text := `[recipes.test]
 sync_out = ["{`
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`sync_out = ["{`)})
-	for _, item := range items {
-		if item.Label == "@" {
-			t.Fatalf("unexpected variadic placeholder completion in %#v", items)
-		}
-	}
+	assertNoLabels(t, items, "{@}")
 }
 
 func TestCompletionsIncludeRecipeReferences(t *testing.T) {
@@ -1147,6 +1143,18 @@ cmd = "{@}"
 	if !hasSemanticToken(tokens, 1, len(`cmd = "`), len("{@}"), semanticTokenVariable) {
 		t.Fatalf("missing variadic placeholder token in %#v", tokens)
 	}
+}
+
+func TestSemanticTokensIncludeVariadicArgsPlaceholderInScriptRecipeReference(t *testing.T) {
+	text := `[recipes.check]
+cmd = '''
+@vet {@}
+@test {@}
+'''
+`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	assertSemanticToken(t, tokens, 2, len("@vet "), len("{@}"), semanticTokenVariable)
+	assertSemanticToken(t, tokens, 3, len("@test "), len("{@}"), semanticTokenVariable)
 }
 
 func TestSemanticTokensHighlightRecipeReferences(t *testing.T) {
