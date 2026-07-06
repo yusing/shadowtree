@@ -148,7 +148,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
 
-Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
+Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses `args` for fixed args versus `default_args` for caller-replaceable args.
 
@@ -254,7 +254,10 @@ Use fields under `[recipes.<name>.arguments.<arg>]`:
 - `required`: true when user must supply the argument.
 - `default`: string, integer, number, or boolean default; converted to string then type-validated.
 - `values`: command that prints completion/help candidates, one per line as `value` or `value<TAB>help`.
-  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@recipes`, and `@vars`.
+  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `["@enum", "api=API service"]`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-main-packages`, `@recipes`, and `@vars`.
+  `@enum` attaches help for `value=help text` entries when the help side contains whitespace; quote the help side in script-valued `values`, for example `@enum all='all modules'`. Single-token values such as `GOOS=linux` remain literal values.
+  `@go-modules` returns directories containing `go.mod`, using `.` for the config-directory module and module paths as help. `@go-main-packages` returns directories containing non-test Go files with `package main`, using package comments as help when available. Both Go discovery builtins are filesystem-only and skip common generated/vendor directories.
+  Script-valued `values` can concatenate multiple simple builtin commands with semicolons, for example `values = "@go-modules; @enum all='all modules'"`.
 
 Call forms:
 
@@ -272,7 +275,7 @@ Resolution rules:
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
-- `values` commands for help/completion run with top-level `env` overlaid by recipe `env`; output help text is split on a tab.
+- Command-backed `values` for help/completion run with top-level `env` overlaid by recipe `env`; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, and `@go-main-packages` for editor-safe completions.
 
 Completion criterion: typed args are used when the recipe needs named, validated, defaulted, positional, or completable values.
 
@@ -353,6 +356,6 @@ shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
 command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
-Completion includes commands, resolved recipes, `--profile go` and `--profile node`, typed argument names, bool values, path/rel_path filesystem candidates, and dynamic `values` output. Completion reads `--config` and `--profile` when they appear before the command.
+Completion includes commands, resolved recipes, `--profile go` and `--profile node`, typed argument names, bool values, path/rel_path filesystem candidates, dynamic `values` output, and argument-values builtins including Go module/main-package discovery. Completion reads `--config` and `--profile` when they appear before the command.
 
 Completion criterion: after config changes affecting recipes or arguments, regenerate or re-source shell completion before testing interactive behavior.

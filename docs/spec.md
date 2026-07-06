@@ -365,17 +365,30 @@ command can be an `@recipe` reference, or an argument-values builtin:
 
 ```toml
 values = '@enum api worker "admin ui"'
+values = ["@enum", "api=API service", "worker=Worker service"]
 values = '@lines config/targets.txt'
 values = '@glob "cmd/*"'
+values = "@go-modules; @enum all='all modules'"
+values = '@go-main-packages'
 values = '@recipes'
 values = '@vars'
 ```
 
-`@enum` returns literal values from its arguments. `@lines` reads candidates
-from a text file, using the same `value<TAB>help` line format. `@glob` returns
-filesystem matches. `@recipes` returns resolved recipe names. `@vars` returns
-recipe placeholder and argument names. Relative `@lines` paths and `@glob`
-patterns resolve from the config file directory when available.
+`@enum` returns literal values from its arguments. Enum arguments in
+`value=help text` form attach help when the help side contains whitespace;
+quote the help side in script-valued `values`, for example
+`@enum all='all modules'`. Single-token values such as `GOOS=linux` remain
+literal values. `@lines` reads candidates from a text file, using the same
+`value<TAB>help` line format. `@glob` returns filesystem matches. `@go-modules`
+returns directories containing `go.mod`, with `.` representing the config
+directory module and help from the module directive. `@go-main-packages`
+returns directories containing non-test Go files with `package main`, with
+help from package comments when available. Multiple builtin value commands in a
+script-valued `values` field can be separated with `;`; their candidates are
+concatenated without running a shell. `@recipes` returns resolved recipe names.
+`@vars` returns recipe placeholder and argument names. Relative `@lines` paths,
+`@glob` patterns, and Go discovery walks resolve from the config file directory
+when available.
 
 Example:
 
@@ -559,6 +572,8 @@ exec
 completion
 enum
 glob
+go-main-packages
+go-modules
 help
 lines
 vars
@@ -566,9 +581,9 @@ version
 __complete
 ```
 
-The argument-values builtins (`enum`, `glob`, `lines`, `recipes`, and `vars`)
-are reserved as recipe names. Future built-in `@` command identifiers are also
-reserved.
+The argument-values builtins (`enum`, `glob`, `go-main-packages`, `go-modules`,
+`lines`, `recipes`, and `vars`) are reserved as recipe names. Future built-in
+`@` command identifiers are also reserved.
 
 ## Built-In Profiles
 

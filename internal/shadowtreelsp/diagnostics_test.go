@@ -471,6 +471,36 @@ cmd = ["go", "test"]
 	}
 }
 
+func TestDocumentDiagnosticsAcceptDiscoveryArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = "@go-modules"
+
+[recipes.build.arguments.project]
+values = "@go-main-packages"
+
+[recipes.test]
+cmd = ["go", "test"]
+
+[recipes.build]
+cmd = ["go", "build"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptComposedBuiltinArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = "@go-modules; @enum all='all modules'"
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsRejectInvalidArgumentValuesBuiltin(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@glob"
@@ -479,6 +509,26 @@ values = "@glob"
 cmd = ["go", "test"]
 `)
 	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: @glob requires one argument`)
+}
+
+func TestDocumentDiagnosticsRejectInvalidDiscoveryArgumentValuesBuiltin(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = ["@go-modules", "x"]
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: @go-modules does not take arguments`)
+}
+
+func TestDocumentDiagnosticsRejectShellOperatorComposedBuiltinValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = "@go-modules && @enum all='all modules'"
+
+[recipes.test]
+cmd = ["go", "test"]
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: builtin values must contain only simple builtin commands`)
 }
 
 func TestDocumentDiagnosticsRejectEnumOutsideArgumentValues(t *testing.T) {

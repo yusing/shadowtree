@@ -128,6 +128,66 @@ func TestBuiltinValuesParsesEnumArgvValues(t *testing.T) {
 	}
 }
 
+func TestBuiltinValuesParsesEnumValueHelp(t *testing.T) {
+	values, ok, err := BuiltinValues(Command{"@enum", "all=all modules", "api=API service"}, ValueBuiltinOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @enum")
+	}
+	want := []ValueCandidate{
+		{Value: "all", Help: "all modules"},
+		{Value: "api", Help: "API service"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesKeepsEnumLiteralEqualsValues(t *testing.T) {
+	values, ok, err := BuiltinValues(Command{"@enum", "GOOS=linux", "GOOS=darwin"}, ValueBuiltinOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @enum")
+	}
+	want := []ValueCandidate{
+		{Value: "GOOS=linux"},
+		{Value: "GOOS=darwin"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesConcatenatesScriptBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+
+	values, ok, err := BuiltinValues(
+		ScriptCommand("@go-modules; @enum all='all modules'"),
+		ValueBuiltinOptions{Dir: dir},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect script builtins")
+	}
+	want := []ValueCandidate{
+		{Value: ".", Help: "example.com/root"},
+		{Value: "services/api", Help: "example.com/api"},
+		{Value: "all", Help: "all modules"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
 func TestBuiltinValuesReadsLines(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "targets.txt"), []byte("api\tAPI service\nworker\n"), 0o644); err != nil {
@@ -205,6 +265,110 @@ func TestBuiltinValuesGlobsDirectoriesWithSlashPrefix(t *testing.T) {
 	}
 }
 
+func TestBuiltinValuesDiscoversGoModules(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+	mkdirAll(t, filepath.Join(dir, "vendor", "ignored"))
+	writeFile(t, filepath.Join(dir, "vendor", "ignored", "go.mod"), "module example.com/ignored\n")
+
+	values, ok, err := BuiltinValues(
+		Command{"@go-modules"},
+		ValueBuiltinOptions{Dir: dir},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-modules")
+	}
+	want := []ValueCandidate{
+		{Value: ".", Help: "example.com/root"},
+		{Value: "services/api", Help: "example.com/api"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoModulesWithPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+
+	values, ok, err := BuiltinValues(
+		Command{"@go-modules"},
+		ValueBuiltinOptions{Dir: dir, ValuePrefix: "services/"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-modules")
+	}
+	want := []ValueCandidate{
+		{Value: "services/api", Help: "example.com/api"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoMainPackages(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "package main\n")
+	mkdirAll(t, filepath.Join(dir, "tools", "worker"))
+	writeFile(t, filepath.Join(dir, "tools", "worker", "main.go"), "// Package main runs the worker.\npackage main\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
+	writeFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
+	mkdirAll(t, filepath.Join(dir, "node_modules", "ignored"))
+	writeFile(t, filepath.Join(dir, "node_modules", "ignored", "main.go"), "package main\n")
+
+	values, ok, err := BuiltinValues(Command{"@go-main-packages"}, ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-main-packages")
+	}
+	want := []ValueCandidate{
+		{Value: "cmd/api", Help: "cmd/api"},
+		{Value: "tools/worker", Help: "Package main runs the worker."},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoMainPackagesWithPrefixAndBrokenFile(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeFile(t, filepath.Join(dir, "cmd", "api", "broken.go"), "package")
+	writeFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "package main\n")
+	mkdirAll(t, filepath.Join(dir, "tools", "worker"))
+	writeFile(t, filepath.Join(dir, "tools", "worker", "main.go"), "package main\n")
+
+	values, ok, err := BuiltinValues(
+		Command{"@go-main-packages"},
+		ValueBuiltinOptions{Dir: dir, ValuePrefix: "cmd/"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-main-packages")
+	}
+	want := []ValueCandidate{
+		{Value: "cmd/api", Help: "cmd/api"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
 func TestBuiltinValuesListsRecipes(t *testing.T) {
 	values, ok, err := BuiltinValues(ScriptCommand("@recipes"), ValueBuiltinOptions{
 		Recipes: map[string]Recipe{
@@ -254,6 +418,8 @@ func TestValidateValueBuiltinRejectsInvalidForms(t *testing.T) {
 	}{
 		{name: "glob missing arg", command: Command{"@glob"}},
 		{name: "lines extra arg", command: Command{"@lines", "a", "b"}},
+		{name: "go modules extra arg", command: Command{"@go-modules", "x"}},
+		{name: "go main packages extra arg", command: Command{"@go-main-packages", "x"}},
 		{name: "recipes extra arg", command: Command{"@recipes", "x"}},
 		{name: "vars extra arg", command: Command{"@vars", "x"}},
 		{name: "non literal word", command: ScriptCommand(`@enum "$x"`)},
@@ -1130,6 +1296,20 @@ func TestNodeBuiltinsPackageScriptNormalizationReplacesInvalidCharacters(t *test
 	rec = Builtins(NodeProfile, BuiltinOptions{Dir: dir})["foo"]
 	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run '#foo' -- "$@"`) {
 		t.Fatalf("foo body = %q, want hash-prefixed script key quoted", body)
+	}
+}
+
+func mkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -257,6 +257,104 @@ func TestCandidatesCompleteEnumArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteEnumArgumentValuesWithHelp(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build", "project=a"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.Command{"@enum", "all=all modules", "api=API service"},
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 2 ||
+		candidates[0] != (Candidate{Value: "project=all", Help: "all modules"}) ||
+		candidates[1] != (Candidate{Value: "project=api", Help: "API service"}) {
+		t.Fatalf("candidates = %#v, want enum values with help", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoModulesBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	if err := os.WriteFile(filepath.Join(dir, "services", "api", "go.mod"), []byte("module example.com/api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := completeWithOptions(t, []string{"shadowtree", "test", "target=s"}, map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test"},
+			Arguments: map[string]recipe.Argument{
+				"target": {
+					Type:   "string",
+					Values: recipe.Command{"@go-modules"},
+				},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "target=services/api", Help: "example.com/api"}) {
+		t.Fatalf("candidates = %#v, want services/api module value", candidates)
+	}
+}
+
+func TestCandidatesCompleteComposedBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	if err := os.WriteFile(filepath.Join(dir, "services", "api", "go.mod"), []byte("module example.com/api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := completeWithOptions(t, []string{"shadowtree", "test", "target=a"}, map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test"},
+			Arguments: map[string]recipe.Argument{
+				"target": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("@go-modules; @enum all='all modules'"),
+				},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "target=all", Help: "all modules"}) {
+		t.Fatalf("candidates = %#v, want composed all value", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoMainPackagesBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	if err := os.WriteFile(filepath.Join(dir, "cmd", "api", "main.go"), []byte("// Package main builds the API.\npackage main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project=cmd/"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.Command{"@go-main-packages"},
+				},
+			},
+		},
+	}, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "project=cmd/api", Help: "Package main builds the API."}) {
+		t.Fatalf("candidates = %#v, want cmd/api main package value", candidates)
+	}
+}
+
 func TestCandidatesCompleteRecipeBuiltinArgumentValues(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "run", "target=b"}, map[string]recipe.Recipe{
 		"build": {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},

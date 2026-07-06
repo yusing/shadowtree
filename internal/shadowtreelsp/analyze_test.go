@@ -158,7 +158,7 @@ values = "@"
 cmd = ["go", "test"]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
-	assertLabels(t, items, "@enum", "@glob", "@lines", "@recipes", "@test", "@vars")
+	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@test", "@vars")
 	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
 }
 
@@ -318,6 +318,82 @@ default = `
 	if edit["newText"] != `api"` {
 		t.Fatalf("newText = %#v, want replacement plus closing quote", edit["newText"])
 	}
+}
+
+func TestCompletionsIncludeEnumArgumentDefaultValueHelp(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+values = ["@enum", "all=all modules", "api=API service"]
+default = a`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = a`)})
+	assertLabels(t, items, "all", "api")
+	assertCompletionDetail(t, items, "api", "API service")
+}
+
+func TestCompletionsIncludeGoModulesArgumentDefaultValues(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "services", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "api", "go.mod"), []byte("module example.com/api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test.arguments.target]
+type = "string"
+values = "@go-modules"
+default = s`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`default = s`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "services/api")
+	assertCompletionDetail(t, items, "services/api", "example.com/api")
+}
+
+func TestCompletionsIncludeComposedBuiltinArgumentDefaultValues(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test.arguments.target]
+type = "string"
+values = "@go-modules; @enum all='all modules'"
+default = a`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`default = a`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "all")
+	assertCompletionDetail(t, items, "all", "all modules")
+}
+
+func TestCompletionsIncludeGoMainPackagesArgumentDefaultValues(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cmd", "api", "main.go"), []byte("// Package main builds the API.\npackage main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.build.arguments.project]
+type = "string"
+values = "@go-main-packages"
+default = c`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`default = c`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "cmd/api")
+	assertCompletionDetail(t, items, "cmd/api", "Package main builds the API.")
 }
 
 func TestCompletionsDoNotRunCommandBackedArgumentValues(t *testing.T) {

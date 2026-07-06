@@ -69,7 +69,7 @@
     },
     "recipes": {
       "type": "object",
-      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, help, lines, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
+      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, go-main-packages, go-modules, help, lines, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
       "additionalProperties": {
         "$ref": "#/definitions/recipe"
       },
@@ -194,7 +194,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @recipes, and @vars. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @go-modules, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side in script-valued values, for example @go-modules; @enum all='all modules'. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
         }
       },
       "x-taplo": {

@@ -162,10 +162,7 @@ default_args = ["{project}"]
 help = "Go package to build."
 type = "string"
 position = 1
-default = "./..."
-values = '''
-go list -f '{{.ImportPath}}{{"\t"}}{{.Doc}}' ./...
-'''
+default = "./cmd/shadowtree"
 
 [recipes.tidy]
 help = "Tidy Go module files."

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -15,19 +18,23 @@ import (
 )
 
 const (
-	enumValuesName    = "enum"
-	globValuesName    = "glob"
-	linesValuesName   = "lines"
-	recipesValuesName = "recipes"
-	varsValuesName    = "vars"
+	enumValuesName           = "enum"
+	globValuesName           = "glob"
+	goMainPackagesValuesName = "go-main-packages"
+	goModulesValuesName      = "go-modules"
+	linesValuesName          = "lines"
+	recipesValuesName        = "recipes"
+	varsValuesName           = "vars"
 )
 
 var builtinReferenceDetails = map[string]string{
-	enumValuesName:    "Static argument values",
-	globValuesName:    "Globbed filesystem values",
-	linesValuesName:   "Values from a text file",
-	recipesValuesName: "Resolved recipe names",
-	varsValuesName:    "Recipe placeholder names",
+	enumValuesName:           "Static argument values",
+	globValuesName:           "Globbed filesystem values",
+	goMainPackagesValuesName: "Go main package directories",
+	goModulesValuesName:      "Go module directories",
+	linesValuesName:          "Values from a text file",
+	recipesValuesName:        "Resolved recipe names",
+	varsValuesName:           "Recipe placeholder names",
 }
 
 type ValueCandidate struct {
@@ -41,6 +48,11 @@ type ValueBuiltinOptions struct {
 	Recipe      Recipe
 	Recipes     map[string]Recipe
 	ValuePrefix string
+}
+
+type valueBuiltinCall struct {
+	name string
+	args []string
 }
 
 // IsReservedRecipeName reports whether name cannot be used for a recipe.
@@ -68,37 +80,63 @@ func BuiltinReferenceDetail(name string) string {
 }
 
 func ValidateValueBuiltin(command Command) (string, bool, error) {
-	name, args, ok, err := valueBuiltinInvocation(command)
+	calls, ok, err := validatedValueBuiltinInvocations(command)
 	if err != nil || !ok {
-		return name, ok, err
+		return "", ok, err
 	}
-	return validateValueBuiltinArgs(name, args)
+	return calls[0].name, true, nil
 }
 
 func BuiltinValues(command Command, opts ValueBuiltinOptions) ([]ValueCandidate, bool, error) {
-	name, args, ok, err := valueBuiltinInvocation(command)
+	calls, ok, err := validatedValueBuiltinInvocations(command)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	if _, _, err := validateValueBuiltinArgs(name, args); err != nil {
-		return nil, true, err
+	var values []ValueCandidate
+	for _, call := range calls {
+		callValues, err := builtinValuesForCall(call, opts)
+		if err != nil {
+			return nil, true, err
+		}
+		values = append(values, callValues...)
 	}
+	return values, true, nil
+}
+
+func builtinValuesForCall(call valueBuiltinCall, opts ValueBuiltinOptions) ([]ValueCandidate, error) {
+	name := call.name
+	args := call.args
 	switch name {
 	case enumValuesName:
-		return filterValueCandidates(enumCandidates(args), opts.ValuePrefix), true, nil
+		return filterValueCandidates(enumCandidates(args), opts.ValuePrefix), nil
 	case globValuesName:
-		values, err := globCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
-		return values, true, err
+		return globCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
+	case goMainPackagesValuesName:
+		return discoverGoMainPackages(valueBuiltinBaseDir(opts), opts.ValuePrefix)
+	case goModulesValuesName:
+		return discoverGoModules(valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case linesValuesName:
-		values, err := lineCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
-		return values, true, err
+		return lineCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
 	case recipesValuesName:
-		return filterValueCandidates(recipeCandidates(opts.Recipes), opts.ValuePrefix), true, nil
+		return filterValueCandidates(recipeCandidates(opts.Recipes), opts.ValuePrefix), nil
 	case varsValuesName:
-		return filterValueCandidates(varCandidates(opts.Recipe), opts.ValuePrefix), true, nil
+		return filterValueCandidates(varCandidates(opts.Recipe), opts.ValuePrefix), nil
 	default:
-		return nil, false, nil
+		return nil, nil
 	}
+}
+
+func validatedValueBuiltinInvocations(command Command) ([]valueBuiltinCall, bool, error) {
+	calls, ok, err := valueBuiltinInvocations(command)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	for _, call := range calls {
+		if _, _, err := validateValueBuiltinArgs(call.name, call.args); err != nil {
+			return nil, true, err
+		}
+	}
+	return calls, true, nil
 }
 
 func validateValueBuiltinArgs(name string, args []string) (string, bool, error) {
@@ -108,6 +146,10 @@ func validateValueBuiltinArgs(name string, args []string) (string, bool, error) 
 	case globValuesName, linesValuesName:
 		if len(args) != 1 {
 			return name, true, fmt.Errorf("@%s requires one argument", name)
+		}
+	case goMainPackagesValuesName, goModulesValuesName:
+		if len(args) != 0 {
+			return name, true, fmt.Errorf("@%s does not take arguments", name)
 		}
 	case recipesValuesName, varsValuesName:
 		if len(args) != 0 {
@@ -119,63 +161,267 @@ func validateValueBuiltinArgs(name string, args []string) (string, bool, error) 
 	return name, true, nil
 }
 
-func valueBuiltinInvocation(command Command) (string, []string, bool, error) {
+func valueBuiltinInvocations(command Command) ([]valueBuiltinCall, bool, error) {
 	if len(command) == 0 {
-		return "", nil, false, nil
+		return nil, false, nil
 	}
 	if !IsScriptCommand(command) {
 		ref, ok := ParseRecipeReference(command)
 		if !ok || ref.Path != "" || !IsBuiltinReferenceName(ref.Name) {
-			return "", nil, false, nil
+			return nil, false, nil
 		}
-		return ref.Name, slices.Clone(ref.Args), true, nil
+		return []valueBuiltinCall{{name: ref.Name, args: slices.Clone(ref.Args)}}, true, nil
 	}
-	return scriptValueBuiltinInvocation(ScriptBody(command))
+	return scriptValueBuiltinInvocations(ScriptBody(command))
 }
 
-func scriptValueBuiltinInvocation(body string) (string, []string, bool, error) {
+func scriptValueBuiltinInvocations(body string) ([]valueBuiltinCall, bool, error) {
 	file, refs, err := scriptref.Parse("", body)
 	if err != nil {
-		return "", nil, false, nil
+		return nil, false, nil
 	}
 	if len(file.Stmts) == 0 || len(refs) == 0 {
-		return "", nil, false, nil
+		return nil, false, nil
 	}
-	ref, ok := ParseRecipeReference(Command{refs[0].Value})
-	if !ok || ref.Path != "" || !IsBuiltinReferenceName(ref.Name) {
-		return "", nil, false, nil
+	hasBuiltinRef := false
+	for _, refSpan := range refs {
+		ref, ok := ParseRecipeReference(Command{refSpan.Value})
+		if ok && ref.Path == "" && IsBuiltinReferenceName(ref.Name) {
+			hasBuiltinRef = true
+			break
+		}
 	}
-	if len(refs) != 1 {
-		return ref.Name, nil, true, fmt.Errorf("@%s values must be a single simple command", ref.Name)
+	if !hasBuiltinRef {
+		return nil, false, nil
 	}
-	if len(file.Stmts) != 1 {
-		return ref.Name, nil, true, fmt.Errorf("@%s values must be a single simple command", ref.Name)
+	calls := make([]valueBuiltinCall, 0, len(file.Stmts))
+	for _, stmt := range file.Stmts {
+		call, err := scriptValueBuiltinCall(stmt)
+		if err != nil {
+			return nil, true, err
+		}
+		calls = append(calls, call)
 	}
-	stmt := file.Stmts[0]
+	if len(calls) != len(refs) {
+		return nil, true, fmt.Errorf("@%s values must contain only simple builtin commands", calls[0].name)
+	}
+	return calls, true, nil
+}
+
+func scriptValueBuiltinCall(stmt *syntax.Stmt) (valueBuiltinCall, error) {
 	call, ok := stmt.Cmd.(*syntax.CallExpr)
 	if !ok || len(call.Args) == 0 {
-		return ref.Name, nil, true, fmt.Errorf("@%s values must be a single simple command", ref.Name)
+		return valueBuiltinCall{}, errors.New("builtin values must contain only simple builtin commands")
+	}
+	first, err := literalWordValue(call.Args[0])
+	if err != nil {
+		return valueBuiltinCall{}, err
+	}
+	ref, ok := ParseRecipeReference(Command{first})
+	if !ok || ref.Path != "" || !IsBuiltinReferenceName(ref.Name) {
+		return valueBuiltinCall{}, errors.New("builtin values must contain only simple builtin commands")
 	}
 	if stmt.Negated || stmt.Background || stmt.Coprocess || stmt.Disown || len(stmt.Redirs) > 0 || len(call.Assigns) > 0 {
-		return ref.Name, nil, true, fmt.Errorf("@%s values must be a single simple command", ref.Name)
+		return valueBuiltinCall{}, fmt.Errorf("@%s values must be a simple command", ref.Name)
 	}
-	args := make([]string, 0, len(call.Args)-1)
+	args := slices.Clone(ref.Args)
 	for _, arg := range call.Args[1:] {
 		value, err := literalWordValue(arg)
 		if err != nil {
-			return ref.Name, nil, true, err
+			return valueBuiltinCall{}, err
 		}
 		args = append(args, value)
 	}
-	return ref.Name, args, true, nil
+	return valueBuiltinCall{name: ref.Name, args: args}, nil
 }
 
 func enumCandidates(values []string) []ValueCandidate {
 	candidates := make([]ValueCandidate, 0, len(values))
 	for _, value := range values {
-		candidates = append(candidates, ValueCandidate{Value: value})
+		candidateValue, help := enumCandidateValueHelp(value)
+		candidates = append(candidates, ValueCandidate{Value: candidateValue, Help: help})
 	}
 	return candidates
+}
+
+func enumCandidateValueHelp(value string) (string, string) {
+	candidateValue, help, ok := strings.Cut(value, "=")
+	if !ok || !strings.ContainsAny(help, " \t") {
+		return value, ""
+	}
+	return candidateValue, help
+}
+
+func discoverGoModules(baseDir, prefix string) ([]ValueCandidate, error) {
+	var candidates []ValueCandidate
+	if err := filepath.WalkDir(baseDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != baseDir && skipGoDiscoveryDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			skip, err := skipGoDiscoveryPrefix(baseDir, path, prefix)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Name() != "go.mod" {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		value, err := relativeSlashPath(baseDir, dir)
+		if err != nil {
+			return err
+		}
+		if prefix != "" && !strings.HasPrefix(value, prefix) {
+			return nil
+		}
+		candidates = append(candidates, ValueCandidate{
+			Value: value,
+			Help:  goModuleHelp(path, value),
+		})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	slices.SortFunc(candidates, func(a, b ValueCandidate) int {
+		return strings.Compare(a.Value, b.Value)
+	})
+	return candidates, nil
+}
+
+func goModuleHelp(path, fallback string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fallback
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1]
+		}
+	}
+	return fallback
+}
+
+func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
+	packageHelp := map[string]string{}
+	finalDirs := map[string]bool{}
+	fset := token.NewFileSet()
+	if err := filepath.WalkDir(baseDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != baseDir && skipGoDiscoveryDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			skip, err := skipGoDiscoveryPrefix(baseDir, path, prefix)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !goSourceFile(entry.Name()) {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		if finalDirs[dir] {
+			return nil
+		}
+		value, err := relativeSlashPath(baseDir, dir)
+		if err != nil {
+			return err
+		}
+		if prefix != "" && !strings.HasPrefix(value, prefix) {
+			return nil
+		}
+		help, ok := mainPackageFileHelp(fset, path)
+		if !ok {
+			return nil
+		}
+		if help != "" {
+			packageHelp[dir] = help
+			finalDirs[dir] = true
+			return nil
+		}
+		if _, exists := packageHelp[dir]; !exists {
+			packageHelp[dir] = ""
+		}
+		finalDirs[dir] = true
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	dirs := slices.Sorted(maps.Keys(packageHelp))
+	candidates := make([]ValueCandidate, 0, len(dirs))
+	for _, dir := range dirs {
+		value, err := relativeSlashPath(baseDir, dir)
+		if err != nil {
+			return nil, err
+		}
+		help := packageHelp[dir]
+		if help == "" {
+			help = value
+		}
+		candidates = append(candidates, ValueCandidate{Value: value, Help: help})
+	}
+	return candidates, nil
+}
+
+func mainPackageFileHelp(fset *token.FileSet, path string) (string, bool) {
+	file, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly|parser.ParseComments)
+	if err != nil {
+		return "", false
+	}
+	if file.Name == nil || file.Name.Name != "main" {
+		return "", false
+	}
+	if file.Doc == nil {
+		return "", true
+	}
+	return SingleLine(file.Doc.Text()), true
+}
+
+func goSourceFile(name string) bool {
+	return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+}
+
+func skipGoDiscoveryDir(name string) bool {
+	switch name {
+	case ".git", ".shadowtree", "vendor", "node_modules", "bin", "build", "dist", "out", "target":
+		return true
+	default:
+		return false
+	}
+}
+
+func skipGoDiscoveryPrefix(baseDir, path, prefix string) (bool, error) {
+	if prefix == "" || path == baseDir {
+		return false, nil
+	}
+	value, err := relativeSlashPath(baseDir, path)
+	if err != nil {
+		return false, err
+	}
+	return !strings.HasPrefix(value, prefix) && !strings.HasPrefix(prefix, value+"/"), nil
+}
+
+func relativeSlashPath(baseDir, path string) (string, error) {
+	rel, err := filepath.Rel(baseDir, path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 func lineCandidates(baseDir, name, prefix string) ([]ValueCandidate, error) {
@@ -200,7 +446,7 @@ func globCandidates(baseDir, pattern, prefix string) ([]ValueCandidate, error) {
 	for _, match := range matches {
 		value := match
 		if !filepath.IsAbs(pattern) {
-			if rel, err := filepath.Rel(baseDir, match); err == nil {
+			if rel, err := relativeSlashPath(baseDir, match); err == nil {
 				value = rel
 			}
 		}
