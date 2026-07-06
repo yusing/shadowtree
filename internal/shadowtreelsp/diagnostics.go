@@ -54,8 +54,13 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 		return []lspDiagnostic{parseDiagnostic(text, err)}
 	}
 
-	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, cfg, opts)...)
-	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg)...)
+	resolver := diagnosticRecipeResolver{
+		ctx:  ctx,
+		cfg:  cfg,
+		opts: completionOptionsForURI(opts.URI),
+	}
+	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, &resolver)...)
+	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg, &resolver)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
 	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
 		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
@@ -66,17 +71,35 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	return diagnostics
 }
 
-func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
+type diagnosticRecipeResolver struct {
+	ctx      context.Context
+	cfg      recipe.Config
+	opts     completionOptions
+	recipes  map[string]recipe.Recipe
+	ok       bool
+	resolved bool
+}
+
+func (resolver *diagnosticRecipeResolver) Recipes() (map[string]recipe.Recipe, bool) {
+	if resolver.resolved {
+		return resolver.recipes, resolver.ok
+	}
+	resolver.recipes, resolver.ok = completionRecipesFromConfig(resolver.ctx, resolver.cfg, resolver.opts)
+	resolver.resolved = true
+	return resolver.recipes, resolver.ok
+}
+
+func commandReferenceDiagnostics(ctx context.Context, text string, resolver *diagnosticRecipeResolver) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
 	refs := commandReferenceSpans(lines)
 	if len(refs) == 0 {
 		return nil
 	}
-	completionOpts := completionOptionsForURI(opts.URI)
-	recipes, ok := diagnosticRecipes(ctx, cfg, completionOpts)
+	recipes, ok := resolver.Recipes()
 	if !ok {
 		return nil
 	}
+	completionOpts := resolver.opts
 	crossConfigRecipes := map[string]diagnosticCrossConfigResult{}
 	var diagnostics []lspDiagnostic
 	for _, ref := range refs {
@@ -146,19 +169,6 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 		return false
 	}
 	return valueBuiltinReferenceContext(ref.Table, ref.Key)
-}
-
-func diagnosticRecipes(ctx context.Context, cfg recipe.Config, opts completionOptions) (map[string]recipe.Recipe, bool) {
-	path := opts.ConfigPath
-	if path == "" {
-		path = configfile.Names[0]
-	}
-	loaded := configfile.Loaded{Path: path, Config: cfg}
-	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, completionBaseDir(opts), configfile.ResolveOptions{})
-	if err != nil {
-		return nil, false
-	}
-	return recipes, true
 }
 
 func crossConfigDiagnosticCompletionOptions(path string, opts completionOptions) completionOptions {
@@ -237,14 +247,18 @@ func commandReferenceArgumentDiagnostic(lines []string, arg commandReferenceArgu
 	}
 }
 
-func placeholderDiagnostics(text string, cfg recipe.Config) []lspDiagnostic {
+func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnosticRecipeResolver) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
 	scriptRegionList := scriptRegions(lines, shellSettings(lines))
 	regions := placeholderDiagnosticRegions(lines, scriptRegionList)
+	var recipes map[string]recipe.Recipe
 	var referenceOverlaps map[int][]span
 	var diagnostics []lspDiagnostic
 	for _, region := range regions {
-		known := placeholderDiagnosticNames(cfg, region)
+		if placeholderDiagnosticKey(region.Key) && recipeTable(region.Table) && recipes == nil {
+			recipes, _ = resolver.Recipes()
+		}
+		known := placeholderDiagnosticNames(cfg, recipes, region)
 		if known == nil {
 			continue
 		}
@@ -291,11 +305,15 @@ func dynamicCommandReferenceOverlapIndex(references []commandReferenceSpan) map[
 	return overlaps
 }
 
-func placeholderDiagnosticNames(cfg recipe.Config, region scriptRegion) map[string]bool {
+func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Recipe, region scriptRegion) map[string]bool {
 	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) {
 		return nil
 	}
-	rec, ok := cfg.Recipes[currentRecipe(region.Table)]
+	recipeName := currentRecipe(region.Table)
+	rec, ok := recipes[recipeName]
+	if !ok {
+		rec, ok = cfg.Recipes[recipeName]
+	}
 	if !ok {
 		return nil
 	}

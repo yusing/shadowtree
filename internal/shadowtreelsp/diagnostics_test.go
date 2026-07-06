@@ -904,6 +904,18 @@ sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
 	}
 }
 
+func TestDocumentDiagnosticsAcceptMergedBuiltinArgumentPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), `profile = "go"
+
+[recipes.build]
+cmd = "go build {pkg}"
+`, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsIgnoreNonShadowtreePlaceholders(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 shell_prelude = "echo {non_existent}"

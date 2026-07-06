@@ -63,6 +63,37 @@ cmd = '''go build {'''
 	}
 }
 
+func TestCompletionsIncludeMergedBuiltinArgumentPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	text := `profile = "go"
+
+[recipes.build]
+cmd = "go build {"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`cmd = "go build {`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "{pkg}")
+}
+
+func TestCompletionsIncludeMergedBuiltinArgumentTables(t *testing.T) {
+	root := t.TempDir()
+	text := `profile = "go"
+
+[recipes.build.arguments.
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 2, Character: len(`[recipes.build.arguments.`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "pkg")
+}
+
 func TestCompletionsIncludeForEachItemPlaceholders(t *testing.T) {
 	text := `[recipes.lint]
 for_each = "@enum a b"

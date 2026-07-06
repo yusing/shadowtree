@@ -154,14 +154,7 @@ func analyzeDocument(text string, line int) documentAnalysis {
 			analysis.CurrentTable = table
 		}
 	}
-	slices.Sort(analysis.Recipes)
 	slices.Sort(analysis.GlobalVars)
-	for name := range analysis.RecipeVars {
-		slices.Sort(analysis.RecipeVars[name])
-	}
-	for name := range analysis.Arguments {
-		slices.Sort(analysis.Arguments[name])
-	}
 	var cfg recipe.Config
 	if _, err := toml.Decode(text, &cfg); err == nil {
 		for recipeName, rec := range cfg.Recipes {
@@ -176,8 +169,59 @@ func analyzeDocument(text string, line int) documentAnalysis {
 			}
 		}
 	}
+	slices.Sort(analysis.Recipes)
+	for name := range analysis.RecipeVars {
+		slices.Sort(analysis.RecipeVars[name])
+	}
+	for name := range analysis.Arguments {
+		slices.Sort(analysis.Arguments[name])
+	}
 	analysis.ScriptRegions = scriptRegions(lines, shellSettings(lines))
 	return analysis
+}
+
+func enrichAnalysisWithResolvedRecipes(ctx context.Context, text string, analysis *documentAnalysis, ignoreLine int, opts completionOptions) {
+	var recipes map[string]recipe.Recipe
+	var ok bool
+	if ignoreLine >= 0 {
+		recipes, ok = completionRecipesIgnoringLine(ctx, text, ignoreLine, opts)
+	} else {
+		recipes, ok = completionRecipes(ctx, text, opts)
+	}
+	if !ok {
+		return
+	}
+	for recipeName, rec := range recipes {
+		analysis.Recipes = appendUnique(analysis.Recipes, recipeName)
+		if len(rec.Arguments) > 0 {
+			names := analysis.Arguments[recipeName]
+			seen := make(map[string]bool, len(names)+len(rec.Arguments))
+			for _, name := range names {
+				seen[name] = true
+			}
+			for name := range rec.Arguments {
+				if seen[name] {
+					continue
+				}
+				seen[name] = true
+				names = append(names, name)
+			}
+			analysis.Arguments[recipeName] = names
+		}
+		if len(rec.ForEach) > 0 {
+			analysis.FanOutRecipes[recipeName] = true
+		}
+		for argName, arg := range rec.Arguments {
+			if analysis.ArgumentHelp[recipeName] == nil {
+				analysis.ArgumentHelp[recipeName] = map[string]string{}
+			}
+			analysis.ArgumentHelp[recipeName][argName] = recipe.ArgumentHelp(arg)
+		}
+	}
+	slices.Sort(analysis.Recipes)
+	for recipeName := range analysis.Arguments {
+		slices.Sort(analysis.Arguments[recipeName])
+	}
 }
 
 func completionsAt(ctx context.Context, text string, pos lspPosition) []completion {
@@ -189,6 +233,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	line := lineAt(analysis.Lines, pos.Line)
 	prefix := linePrefix(line, pos.Character)
 	if tablePrefix, ok := openTablePrefix(prefix); ok {
+		if tablePrefixNeedsResolvedRecipes(tablePrefix) {
+			enrichAnalysisWithResolvedRecipes(ctx, text, &analysis, pos.Line, opts)
+		}
 		return tableCompletions(analysis, tablePrefix)
 	}
 	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
@@ -205,6 +252,7 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		key, _ := keyBeforeValue(prefix)
+		enrichAnalysisWithResolvedRecipes(ctx, text, &analysis, -1, opts)
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key))
 	}
 	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
@@ -220,6 +268,15 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return valueCompletions(key)
 	}
 	return keyCompletions(analysis.CurrentTable)
+}
+
+func tablePrefixNeedsResolvedRecipes(prefix string) bool {
+	rest, ok := strings.CutPrefix(prefix, "recipes.")
+	if !ok {
+		return false
+	}
+	_, rest, ok = strings.Cut(rest, ".")
+	return ok && (rest == "arguments" || strings.HasPrefix(rest, "arguments."))
 }
 
 func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
@@ -502,6 +559,10 @@ func completionRecipes(ctx context.Context, text string, opts completionOptions)
 	if _, err := toml.Decode(text, &cfg); err != nil {
 		return nil, false
 	}
+	return completionRecipesFromConfig(ctx, cfg, opts)
+}
+
+func completionRecipesFromConfig(ctx context.Context, cfg recipe.Config, opts completionOptions) (map[string]recipe.Recipe, bool) {
 	path := opts.ConfigPath
 	if path == "" {
 		path = configfile.Names[0]
