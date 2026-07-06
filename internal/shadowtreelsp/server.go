@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 // Serve runs the Shadowtree language server over stdio.
@@ -332,15 +334,22 @@ func quotedValueTextEdit(text string, position lspPosition, value string) map[st
 		}
 	}
 	end := start
-	newText := `"` + value + `"`
+	newText := tomlBasicString(value)
 	if start < len(line) && (line[start] == '"' || line[start] == '\'') {
 		quote := line[start]
-		start++
-		end = start
+		if quote == '"' {
+			start++
+			end = start
+			newText = tomlBasicStringContent(value)
+		} else {
+			end = start + 1
+		}
 		for end < len(line) && line[end] != quote {
 			end++
 		}
-		newText = value
+		if quote == '"' && end == len(line) {
+			newText += `"`
+		}
 	}
 	if position.Character > end {
 		end = position.Character
@@ -349,6 +358,19 @@ func quotedValueTextEdit(text string, position lspPosition, value string) map[st
 		"range":   lspRange(line, position.Line, start, end),
 		"newText": newText,
 	}
+}
+
+func tomlBasicString(value string) string {
+	quoted, err := toml.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(quoted)
+}
+
+func tomlBasicStringContent(value string) string {
+	quoted := tomlBasicString(value)
+	return strings.TrimSuffix(strings.TrimPrefix(quoted, `"`), `"`)
 }
 
 func placeholderTextEdit(text string, position lspPosition, label string) map[string]any {
