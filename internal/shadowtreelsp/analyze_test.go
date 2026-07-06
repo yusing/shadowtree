@@ -34,6 +34,25 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	assertLabels(t, items, "cmd", "sandboxed", "sync_out")
 }
 
+func TestCompletionsExcludeKeysInSyncOutArrayValues(t *testing.T) {
+	text := `[recipes.build]
+sync_out = [
+  "`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`  "`)})
+	assertNoLabels(t, items, "cmd", "for_each", "sync_out")
+}
+
+func TestCompletionsIncludeKeysAfterIncompleteSyncOutArray(t *testing.T) {
+	text := `[recipes.generate]
+sync_out = [
+  "
+
+[recipes.build]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 5, Character: 0})
+	assertLabels(t, items, "cmd", "sandboxed", "sync_out")
+}
+
 func TestCompletionsIncludePlaceholderVariables(t *testing.T) {
 	text := `[vars]
 PROJECT = "./cmd/shadowtree"

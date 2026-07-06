@@ -267,6 +267,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		}
 		return valueCompletions(key)
 	}
+	if syncOutArrayStringValueAt(analysis.Lines, pos) {
+		return nil
+	}
 	return keyCompletions(analysis.CurrentTable)
 }
 
@@ -2408,6 +2411,33 @@ func keyBeforeValue(prefix string) (string, bool) {
 		return "", false
 	}
 	return strings.Trim(key, `"'`), true
+}
+
+func syncOutArrayStringValueAt(lines []string, pos lspPosition) bool {
+	for lineNo := pos.Line; lineNo >= 0; lineNo-- {
+		line := lineAt(lines, lineNo)
+		if lineNo == pos.Line {
+			line = linePrefix(line, pos.Character)
+		}
+		if _, ok := completeTableHeader(line); ok {
+			return false
+		}
+		key, ok := pairKey(line)
+		if !ok {
+			continue
+		}
+		if key != "sync_out" {
+			continue
+		}
+		regions, endLine := commandListStringRegions(lines, lineNo, "", key, "", func(string) bool {
+			return true
+		})
+		if pos.Line > endLine {
+			return false
+		}
+		return inScriptRegion(lines, regions, pos)
+	}
+	return false
 }
 
 func placeholderPrefix(prefix string) (string, bool) {
