@@ -38,7 +38,7 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 
 - `shadowtree recipes`: list resolved recipes.
 - `shadowtree help`: show CLI help plus resolved recipes.
-- `shadowtree help <recipe> [color=false]`: show command summary plus applicable args, configured values, pre/post, unsandboxed marker, and sync-out for one recipe. Recipe help uses color by default; `color=false` disables it.
+- `shadowtree help <recipe> [color=false]`: show command summary plus applicable args, configured values, pre/post, for_each, workdir, unsandboxed marker, and sync-out for one recipe. Recipe help uses color by default; `color=false` disables it.
 - `shadowtree config`: print config path, profile, and resolved recipe list.
 - `shadowtree init [path]`: create `.shadowtree.toml` or the given path; fails if the file exists.
 - `shadowtree completion bash`: emit bash completion script.
@@ -138,7 +138,7 @@ Use these fields under `[recipes.<name>]`:
 - `help`: short text shown by `help`, `recipes`, and shell completion.
 - `cmd`: required main command; prefer a shell string.
 - `for_each`: optional value-provider command; when set, runs `cmd` once per candidate.
-- `workdir`: optional relative working directory per `for_each` item.
+- `workdir`: optional relative working directory for the main command; with `for_each`, expands per item.
 - `pre`: list of commands before `cmd`.
 - `post`: list of commands after `cmd`.
 - `sandboxed`: boolean; defaults to `true`.
@@ -260,7 +260,7 @@ Fan-out placeholders exist only when a recipe has `for_each`:
 `@enum`, `@lines`, `@glob`, `@go-modules`, `@go-main-packages`, `@recipes`,
 `@vars`, command output, and recipe references. `pre` runs once before the loop;
 `post` runs once after it; the first failing item stops later items. `workdir`
-must resolve to a relative workspace path.
+can also be used without `for_each`; it must resolve to a relative workspace path.
 
 Completion criterion: placeholders have a value at resolve time, or `--print`/run will fail with a missing value error.
 

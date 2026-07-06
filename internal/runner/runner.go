@@ -222,7 +222,11 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 
 func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
 	if len(options.Resolved.Recipe.ForEach) == 0 {
-		return runCommand(ctx, sandbox, dir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
+		workdir, err := recipeWorkdir(dir, options.Resolved.Recipe.Workdir)
+		if err != nil {
+			return fmt.Errorf("workdir: %w", err)
+		}
+		return runCommand(ctx, sandbox, workdir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
 	}
 	items, err := forEachItems(ctx, sandbox, dir, env, options, stderr, stack)
 	if err != nil {
@@ -574,9 +578,9 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	if len(resolved.Recipe.ForEach) > 0 {
 		fmt.Fprintf(w, "for_each: %s\n", recipe.CommandHelpText(resolved.Recipe.ForEach))
-		if resolved.Recipe.Workdir != "" {
-			fmt.Fprintf(w, "workdir: %s\n", resolved.Recipe.Workdir)
-		}
+	}
+	if resolved.Recipe.Workdir != "" {
+		fmt.Fprintf(w, "workdir: %s\n", resolved.Recipe.Workdir)
 	}
 	fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
 	for i, command := range resolved.Recipe.Post {

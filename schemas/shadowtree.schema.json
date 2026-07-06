@@ -111,7 +111,7 @@
         },
         "workdir": {
           "type": "string",
-          "description": "Optional relative working directory for each for_each item. May use {item}, {item_help}, and {item_index}."
+          "description": "Optional relative working directory for the main command. With for_each, this is expanded per item and may use {item}, {item_help}, and {item_index}."
         },
         "cmd": {
           "$ref": "#/definitions/command",

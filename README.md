@@ -237,9 +237,10 @@ workdir = "{item}"
 cmd = "golangci-lint run ./..."
 ```
 
-Per iteration, `{item}` is the candidate value, `{item_help}` is its help text
-when present, and `{item_index}` is the zero-based index. `workdir` is optional
-and must resolve to a relative workspace path.
+`workdir` is optional for any recipe and makes the main command run from a
+relative workspace path. With `for_each`, `workdir` is expanded per item:
+`{item}` is the candidate value, `{item_help}` is its help text when present,
+and `{item_index}` is the zero-based index.
 
 ## Typed Arguments
 

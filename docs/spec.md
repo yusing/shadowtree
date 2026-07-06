@@ -315,8 +315,9 @@ value. It accepts the same value-provider forms as argument `values`, including
 `@vars`, command output, and recipe references.
 
 `workdir`
-: Optional relative workspace path used as the working directory for each
-`for_each` item. It can use `{item}`, `{item_help}`, and `{item_index}`.
+: Optional relative workspace path used as the working directory for the main
+command. With `for_each`, it is expanded per item and can use `{item}`,
+`{item_help}`, and `{item_index}`.
 
 `pre`
 : Commands run before the main command, in order.
@@ -498,12 +499,13 @@ Per iteration, these placeholders are available to `cmd` and `workdir`:
 - `{item_help}`: candidate help text, or empty string.
 - `{item_index}`: zero-based item index.
 
-`pre` commands run once before candidate resolution. `post` commands run once
-after the loop, even if `pre`, candidate resolution, or an item command fails.
-Items run sequentially; the first failing item stops later items. For sandboxed
-recipes, `sync_out` runs once after all items and `post` commands succeed.
-`sync_out` does not accept `{item}` placeholders. `workdir`, when set, must
-resolve to a relative path under the recipe workspace.
+`workdir` can be used without `for_each`; it makes the main command run from a
+relative path under the recipe workspace. With `for_each`, `workdir` is
+expanded for each item. `pre` commands run once before candidate resolution.
+`post` commands run once after the loop, even if `pre`, candidate resolution,
+or an item command fails. Items run sequentially; the first failing item stops
+later items. For sandboxed recipes, `sync_out` runs once after all items and
+`post` commands succeed. `sync_out` does not accept `{item}` placeholders.
 
 ## Recipe Resolution
 
@@ -786,6 +788,8 @@ It prints these fields when present or applicable:
 - sandboxed section for unsandboxed recipes
 - pre command section
 - post command section
+- for_each section
+- workdir section
 - argument section with `name - help`, `info:`, and configured `values:`
 - sync-out section for sandboxed recipes
 
@@ -812,6 +816,8 @@ The plan includes these fields when present or applicable:
 - config path
 - `sandboxed: false` for unsandboxed recipes
 - pre commands
+- for_each command
+- workdir
 - main command
 - post commands
 - sync-out paths for sandboxed recipes

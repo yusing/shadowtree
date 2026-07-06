@@ -361,6 +361,37 @@ func TestRunForEachRunsMainPerItem(t *testing.T) {
 	}
 }
 
+func TestRunUsesWorkdirWithoutForEach(t *testing.T) {
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "module"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"pwd",
+		recipe.Recipe{
+			Workdir:   "module",
+			Cmd:       recipe.ScriptCommand(`printf '%s' "$(basename "$PWD")"`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "module" {
+		t.Fatalf("stdout = %q, want module", stdout.String())
+	}
+}
+
 func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
