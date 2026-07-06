@@ -836,20 +836,54 @@ func TestGoBuiltinBuildCompletesMainPackages(t *testing.T) {
 	}
 }
 
-func TestGoBuiltinOverrideCanReplaceModuleFanOutWithRootItem(t *testing.T) {
+func TestGoBuiltinOverrideCanReplaceWorkdir(t *testing.T) {
 	merged := MergeRecipe(Builtins(GoProfile, BuiltinOptions{})["test"], Recipe{
-		ForEach: ScriptCommand("@enum ."),
 		Workdir: ".",
 		Cmd:     Command{"go", "test", "{pkg}"},
 		Arguments: map[string]Argument{
 			"pkg": {Type: "rel_path", Required: true, Values: ScriptCommand(GoPackageValuesCommand)},
 		},
 	})
-	if values := ScriptBody(merged.ForEach); values != "@enum ." {
-		t.Fatalf("for_each = %q, want @enum .", values)
-	}
 	if merged.Workdir != "." {
 		t.Fatalf("workdir = %q, want .", merged.Workdir)
+	}
+}
+
+func TestMergeRecipesDoesNotInheritBuiltinForEachAndWorkdir(t *testing.T) {
+	merged, err := MergeRecipes(Builtins(GoProfile, BuiltinOptions{}), map[string]Recipe{
+		"test": {Help: "Run custom tests.", Cmd: Command{"go", "test", "{pkg}"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := merged["test"]
+	if len(got.ForEach) != 0 {
+		t.Fatalf("ForEach = %#v, want empty", got.ForEach)
+	}
+	if got.Workdir != "" {
+		t.Fatalf("Workdir = %q, want empty", got.Workdir)
+	}
+}
+
+func TestMergeRecipesAllowsExplicitForEachAndWorkdirOverride(t *testing.T) {
+	merged, err := MergeRecipes(Builtins(GoProfile, BuiltinOptions{}), map[string]Recipe{
+		"test": {
+			ForEach: Command{"go", "list", "-f", "{{.Dir}}", "./..."},
+			Workdir: ".",
+			Cmd:     Command{"go", "test", "{pkg}"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := merged["test"]
+	if !slices.Equal(got.ForEach, Command{"go", "list", "-f", "{{.Dir}}", "./..."}) {
+		t.Fatalf("ForEach = %#v", got.ForEach)
+	}
+	if got.Workdir != "." {
+		t.Fatalf("workdir = %q, want .", got.Workdir)
 	}
 }
 

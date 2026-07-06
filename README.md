@@ -334,8 +334,10 @@ argument defaulting to `.` and a required positional `command` argument with
 `@go-main-packages` plus `@glob "*.go"`. `command` is interpreted by `go run`
 after `go -C {cwd}`, so use a path relative to `cwd` when overriding it.
 
-Project config can override any built-in recipe field. Use
-`shadowtree --print <recipe>` to inspect the final command.
+Project config can override any built-in recipe field. Built-in `for_each` and
+`workdir` are not inherited by an override; set them explicitly when the custom
+recipe should fan out across the same items. Use `shadowtree --print <recipe>`
+to inspect the final command.
 
 ## Built-In Node Recipes
 

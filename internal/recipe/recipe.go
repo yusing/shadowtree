@@ -331,7 +331,10 @@ func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) 
 		if IsReservedRecipeName(name) {
 			return nil, fmt.Errorf("recipe name %q is reserved", name)
 		}
-		merged[name] = MergeRecipe(merged[name], override)
+		baseRecipe := merged[name]
+		baseRecipe.ForEach = nil
+		baseRecipe.Workdir = ""
+		merged[name] = MergeRecipe(baseRecipe, override)
 	}
 	return merged, nil
 }

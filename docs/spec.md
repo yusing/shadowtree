@@ -526,14 +526,15 @@ then trailing recipe args
 ```
 
 Config recipes with the same name as a built-in recipe override only specified
-fields. Unspecified built-in fields remain intact.
+fields, except `for_each` and `workdir`. Those scheduling fields are not
+inherited from the built-in recipe; set them in the override when the custom
+recipe should keep or replace built-in fan-out behavior.
 
 Example:
 
 ```toml
 [recipes.test]
 help = "Run generated-code tests."
-for_each = "@enum ."
 workdir = "."
 pre = ["go generate {pkg}"]
 cmd = "go test {pkg} {@}"
@@ -544,8 +545,7 @@ required = true
 values = "@go-packages"
 ```
 
-The built-in `test` recipe keeps the module fan-out from the Go profile unless
-the override explicitly replaces `for_each` and `workdir`:
+The built-in `test` recipe normally uses module fan-out from the Go profile:
 
 ```text
 for_each = @go-modules
@@ -559,8 +559,8 @@ The built-in `test` recipe runs once per module. In each module workdir it runs:
 go test ./...
 ```
 
-With the override above, `for_each = "@enum ."` runs one item from the root
-workdir and CLI args are parsed by the custom typed argument:
+With the override above, the recipe runs once from the root workdir and CLI
+args are parsed by the custom typed argument:
 
 ```sh
 shadowtree test ./internal/recipe
