@@ -1,9 +1,11 @@
 package recipe
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"go/version"
 	"maps"
 	"os"
 	"os/exec"
@@ -117,7 +119,7 @@ var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var (
 	supportedProfiles = []string{GoProfile, NodeProfile}
-	goBuiltinNames    = []string{"build", "check", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
+	goBuiltinNames    = []string{"build", "check", "fix", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
 	nodeBuiltinNames  = []string{"install", "dev", "build", "start", "test", "lint", "fmt", "typecheck", "check"}
 )
 
@@ -125,7 +127,7 @@ type BuiltinOptions struct {
 	Dir string
 }
 
-// BuiltinNames returns the built-in recipe names for profile.
+// BuiltinNames returns possible built-in recipe names for profile.
 func BuiltinNames(profile string) []string {
 	switch profile {
 	case GoProfile:
@@ -175,7 +177,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 			},
 		})
 	}
-	return map[string]Recipe{
+	recipes := map[string]Recipe{
 		"check": {
 			Help: "Run vet and tests.",
 			Cmd:  ScriptCommand(`set -e; @vet {@}; @test {@}`),
@@ -245,6 +247,73 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 			Sandboxed: new(false),
 		}),
 	}
+	if goVersionAfter(mostCommonGoDirectiveVersion(opts.Dir), "1.26") {
+		recipes["fix"] = moduleWide(Recipe{
+			Help: "Update Go source with go fix.",
+			Cmd:  Command{"go", "fix", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
+			Sandboxed: new(false),
+		})
+	}
+	return recipes
+}
+
+func mostCommonGoDirectiveVersion(dir string) string {
+	if dir == "" {
+		return "unknown"
+	}
+	modules, err := discoverGoModules(dir, "")
+	if err != nil {
+		return "unknown"
+	}
+	counts := map[string]int{}
+	for _, module := range modules {
+		modPath := filepath.Join(dir, filepath.FromSlash(module.Value), "go.mod")
+		if modVersion := goDirectiveVersion(modPath); modVersion != "" {
+			counts[modVersion]++
+		}
+	}
+	best := "unknown"
+	bestCount := 0
+	for modVersion, count := range counts {
+		if count > bestCount || count == bestCount && goVersionAfter(modVersion, best) {
+			best = modVersion
+			bestCount = count
+		}
+	}
+	return best
+}
+
+func goDirectiveVersion(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		versionText, ok := strings.CutPrefix(scanner.Text(), "go ")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(versionText)
+		if len(fields) > 0 {
+			return fields[0]
+		}
+	}
+	return ""
+}
+
+func goVersionAfter(current, minimum string) bool {
+	current = "go" + current
+	minimum = "go" + minimum
+	if !version.IsValid(current) || !version.IsValid(minimum) {
+		return false
+	}
+	return version.Compare(current, minimum) > 0
 }
 
 func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) {

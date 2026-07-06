@@ -306,6 +306,7 @@ detected Go project without a config file, it adds these recipes:
 ```text
 build      for each @go-modules: go build ./...
 check      @vet && @test
+fix        for each @go-modules when go > 1.26: go fix ./...
 fmt        for each @go-modules: go fmt ./...
 generate   for each @go-modules: go generate ./...
 lint       for each @go-modules: golangci-lint run ./... or go vet ./...
@@ -316,13 +317,14 @@ tidy       for each @go-modules: go mod tidy
 vet        for each @go-modules: go vet ./...
 ```
 
-`fmt` and `tidy` are unsandboxed by default, so `go fmt` and `go mod tidy`
-write directly to the host checkout. Other built-in Go recipes are sandboxed
-unless project config overrides them. Module-wide Go built-ins use
+`fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`, `go fmt`,
+and `go mod tidy` write directly to the host checkout. Other built-in Go
+recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
 is evaluated inside each module directory, not at the repo root. Package-style
 Go built-ins also expose an optional positional `pkg` argument for shell
-completion from `@go-packages`; `fmt` exposes an optional positional `target`
+completion from `@go-packages`; `fix` is available when the most common
+`go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
 from `@go-packages` plus `@glob "*.go"`. Built-in `run` takes a required
 positional `command` argument with `rel_path` type and completes from
 `@go-main-packages` plus `@glob "*.go"`.

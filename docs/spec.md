@@ -672,6 +672,7 @@ Built-in Go recipes:
 ```text
 build      for each @go-modules: go build ./...
 check      @vet && @test
+fix        for each @go-modules when go > 1.26: go fix ./...
 fmt        for each @go-modules: go fmt ./...
 generate   for each @go-modules: go generate ./...
 lint       for each @go-modules: golangci-lint run ./... if available, otherwise go vet ./...
@@ -682,13 +683,14 @@ tidy       for each @go-modules: go mod tidy
 vet        for each @go-modules: go vet ./...
 ```
 
-Built-in `fmt` and `tidy` are unsandboxed by default, so `go fmt` and
-`go mod tidy` update the host checkout directly. Other built-in Go recipes are
-sandboxed unless project config overrides them. Module-wide Go built-ins use
+Built-in `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`,
+`go fmt`, and `go mod tidy` update the host checkout directly. Other built-in
+Go recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
 is evaluated inside each module directory, not at the repo root. Package-style
 Go built-ins also expose an optional positional `pkg` argument for shell
-completion from `@go-packages`; `fmt` exposes an optional positional `target`
+completion from `@go-packages`; `fix` is available when the most common
+`go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
 from `@go-packages` plus `@glob "*.go"`. Built-in `run` has a required
 positional `command` argument with `rel_path` type and completes from
 `@go-main-packages` plus `@glob "*.go"`.
@@ -964,6 +966,7 @@ Shadowtree currently uses itself for development through `.shadowtree.toml`.
 ```text
 build          Build the shadowtree binary into bin/shadowtree.
 check          Run vet and tests.
+fix            Update Go source with go fix.
 fmt            Format Go source files.
 generate       Run go generate.
 install        Install the Shadowtree CLI and language server.
@@ -979,6 +982,7 @@ vet            Run go vet.
 Recipes that intentionally mutate the host checkout set `sandboxed = false`:
 
 ```text
+fix
 fmt
 tidy
 ```

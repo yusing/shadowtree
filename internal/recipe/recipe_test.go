@@ -680,6 +680,52 @@ func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestGoBuiltinsHostMutatingRecipesAreUnsandboxed(t *testing.T) {
+	builtins := go1264Builtins(t)
+	for _, name := range []string{"fix", "fmt", "tidy"} {
+		if RecipeSandboxed(builtins[name]) {
+			t.Fatalf("built-in %s is sandboxed, want unsandboxed", name)
+		}
+	}
+}
+
+func TestGoBuiltinFixRequiresGoAfter126(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.26\n")
+
+	if _, ok := Builtins(GoProfile, BuiltinOptions{Dir: dir})["fix"]; ok {
+		t.Fatal("built-in fix exists for go 1.26, want absent")
+	}
+
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.26.4\n")
+
+	fix, ok := Builtins(GoProfile, BuiltinOptions{Dir: dir})["fix"]
+	if !ok {
+		t.Fatal("built-in fix is missing for go 1.26.4")
+	}
+	if !slices.Equal(fix.Cmd, Command{"go", "fix", "{pkg}", "{@}"}) {
+		t.Fatalf("fix Cmd = %#v", fix.Cmd)
+	}
+}
+
+func TestMostCommonGoDirectiveVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.27\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n\ngo 1.26.4\n")
+	mkdirAll(t, filepath.Join(dir, "services", "worker"))
+	writeFile(t, filepath.Join(dir, "services", "worker", "go.mod"), "module example.com/worker\n\ngo 1.26.4\n")
+
+	if got := mostCommonGoDirectiveVersion(dir); got != "1.26.4" {
+		t.Fatalf("mostCommonGoDirectiveVersion = %q, want 1.26.4", got)
+	}
+
+	empty := t.TempDir()
+	if got := mostCommonGoDirectiveVersion(empty); got != "unknown" {
+		t.Fatalf("mostCommonGoDirectiveVersion(empty) = %q, want unknown", got)
+	}
+}
+
 func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	builtins := Builtins(GoProfile, BuiltinOptions{})
 	for _, name := range []string{"check", "fmt", "run"} {
@@ -719,8 +765,8 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 }
 
 func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
-	builtins := Builtins(GoProfile, BuiltinOptions{})
-	for _, name := range []string{"build", "fmt", "generate", "lint", "test", "test-race", "tidy", "vet"} {
+	builtins := go1264Builtins(t)
+	for _, name := range []string{"build", "fix", "fmt", "generate", "lint", "test", "test-race", "tidy", "vet"} {
 		rec := builtins[name]
 		if values := ScriptBody(rec.ForEach); values != GoModuleValuesCommand {
 			t.Fatalf("%s for_each = %q", name, values)
@@ -732,8 +778,8 @@ func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
 }
 
 func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
-	builtins := Builtins(GoProfile, BuiltinOptions{})
-	for _, name := range []string{"build", "generate", "lint", "test", "test-race", "vet"} {
+	builtins := go1264Builtins(t)
+	for _, name := range []string{"build", "fix", "generate", "lint", "test", "test-race", "vet"} {
 		arg := builtins[name].Arguments["pkg"]
 		if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
 			t.Fatalf("%s pkg argument = %#v", name, arg)
@@ -1593,6 +1639,13 @@ func writeRootGoPackagesFixture(t *testing.T, dir string) {
 	writeFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
 	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
 	writeFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "package main\n")
+}
+
+func go1264Builtins(t *testing.T) map[string]Recipe {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.26.4\n")
+	return Builtins(GoProfile, BuiltinOptions{Dir: dir})
 }
 
 func writeNodePackage(t *testing.T, dir, content string) {
