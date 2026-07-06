@@ -878,6 +878,15 @@ docs_dir = "{non_existent}/wiki"
 			end:   len(`docs_dir = "{non_existent}`),
 		},
 		{
+			name: "global env",
+			text: `[env]
+DOCS_DIR = "{non_existent}/wiki"
+`,
+			line:  1,
+			start: len(`DOCS_DIR = "`),
+			end:   len(`DOCS_DIR = "{non_existent}`),
+		},
+		{
 			name: "recipe vars",
 			text: `[recipes.test.vars]
 docs_dir = "{non_existent}/wiki"
@@ -888,6 +897,18 @@ cmd = "true"
 			line:  1,
 			start: len(`docs_dir = "`),
 			end:   len(`docs_dir = "{non_existent}`),
+		},
+		{
+			name: "recipe env",
+			text: `[recipes.test.env]
+DOCS_DIR = "{non_existent}/wiki"
+
+[recipes.test]
+cmd = "true"
+`,
+			line:  1,
+			start: len(`DOCS_DIR = "`),
+			end:   len(`DOCS_DIR = "{non_existent}`),
 		},
 	}
 	for _, tc := range cases {
@@ -904,12 +925,18 @@ func TestDocumentDiagnosticsAcceptKnownPlaceholders(t *testing.T) {
 PROJECT = "./cmd/shadowtree"
 DOCS = "{PROJECT}/docs"
 
+[env]
+DOCS_DIR = "{DOCS}"
+
 [var_commands]
 GENERATED = "printf generated"
 
 [recipes.test.vars]
 local = "./internal/shadowtreelsp"
 target = "{PROJECT}/{GENERATED}/{local}"
+
+[recipes.test.env]
+TARGET = "{target}/{pkg}"
 
 [recipes.test.arguments.pkg]
 default = "."
@@ -930,6 +957,9 @@ sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
 func TestDocumentDiagnosticsAcceptMergedBuiltinArgumentPlaceholders(t *testing.T) {
 	root := t.TempDir()
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), `profile = "go"
+
+[recipes.test.env]
+PKG = "{pkg}"
 
 [recipes.build]
 cmd = "go build {pkg}"

@@ -197,6 +197,8 @@ Command strings run through the configured shell after placeholder expansion.
 A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
 other strings run in the shell. Put defaults directly in `cmd` through typed
 `arguments`.
+Environment values under `[env]` and `[recipes.<name>.env]` use the same
+placeholder expansion.
 
 Use a recipe reference from `cmd`, `pre`, or `post`:
 

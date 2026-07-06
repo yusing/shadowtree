@@ -91,6 +91,7 @@ type namespaceScriptPayload struct {
 	Env       []string
 	Resolved  recipe.Resolved
 	Recipes   map[string]recipe.Recipe
+	ConfigEnv map[string]string
 	SourceDir string
 	Verbose   bool
 	Stack     []string
@@ -102,6 +103,7 @@ func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, 
 		Env:       env,
 		Resolved:  options.Resolved,
 		Recipes:   options.Recipes,
+		ConfigEnv: options.ConfigEnv,
 		SourceDir: options.SourceDir,
 		Verbose:   options.Verbose,
 		Stack:     stack,
@@ -225,6 +227,7 @@ func overlayHelperScriptMain(ctx context.Context, dir, path string) int {
 	options := Options{
 		Resolved:  payload.Resolved,
 		Recipes:   payload.Recipes,
+		ConfigEnv: payload.ConfigEnv,
 		SourceDir: payload.SourceDir,
 		Verbose:   payload.Verbose,
 	}

@@ -137,6 +137,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		return runner.Run(ctx, runner.Options{
 			Resolved:   resolved,
+			ConfigEnv:  loaded.Config.Env,
 			SourceDir:  mustGetwd(),
 			PrintOnly:  opts.printOnly,
 			Verbose:    opts.verbose,
@@ -179,6 +180,7 @@ func run(ctx context.Context, args []string) error {
 		return runner.Run(ctx, runner.Options{
 			Resolved:   resolved,
 			Recipes:    resolvedSet,
+			ConfigEnv:  loaded.Config.Env,
 			SourceDir:  mustGetwd(),
 			PrintOnly:  opts.printOnly,
 			Verbose:    opts.verbose,

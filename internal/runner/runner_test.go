@@ -707,8 +707,11 @@ func TestRunInvokesCrossConfigRecipeReferenceFromTargetDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[env]
+SCHEMA_VALUE = "{value}"
+
 [recipes.gen-schema]
-cmd = '''printf '%s\n' "$PWD"; printf '%s' "{value}" > out.txt'''
+cmd = '''printf '%s\n' "$PWD"; printf '%s' "$SCHEMA_VALUE" > out.txt'''
 
 [recipes.gen-schema.arguments.value]
 required = true
@@ -750,6 +753,77 @@ required = true
 	}
 	if string(data) != "shadow" {
 		t.Fatalf("out.txt = %q", data)
+	}
+}
+
+func TestRunSameConfigRecipeReferenceExpandsGlobalEnvForTarget(t *testing.T) {
+	source := t.TempDir()
+	configEnv := map[string]string{"VALUE": "{value}"}
+	parent := recipe.Recipe{
+		Cmd:       recipe.Command{"@child", "value=shadow"},
+		Sandboxed: new(false),
+		Arguments: map[string]recipe.Argument{
+			"value": {Default: "parent"},
+		},
+	}
+	resolved, err := recipe.Resolve("parent", parent, nil, nil, configEnv, filepath.Join(source, ".shadowtree.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"parent": parent,
+			"child": {
+				Cmd: recipe.ScriptCommand(`printf '%s' "$VALUE"`),
+				Arguments: map[string]recipe.Argument{
+					"value": {Required: true},
+				},
+			},
+		},
+		ConfigEnv: configEnv,
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q, want child-expanded env", stdout.String())
+	}
+}
+
+func TestCommandOutputCrossConfigRecipeReferenceExpandsGlobalEnv(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[env]
+SCHEMA_VALUE = "{value}"
+
+[recipes.gen-schema]
+cmd = '''printf '%s' "$SCHEMA_VALUE"'''
+
+[recipes.gen-schema.arguments.value]
+required = true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := CommandOutput(t.Context(), source, nil, recipe.Command{"@webui:gen-schema", "value=shadow"}, CommandOutputOptions{
+		ConfigPath: filepath.Join(source, ".shadowtree.toml"),
+		SourceDir:  source,
+		Recipes:    map[string]recipe.Recipe{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "shadow" {
+		t.Fatalf("output = %q, want target-expanded env", output)
 	}
 }
 

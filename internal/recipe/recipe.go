@@ -495,6 +495,14 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		}
 		workdir = expanded[0]
 	}
+	expandedGlobalEnv, err := expandStringMap(globalEnv, values)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("recipe %q env: %w", name, err)
+	}
+	env, err := expandStringMap(rec.Env, values)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("recipe %q env: %w", name, err)
+	}
 	if err := ValidateCommand(cmd); err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
@@ -519,13 +527,14 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	resolvedRecipe.Workdir = workdir
 	resolvedRecipe.Pre = pre
 	resolvedRecipe.Post = post
+	resolvedRecipe.Env = env
 	return Resolved{
 		Name:       name,
 		Recipe:     resolvedRecipe,
 		Main:       cmd,
 		SyncOut:    syncOut,
 		Sandboxed:  sandboxed,
-		GlobalEnv:  maps.Clone(globalEnv),
+		GlobalEnv:  expandedGlobalEnv,
 		ConfigPath: configPath,
 		Profile:    profile,
 	}, nil
@@ -1074,6 +1083,28 @@ func expandStrings(items []string, values map[string]string, variadicArgs []stri
 			return nil, err
 		}
 		out = append(out, expanded)
+	}
+	return out, nil
+}
+
+func expandStringMap(items map[string]string, values map[string]string) (map[string]string, error) {
+	if items == nil {
+		return nil, nil
+	}
+	if !mapContainsPlaceholder(items) {
+		return maps.Clone(items), nil
+	}
+	out := maps.Clone(items)
+	for _, key := range slices.Sorted(maps.Keys(items)) {
+		value := items[key]
+		if !strings.Contains(value, "{") {
+			continue
+		}
+		expanded, err := expandPlaceholders(value, values)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		out[key] = expanded
 	}
 	return out, nil
 }

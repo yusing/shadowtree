@@ -1195,6 +1195,83 @@ func TestResolveExpandsVarsInVars(t *testing.T) {
 	}
 }
 
+func TestResolveExpandsGlobalEnv(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"docs": {
+			Cmd: Command{"printf", "%s", "$DOCS_DIR"},
+		},
+	}, map[string]string{
+		"docs_dir":  "{repo_root}/docs",
+		"repo_root": "/src/shadowtree",
+		"repo_url":  "https://github.com/yusing/shadowtree",
+	}, "", "")["docs"]
+
+	got, err := Resolve("docs", rec, nil, nil, map[string]string{
+		"DOCS_DIR": "{docs_dir}",
+		"REPO_URL": "{repo_url}",
+	}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GlobalEnv["DOCS_DIR"] != "/src/shadowtree/docs" {
+		t.Fatalf("GlobalEnv[DOCS_DIR] = %q", got.GlobalEnv["DOCS_DIR"])
+	}
+	if got.GlobalEnv["REPO_URL"] != "https://github.com/yusing/shadowtree" {
+		t.Fatalf("GlobalEnv[REPO_URL] = %q", got.GlobalEnv["REPO_URL"])
+	}
+}
+
+func TestResolveExpandsRecipeEnvWithArguments(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"printf", "%s", "$PROJECT_DIR"},
+		Arguments: map[string]Argument{
+			"project": {Default: "shadowtree"},
+		},
+		Env: map[string]string{
+			"PROJECT_DIR": "/src/{project}",
+		},
+	}
+
+	got, err := Resolve("docs", rec, []string{"project=godoxy"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Recipe.Env["PROJECT_DIR"] != "/src/godoxy" {
+		t.Fatalf("Recipe.Env[PROJECT_DIR] = %q", got.Recipe.Env["PROJECT_DIR"])
+	}
+}
+
+func TestResolveEnvLeavesVariadicArgsPlaceholderLiteral(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"printf", "%s", "$LITERAL"},
+		Env: map[string]string{
+			"LITERAL": "{@}",
+		},
+	}
+
+	got, err := Resolve("docs", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Recipe.Env["LITERAL"] != "{@}" {
+		t.Fatalf("Recipe.Env[LITERAL] = %q", got.Recipe.Env["LITERAL"])
+	}
+}
+
+func TestResolveRejectsEnvMissingPlaceholder(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"true"},
+		Env: map[string]string{
+			"DOCS_DIR": "{missing}/docs",
+		},
+	}
+
+	_, err := Resolve("docs", rec, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `recipe "docs" env: DOCS_DIR: missing value for {missing}`) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
 func TestResolveRejectsVarsMissingPlaceholder(t *testing.T) {
 	rec := Recipe{
 		Vars: map[string]string{

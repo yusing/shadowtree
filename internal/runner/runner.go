@@ -21,6 +21,7 @@ import (
 type Options struct {
 	Resolved   recipe.Resolved
 	Recipes    map[string]recipe.Recipe
+	ConfigEnv  map[string]string
 	SourceDir  string
 	PrintOnly  bool
 	Verbose    bool
@@ -368,7 +369,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, nil, options.Resolved.ConfigPath, options.Resolved.Profile)
+	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile)
 	if err != nil {
 		return err
 	}
@@ -376,7 +377,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	nested.Resolved = resolved
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
-	nestedEnv := mergedEnv(env, nil, resolved.Recipe.Env)
+	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
 	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
 
@@ -401,9 +402,10 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	nested := options
 	nested.Resolved = resolved
 	nested.Recipes = target.recipes
+	nested.ConfigEnv = target.loaded.Config.Env
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
-	nestedEnv := mergedEnv(env, target.loaded.Config.Env, resolved.Recipe.Env)
+	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
 	return runResolvedCommands(ctx, sandbox, targetExecutionDir(sandbox, options.SourceDir, target.dir), nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
 
@@ -413,6 +415,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 		err := runScriptCommand(ctx, nil, dir, mergedEnv(os.Environ(), env), command, nil, &stdout, io.Discard, Options{
 			Resolved:  recipe.Resolved{ConfigPath: opts.ConfigPath},
 			Recipes:   opts.Recipes,
+			ConfigEnv: env,
 			SourceDir: cmpSourceDir(opts.SourceDir, dir),
 		}, nil)
 		if err != nil {
@@ -440,6 +443,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	err = runResolvedCommands(ctx, nil, dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   opts.Recipes,
+		ConfigEnv: env,
 		SourceDir: cmpSourceDir(opts.SourceDir, dir),
 	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(opts.ConfigPath, ref.Name)})
 	if err != nil {
@@ -463,10 +467,11 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 		return "", err
 	}
 	var stdout bytes.Buffer
-	envList := mergedEnv(os.Environ(), env, target.loaded.Config.Env, resolved.Recipe.Env)
+	envList := mergedEnv(os.Environ(), env, resolved.GlobalEnv, resolved.Recipe.Env)
 	err = runResolvedCommands(ctx, nil, target.dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   target.recipes,
+		ConfigEnv: target.loaded.Config.Env,
 		SourceDir: sourceDir,
 	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(target.loaded.Path, ref.Name)})
 	if err != nil {

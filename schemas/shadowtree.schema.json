@@ -41,14 +41,14 @@
   "definitions": {
     "env": {
       "type": "object",
-      "description": "Environment variables passed to recipe commands.",
+      "description": "Environment variables passed to recipe commands. Values may use placeholders.",
       "additionalProperties": {
         "type": "string"
       }
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in vars, cmd, pre, post, for_each, workdir, and sync_out.",
+      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, workdir, and sync_out.",
       "additionalProperties": false,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
