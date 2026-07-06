@@ -112,30 +112,11 @@ func Init(path string) error {
 	}
 	const sample = `profile = "go"
 
-[recipes.test]
-help = "Run Go tests."
-for_each = "@go-modules"
-workdir = "{item}"
-cmd = "go test ./... {@}"
-
-[recipes.build]
-help = "Build Go packages."
-for_each = "@go-modules"
-workdir = "{item}"
-cmd = "go build ./... {@}"
-
 [recipes.codegen-test]
 help = "Generate code, then run Go tests."
 for_each = "@go-modules"
 workdir = "{item}"
 cmd = "set -e; go generate ./...; go test ./... {@}"
-
-[recipes.tidy]
-help = "Tidy Go module files."
-sandboxed = false
-for_each = "@go-modules"
-workdir = "{item}"
-cmd = "go mod tidy"
 `
 	return os.WriteFile(path, []byte(sample), 0o644)
 }

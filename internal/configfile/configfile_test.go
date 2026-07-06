@@ -76,7 +76,7 @@ default = 1
 	}
 }
 
-func TestInitWritesGoModuleWorkflows(t *testing.T) {
+func TestInitWritesNoBuiltinRecipeOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	if err := Init(path); err != nil {
 		t.Fatal(err)
@@ -85,14 +85,17 @@ func TestInitWritesGoModuleWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"build", "codegen-test", "test", "tidy"} {
-		rec := loaded.Config.Recipes[name]
-		if values := recipe.ScriptBody(rec.ForEach); values != recipe.GoModuleValuesCommand {
-			t.Fatalf("%s for_each = %q", name, values)
+	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
+		if _, ok := loaded.Config.Recipes[name]; ok {
+			t.Fatalf("init wrote built-in recipe override %q", name)
 		}
-		if rec.Workdir != "{item}" {
-			t.Fatalf("%s workdir = %q, want {item}", name, rec.Workdir)
-		}
+	}
+	rec := loaded.Config.Recipes["codegen-test"]
+	if values := recipe.ScriptBody(rec.ForEach); values != recipe.GoModuleValuesCommand {
+		t.Fatalf("codegen-test for_each = %q", values)
+	}
+	if rec.Workdir != "{item}" {
+		t.Fatalf("codegen-test workdir = %q, want {item}", rec.Workdir)
 	}
 }
 
