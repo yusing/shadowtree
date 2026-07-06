@@ -244,6 +244,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		"tidy": moduleWide(Recipe{
 			Help:      "Tidy Go module files.",
 			Cmd:       Command{"go", "mod", "tidy"},
+			Post:      []Command{ScriptCommand("if test -f go.work; then go work sync; fi")},
 			Sandboxed: new(false),
 		}),
 	}

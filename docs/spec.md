@@ -679,13 +679,13 @@ lint       for each @go-modules: golangci-lint run ./... if available, otherwise
 run        go run {command}
 test       for each @go-modules: go test ./...
 test-race  for each @go-modules: go test -race ./...
-tidy       for each @go-modules: go mod tidy
+tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
 vet        for each @go-modules: go vet ./...
 ```
 
 Built-in `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`,
-`go fmt`, and `go mod tidy` update the host checkout directly. Other built-in
-Go recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
+`go fmt`, `go mod tidy`, and `go work sync` update the host checkout directly.
+Other built-in Go recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
 is evaluated inside each module directory, not at the repo root. Package-style
 Go built-ins also expose an optional positional `pkg` argument for shell

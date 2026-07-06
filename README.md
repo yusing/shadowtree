@@ -100,6 +100,7 @@ sandboxed = false
 for_each = "@go-modules"
 workdir = "{item}"
 cmd = "go mod tidy"
+post = ["if test -f go.work; then go work sync; fi"]
 ```
 
 Use sync-out when a sandboxed recipe should copy selected results back:
@@ -177,6 +178,7 @@ sandboxed = false
 for_each = "@go-modules"
 workdir = "{item}"
 cmd = "go mod tidy"
+post = ["if test -f go.work; then go work sync; fi"]
 ```
 
 Use shell strings for process execution:
@@ -313,12 +315,12 @@ lint       for each @go-modules: golangci-lint run ./... or go vet ./...
 run        go run {command}
 test       for each @go-modules: go test ./...
 test-race  for each @go-modules: go test -race ./...
-tidy       for each @go-modules: go mod tidy
+tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
 vet        for each @go-modules: go vet ./...
 ```
 
 `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`, `go fmt`,
-and `go mod tidy` write directly to the host checkout. Other built-in Go
+`go mod tidy`, and `go work sync` write directly to the host checkout. Other built-in Go
 recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
 is evaluated inside each module directory, not at the repo root. Package-style

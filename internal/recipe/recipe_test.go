@@ -680,6 +680,22 @@ func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestBuiltinTidyRunsWorkspaceSyncPostHook(t *testing.T) {
+	tidy := Builtins(GoProfile, BuiltinOptions{})["tidy"]
+	if !slices.Equal(tidy.Cmd, Command{"go", "mod", "tidy"}) {
+		t.Fatalf("tidy Cmd = %#v, want go mod tidy", tidy.Cmd)
+	}
+	if len(tidy.Post) != 1 {
+		t.Fatalf("tidy Post = %#v, want one workspace sync post command", tidy.Post)
+	}
+	if body := ScriptBody(tidy.Post[0]); body != "if test -f go.work; then go work sync; fi" {
+		t.Fatalf("tidy post script = %q, want conditional go work sync", body)
+	}
+	if body := ScriptBody(tidy.ForEach); body != GoModuleValuesCommand {
+		t.Fatalf("tidy ForEach = %q, want %s", body, GoModuleValuesCommand)
+	}
+}
+
 func TestGoBuiltinsHostMutatingRecipesAreUnsandboxed(t *testing.T) {
 	builtins := go1264Builtins(t)
 	for _, name := range []string{"fix", "fmt", "tidy"} {
