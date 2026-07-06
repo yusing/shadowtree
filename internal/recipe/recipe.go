@@ -22,10 +22,11 @@ const (
 )
 
 const (
-	GoPackageValuesCommand    = "@go-packages"
-	GoFmtTargetValuesCommand  = `@go-packages; @glob "*.go"`
-	GoModuleValuesCommand     = "@go-modules"
-	GoRunCommandValuesCommand = `@go-main-packages; @glob "*.go"`
+	GoPackageValuesCommand     = "@go-packages"
+	GoFmtTargetValuesCommand   = `@go-packages; @glob "*.go"`
+	GoMainPackageValuesCommand = "@go-main-packages"
+	GoModuleValuesCommand      = "@go-modules"
+	GoRunCommandValuesCommand  = GoMainPackageValuesCommand + `; @glob "*.go"`
 )
 
 const scriptCommand = "__shadowtree_script__"
@@ -161,6 +162,8 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		Default:  "./...",
 		Values:   ScriptCommand(GoPackageValuesCommand),
 	}
+	defaultGoMainPackageArgument := defaultGoPackageArgument
+	defaultGoMainPackageArgument.Values = ScriptCommand(GoMainPackageValuesCommand)
 	lint := moduleWide(Recipe{
 		Help: "Run Go lint checks.",
 		Cmd:  Command{"golangci-lint", "run", "{pkg}", "{@}"},
@@ -219,7 +222,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 			Help: "Build Go packages.",
 			Cmd:  Command{"go", "build", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
-				"pkg": defaultGoPackageArgument,
+				"pkg": defaultGoMainPackageArgument,
 			},
 		}),
 		"generate": moduleWide(Recipe{

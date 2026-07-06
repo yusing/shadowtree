@@ -443,21 +443,28 @@ func TestCandidatesCompleteGoBuiltinRunCommandArgumentValues(t *testing.T) {
 	}
 }
 
-func TestCandidatesCompleteGoBuiltinPackageAndFmtPositionals(t *testing.T) {
+func TestCandidatesCompleteGoBuiltinPositionals(t *testing.T) {
 	dir := t.TempDir()
 	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
-	writeTextFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	writeTextFile(t, filepath.Join(dir, "root.go"), "package root\n")
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeTextFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "package main\n")
 	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
 	writeTextFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
 
 	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: dir})
-	candidates := completeWithOptions(t, []string{"shadowtree", "vet", ""}, recipes, Options{Dir: dir})
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", ""}, recipes, Options{Dir: dir})
+	if !hasCandidate(candidates, "./cmd/api") || hasCandidate(candidates, "./internal/lib") {
+		t.Fatalf("build candidates = %#v, want main package positional value", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "vet", ""}, recipes, Options{Dir: dir})
 	if !hasCandidate(candidates, "./internal/lib") || hasCandidate(candidates, "pkg=") {
 		t.Fatalf("vet candidates = %#v, want package positional value", candidates)
 	}
 
 	candidates = completeWithOptions(t, []string{"shadowtree", "fmt", ""}, recipes, Options{Dir: dir})
-	if !hasCandidate(candidates, "./internal/lib") || !hasCandidate(candidates, "main.go") {
+	if !hasCandidate(candidates, "./internal/lib") || !hasCandidate(candidates, "root.go") {
 		t.Fatalf("fmt candidates = %#v, want package and file positional values", candidates)
 	}
 }

@@ -417,11 +417,11 @@ cmd = "go build -o bin/{binary} {project} {@}"
 sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.project]
-help = "Go package to build."
+help = "Go main package to build."
 type = "string"
 position = 1
 default = "./cmd/shadowtree"
-values = "@go-packages"
+values = "@go-main-packages"
 
 [recipes.build.arguments.binary]
 help = "Output binary name under bin/."
@@ -687,9 +687,10 @@ Built-in `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`,
 `go fmt`, `go mod tidy`, and `go work sync` update the host checkout directly.
 Other built-in Go recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
-is evaluated inside each module directory, not at the repo root. Package-style
-Go built-ins also expose an optional positional `pkg` argument for shell
-completion from `@go-packages`; `fix` is available when the most common
+is evaluated inside each module directory, not at the repo root. Built-in
+`build` exposes an optional positional `pkg` argument with shell completion from
+`@go-main-packages`; other package-style Go built-ins expose `pkg` completion
+from `@go-packages`; `fix` is available when the most common
 `go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
 from `@go-packages` plus `@glob "*.go"`. Built-in `run` has a required
 positional `command` argument with `rel_path` type and completes from

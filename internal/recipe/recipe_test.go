@@ -795,7 +795,7 @@ func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
 
 func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
 	builtins := go1264Builtins(t)
-	for _, name := range []string{"build", "fix", "generate", "lint", "test", "test-race", "vet"} {
+	for _, name := range []string{"fix", "generate", "lint", "test", "test-race", "vet"} {
 		arg := builtins[name].Arguments["pkg"]
 		if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
 			t.Fatalf("%s pkg argument = %#v", name, arg)
@@ -803,6 +803,17 @@ func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
 		if values := ScriptBody(arg.Values); values != GoPackageValuesCommand {
 			t.Fatalf("%s pkg values = %q", name, values)
 		}
+	}
+}
+
+func TestGoBuiltinBuildCompletesMainPackages(t *testing.T) {
+	build := go1264Builtins(t)["build"]
+	arg := build.Arguments["pkg"]
+	if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
+		t.Fatalf("build pkg argument = %#v", arg)
+	}
+	if values := ScriptBody(arg.Values); values != GoMainPackageValuesCommand {
+		t.Fatalf("build pkg values = %q", values)
 	}
 }
 

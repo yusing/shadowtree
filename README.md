@@ -166,11 +166,11 @@ help = "Build a Go package."
 cmd = "go build {go_ldflags} {project} {@}"
 
 [recipes.build.arguments.project]
-help = "Go package to build."
+help = "Go main package to build."
 type = "string"
 position = 1
 default = "./cmd/shadowtree"
-values = "@go-packages"
+values = "@go-main-packages"
 
 [recipes.tidy]
 help = "Tidy Go module files."
@@ -323,9 +323,10 @@ vet        for each @go-modules: go vet ./...
 `go mod tidy`, and `go work sync` write directly to the host checkout. Other built-in Go
 recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
 `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
-is evaluated inside each module directory, not at the repo root. Package-style
-Go built-ins also expose an optional positional `pkg` argument for shell
-completion from `@go-packages`; `fix` is available when the most common
+is evaluated inside each module directory, not at the repo root. Built-in
+`build` exposes an optional positional `pkg` argument with shell completion from
+`@go-main-packages`; other package-style Go built-ins expose `pkg` completion
+from `@go-packages`; `fix` is available when the most common
 `go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
 from `@go-packages` plus `@glob "*.go"`. Built-in `run` takes a required
 positional `command` argument with `rel_path` type and completes from
