@@ -39,6 +39,11 @@ const (
 	ForEachItemIndexPlaceholder = "item_index"
 )
 
+const (
+	varStateVisiting = 1
+	varStateDone     = 2
+)
+
 var ReservedNames = map[string]bool{
 	"recipes":    true,
 	"init":       true,
@@ -86,6 +91,7 @@ type Recipe struct {
 	Post         []Command           `toml:"post"`
 	Env          map[string]string   `toml:"env"`
 	SyncOut      []string            `toml:"sync_out"`
+	varsExpanded bool
 }
 
 type Argument struct {
@@ -116,7 +122,6 @@ type RecipeReferenceTarget struct {
 	Args []string
 }
 
-var placeholderPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var (
 	supportedProfiles = []string{GoProfile, NodeProfile}
@@ -396,6 +401,34 @@ func ApplyGlobals(recipes map[string]Recipe, vars map[string]string, shell, shel
 	return out
 }
 
+// ApplyGlobalsExpanded applies globals after expanding static vars.
+func ApplyGlobalsExpanded(recipes map[string]Recipe, vars, dynamicVars map[string]string, shell, shellPrelude string) (map[string]Recipe, error) {
+	staticVars := maps.Clone(vars)
+	for name := range dynamicVars {
+		delete(staticVars, name)
+	}
+	expandedStaticVars, err := expandVarsWithBase(staticVars, dynamicVars)
+	if err != nil {
+		return nil, fmt.Errorf("vars: %w", err)
+	}
+	globalVars := mergeStringMaps(expandedStaticVars, dynamicVars)
+	out := maps.Clone(recipes)
+	for name, rec := range out {
+		recipeVars, err := expandVarsWithBase(rec.Vars, globalVars)
+		if err != nil {
+			return nil, fmt.Errorf("recipe %q vars: %w", name, err)
+		}
+		rec.Vars = mergeStringMaps(globalVars, recipeVars)
+		rec.varsExpanded = true
+		if rec.Shell == "" {
+			rec.Shell = shell
+		}
+		rec.ShellPrelude = joinShell(shellPrelude, rec.ShellPrelude)
+		out[name] = rec
+	}
+	return out, nil
+}
+
 func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv map[string]string, configPath, profile string) (Resolved, error) {
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
@@ -404,7 +437,15 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
-	values = mergeStringMaps(rec.Vars, values)
+	vars := rec.Vars
+	if !rec.varsExpanded {
+		var err error
+		vars, err = expandVars(rec.Vars)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q vars: %w", name, err)
+		}
+	}
+	values = mergeStringMaps(vars, values)
 	commandValues := values
 	if len(rec.ForEach) > 0 {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
@@ -473,6 +514,7 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		}
 	}
 	resolvedRecipe := rec
+	resolvedRecipe.Vars = vars
 	resolvedRecipe.ForEach = forEach
 	resolvedRecipe.Workdir = workdir
 	resolvedRecipe.Pre = pre
@@ -1036,23 +1078,68 @@ func expandStrings(items []string, values map[string]string, variadicArgs []stri
 	return out, nil
 }
 
-func recipeUsesVariadicArgs(rec Recipe) bool {
-	return RecipeUsesVariadicArgs(rec)
+func expandVars(vars map[string]string) (map[string]string, error) {
+	return expandVarsWithBase(vars, nil)
 }
 
-// RecipeUsesVariadicArgs reports whether rec references the leftover CLI args placeholder.
-func RecipeUsesVariadicArgs(rec Recipe) bool {
-	return containsVariadicArgsPlaceholder(rec.Cmd)
+func expandVarsWithBase(vars, base map[string]string) (map[string]string, error) {
+	if len(vars) == 0 {
+		return nil, nil
+	}
+	if !mapContainsPlaceholder(vars) {
+		return vars, nil
+	}
+	out := maps.Clone(vars)
+	state := make(map[string]uint8, len(vars))
+	var expandName func(string) (string, error)
+	expandName = func(name string) (string, error) {
+		switch state[name] {
+		case varStateVisiting:
+			return "", fmt.Errorf("recursive reference to {%s}", name)
+		case varStateDone:
+			return out[name], nil
+		}
+		raw, ok := vars[name]
+		if !ok {
+			value, ok := base[name]
+			if !ok {
+				return "", fmt.Errorf("missing value for {%s}", name)
+			}
+			return value, nil
+		}
+		state[name] = varStateVisiting
+		expanded, err := expandVarValue(raw, expandName)
+		if err != nil {
+			return "", err
+		}
+		state[name] = varStateDone
+		out[name] = expanded
+		return expanded, nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if _, err := expandName(name); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return out, nil
 }
 
-func containsVariadicArgsPlaceholder(items []string) bool {
-	return slices.ContainsFunc(items, func(item string) bool {
-		return strings.Contains(item, variadicArgsPlaceholder)
+func mapContainsPlaceholder(values map[string]string) bool {
+	for _, value := range values {
+		if strings.Contains(value, "{") {
+			return true
+		}
+	}
+	return false
+}
+
+func expandVarValue(text string, value func(string) (string, error)) (string, error) {
+	return expandPlaceholderNames(text, func(name, _ string) (string, error) {
+		return value(name)
 	})
 }
 
-func expandPlaceholders(text string, values map[string]string) (string, error) {
-	var missing string
+func expandPlaceholderNames(text string, replace func(name, match string) (string, error)) (string, error) {
 	if !strings.Contains(text, "{") {
 		return text, nil
 	}
@@ -1072,23 +1159,70 @@ func expandPlaceholders(text string, values map[string]string) (string, error) {
 		}
 		end += i
 		match := text[i : end+1]
-		if !placeholderPattern.MatchString(match) {
+		name := text[i+1 : end]
+		if !validPlaceholderName(name) {
 			b.WriteString(match)
 			i = end + 1
 			continue
 		}
-		name := text[i+1 : end]
+		replacement, err := replace(name, match)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(replacement)
+		i = end + 1
+	}
+	return b.String(), nil
+}
+
+func validPlaceholderName(name string) bool {
+	if name == "" || !identifierStart(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		if !identifierPart(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func identifierStart(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch == '_'
+}
+
+func identifierPart(ch byte) bool {
+	return identifierStart(ch) || ch >= '0' && ch <= '9'
+}
+
+func recipeUsesVariadicArgs(rec Recipe) bool {
+	return RecipeUsesVariadicArgs(rec)
+}
+
+// RecipeUsesVariadicArgs reports whether rec references the leftover CLI args placeholder.
+func RecipeUsesVariadicArgs(rec Recipe) bool {
+	return containsVariadicArgsPlaceholder(rec.Cmd)
+}
+
+func containsVariadicArgsPlaceholder(items []string) bool {
+	return slices.ContainsFunc(items, func(item string) bool {
+		return strings.Contains(item, variadicArgsPlaceholder)
+	})
+}
+
+func expandPlaceholders(text string, values map[string]string) (string, error) {
+	var missing string
+	out, err := expandPlaceholderNames(text, func(name, match string) (string, error) {
 		value, ok := values[name]
 		if !ok {
 			missing = name
-			b.WriteString(match)
-			i = end + 1
-			continue
+			return match, nil
 		}
-		b.WriteString(value)
-		i = end + 1
+		return value, nil
+	})
+	if err != nil {
+		return "", err
 	}
-	out := b.String()
 	if missing != "" {
 		return "", fmt.Errorf("missing value for {%s}", missing)
 	}

@@ -1169,6 +1169,61 @@ func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
 	}
 }
 
+func TestResolveExpandsVarsInVars(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"docs": {
+			Vars: map[string]string{
+				"docs_dir": "{webui_dir}/wiki",
+			},
+			Cmd: Command{"printf", "%s", "{repo_url}", "{docs_dir}"},
+		},
+	}, map[string]string{
+		"repo_url":  "https://github.com/yusing/godoxy",
+		"repo_root": "/src/godoxy",
+		"webui_dir": "{repo_root}/webui",
+	}, "", "")["docs"]
+
+	got, err := Resolve("docs", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"printf", "%s", "https://github.com/yusing/godoxy", "/src/godoxy/webui/wiki"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+	if got.Recipe.Vars["docs_dir"] != "/src/godoxy/webui/wiki" {
+		t.Fatalf("docs_dir = %q", got.Recipe.Vars["docs_dir"])
+	}
+}
+
+func TestResolveRejectsVarsMissingPlaceholder(t *testing.T) {
+	rec := Recipe{
+		Vars: map[string]string{
+			"docs_dir": "{webui_dir}/wiki",
+		},
+		Cmd: Command{"printf", "%s", "{docs_dir}"},
+	}
+
+	_, err := Resolve("docs", rec, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `recipe "docs" vars: docs_dir: missing value for {webui_dir}`) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveRejectsRecursiveVars(t *testing.T) {
+	rec := Recipe{
+		Vars: map[string]string{
+			"docs_dir":  "{webui_dir}/wiki",
+			"webui_dir": "{docs_dir}",
+		},
+		Cmd: Command{"printf", "%s", "{docs_dir}"},
+	}
+
+	_, err := Resolve("docs", rec, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `recipe "docs" vars: docs_dir: recursive reference to {docs_dir}`) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
 func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
 	rec := ApplyGlobals(map[string]Recipe{
 		"script": {

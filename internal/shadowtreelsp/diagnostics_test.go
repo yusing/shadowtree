@@ -868,6 +868,27 @@ sync_out = ["out/{non_existent}.txt"]
 			start: len(`sync_out = ["out/`),
 			end:   len(`sync_out = ["out/{non_existent}`),
 		},
+		{
+			name: "global vars",
+			text: `[vars]
+docs_dir = "{non_existent}/wiki"
+`,
+			line:  1,
+			start: len(`docs_dir = "`),
+			end:   len(`docs_dir = "{non_existent}`),
+		},
+		{
+			name: "recipe vars",
+			text: `[recipes.test.vars]
+docs_dir = "{non_existent}/wiki"
+
+[recipes.test]
+cmd = "true"
+`,
+			line:  1,
+			start: len(`docs_dir = "`),
+			end:   len(`docs_dir = "{non_existent}`),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -881,12 +902,14 @@ sync_out = ["out/{non_existent}.txt"]
 func TestDocumentDiagnosticsAcceptKnownPlaceholders(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[vars]
 PROJECT = "./cmd/shadowtree"
+DOCS = "{PROJECT}/docs"
 
 [var_commands]
 GENERATED = "printf generated"
 
 [recipes.test.vars]
 local = "./internal/shadowtreelsp"
+target = "{PROJECT}/{GENERATED}/{local}"
 
 [recipes.test.arguments.pkg]
 default = "."
@@ -923,6 +946,62 @@ cmd = "echo ${HOME}"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsDoNotTreatArgumentNamedVarsAsVarsTable(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.vars]
+help = "{non_existent}"
+
+[recipes.test]
+cmd = "true"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectRecursiveVars(t *testing.T) {
+	cases := []struct {
+		name     string
+		text     string
+		messages []string
+	}{
+		{
+			name: "global self reference",
+			text: `[vars]
+root = "{root}"
+`,
+			messages: []string{"recursive variable {root}"},
+		},
+		{
+			name: "global indirect cycle",
+			text: `[vars]
+root = "{docs}"
+docs = "{root}/docs"
+`,
+			messages: []string{"recursive variable {root}", "recursive variable {docs}"},
+		},
+		{
+			name: "recipe self reference",
+			text: `[recipes.test.vars]
+local = "{local}"
+
+[recipes.test]
+cmd = "true"
+`,
+			messages: []string{"recursive variable {local}"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			for _, message := range tc.messages {
+				if !hasDiagnosticMessage(diagnostics, message) {
+					t.Fatalf("diagnostics = %#v, missing %q", diagnostics, message)
+				}
+			}
+		})
 	}
 }
 
@@ -1134,6 +1213,12 @@ func assertOneDiagnostic(t *testing.T, diagnostics []lspDiagnostic, message stri
 	if diagnostics[0].Message != message {
 		t.Fatalf("message = %q, want %q", diagnostics[0].Message, message)
 	}
+}
+
+func hasDiagnosticMessage(diagnostics []lspDiagnostic, message string) bool {
+	return slices.ContainsFunc(diagnostics, func(diagnostic lspDiagnostic) bool {
+		return diagnostic.Message == message
+	})
 }
 
 func diagnosticsParams(t *testing.T, notification rpcMessage) struct {

@@ -253,12 +253,13 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 	regions := placeholderDiagnosticRegions(lines, scriptRegionList)
 	var recipes map[string]recipe.Recipe
 	var referenceOverlaps map[int][]span
+	knownVars := map[string]map[string]bool{}
 	var diagnostics []lspDiagnostic
 	for _, region := range regions {
-		if placeholderDiagnosticKey(region.Key) && recipeTable(region.Table) && recipes == nil {
+		if recipeTable(region.Table) && recipes == nil {
 			recipes, _ = resolver.Recipes()
 		}
-		known := placeholderDiagnosticNames(cfg, recipes, region)
+		known := placeholderDiagnosticNames(cfg, recipes, region, knownVars)
 		if known == nil {
 			continue
 		}
@@ -291,6 +292,7 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 			}
 		}
 	}
+	diagnostics = append(diagnostics, recursiveVarDiagnostics(lines, cfg, regions)...)
 	return diagnostics
 }
 
@@ -305,24 +307,38 @@ func dynamicCommandReferenceOverlapIndex(references []commandReferenceSpan) map[
 	return overlaps
 }
 
-func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Recipe, region scriptRegion) map[string]bool {
-	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) {
-		return nil
-	}
-	recipeName := currentRecipe(region.Table)
-	rec, ok := recipes[recipeName]
-	if !ok {
-		rec, ok = cfg.Recipes[recipeName]
-	}
-	if !ok {
-		return nil
-	}
+func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Recipe, region scriptRegion, knownVars map[string]map[string]bool) map[string]bool {
 	names := map[string]bool{}
 	for name := range cfg.Vars {
 		names[name] = true
 	}
 	for name := range cfg.VarCommands {
 		names[name] = true
+	}
+	if varsTable(region.Table) {
+		if cached, ok := knownVars[region.Table]; ok {
+			return cached
+		}
+		if region.Table == "vars" {
+			knownVars[region.Table] = names
+			return names
+		}
+		rec, ok := recipeForDiagnosticTable(cfg, recipes, region.Table)
+		if !ok {
+			return nil
+		}
+		for name := range rec.Vars {
+			names[name] = true
+		}
+		knownVars[region.Table] = names
+		return names
+	}
+	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) {
+		return nil
+	}
+	rec, ok := recipeForDiagnosticTable(cfg, recipes, region.Table)
+	if !ok {
+		return nil
 	}
 	for name := range rec.Vars {
 		names[name] = true
@@ -339,6 +355,15 @@ func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Rec
 		names["@"] = true
 	}
 	return names
+}
+
+func recipeForDiagnosticTable(cfg recipe.Config, recipes map[string]recipe.Recipe, table string) (recipe.Recipe, bool) {
+	recipeName := currentRecipe(table)
+	rec, ok := recipes[recipeName]
+	if !ok {
+		rec, ok = cfg.Recipes[recipeName]
+	}
+	return rec, ok
 }
 
 func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) []scriptRegion {
@@ -381,10 +406,113 @@ func placeholderDiagnosticKey(key string) bool {
 }
 
 func placeholderDiagnosticValueKey(table, key string) bool {
-	if !recipeTable(table) {
-		return false
+	if varsTable(table) {
+		return true
 	}
 	return key == "workdir" || key == "sync_out"
+}
+
+func varsTable(table string) bool {
+	if table == "vars" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(table, "recipes.")
+	if !ok {
+		return false
+	}
+	recipeName, suffix, ok := strings.Cut(rest, ".")
+	return ok && recipeName != "" && suffix == "vars"
+}
+
+func recursiveVarDiagnostics(lines []string, cfg recipe.Config, regions []scriptRegion) []lspDiagnostic {
+	definitions := map[string]map[string]string{"vars": cfg.Vars}
+	for name, rec := range cfg.Recipes {
+		if len(rec.Vars) > 0 {
+			definitions["recipes."+name+".vars"] = rec.Vars
+		}
+	}
+	regionsByTable := map[string]map[string]scriptRegion{}
+	for _, region := range regions {
+		if !varsTable(region.Table) {
+			continue
+		}
+		if regionsByTable[region.Table] == nil {
+			regionsByTable[region.Table] = map[string]scriptRegion{}
+		}
+		regionsByTable[region.Table][region.Key] = region
+	}
+	var diagnostics []lspDiagnostic
+	for table, vars := range definitions {
+		for name := range recursiveVarNames(vars) {
+			region, ok := regionsByTable[table][name]
+			if !ok {
+				continue
+			}
+			line := lineAt(lines, region.StartLine)
+			end := region.EndCol
+			if region.EndLine != region.StartLine || end > len(line) {
+				end = len(line)
+			}
+			diagnostics = append(diagnostics, lspDiagnostic{
+				Range:    lspRange(line, region.StartLine, region.StartCol, end),
+				Severity: diagnosticSeverityError,
+				Source:   "shadowtree",
+				Message:  "recursive variable {" + name + "}",
+			})
+		}
+	}
+	return diagnostics
+}
+
+func recursiveVarNames(vars map[string]string) map[string]bool {
+	const (
+		visiting = 1
+		done     = 2
+	)
+	recursive := map[string]bool{}
+	state := map[string]uint8{}
+	var stack []string
+	var visit func(string) bool
+	visit = func(name string) bool {
+		switch state[name] {
+		case visiting:
+			for i := len(stack) - 1; i >= 0; i-- {
+				recursive[stack[i]] = true
+				if stack[i] == name {
+					break
+				}
+			}
+			return true
+		case done:
+			return recursive[name]
+		}
+		state[name] = visiting
+		stack = append(stack, name)
+		hasCycle := false
+		for _, dep := range placeholderNames(vars[name]) {
+			if _, ok := vars[dep]; ok && visit(dep) {
+				hasCycle = true
+			}
+		}
+		stack = stack[:len(stack)-1]
+		state[name] = done
+		if hasCycle {
+			recursive[name] = true
+		}
+		return recursive[name]
+	}
+	for name := range vars {
+		visit(name)
+	}
+	return recursive
+}
+
+func placeholderNames(value string) []string {
+	var names []string
+	for _, item := range placeholderSpans(value) {
+		names = append(names, value[item.Start+1:item.Start+item.Length-1])
+	}
+	return names
 }
 
 func placeholderSpansInRange(line string, start, end int) []span {

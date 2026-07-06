@@ -369,3 +369,102 @@ cmd = "npm test"
 		t.Fatalf("recipes missing Node builtin install: %#v", recipes)
 	}
 }
+
+func TestResolveRecipesExpandsStaticVarsWithDynamicVars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[vars]
+docs_dir = "{repo_root}/docs"
+
+[var_commands]
+repo_root = "printf /repo"
+
+[recipes.show]
+cmd = "printf %s {docs_dir}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, _, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{EvalDynamicVars: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("show", recipes["show"], nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.ScriptBody(resolved.Main); got != "printf %s /repo/docs" {
+		t.Fatalf("cmd = %q, want dynamic var expanded in static var", got)
+	}
+}
+
+func TestResolveRecipesKeepsDynamicVarsAvailableWithoutEvaluation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[vars]
+docs_dir = "{repo_root}/docs"
+
+[var_commands]
+repo_root = "exit 1"
+
+[recipes.show]
+cmd = "printf %s {docs_dir}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, _, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("show", recipes["show"], nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.ScriptBody(resolved.Main); got != "printf %s {repo_root}/docs" {
+		t.Fatalf("cmd = %q, want dynamic var placeholder preserved", got)
+	}
+}
+
+func TestResolveRecipesKeepsDynamicVarOutputOpaque(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[vars]
+message = "{meta}"
+
+[var_commands]
+meta = "printf '{\"branch\":\"{name}\"}'"
+
+[recipes.show]
+cmd = "printf %s {message}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, _, err := ResolveRecipes(t.Context(), loaded, dir, ResolveOptions{EvalDynamicVars: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("show", recipes["show"], nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.ScriptBody(resolved.Main); got != `printf %s {"branch":"{name}"}` {
+		t.Fatalf("cmd = %q, want dynamic var output left opaque", got)
+	}
+}

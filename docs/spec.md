@@ -296,7 +296,8 @@ Top-level `vars` are static placeholder values shared by every recipe.
 `var_commands` are evaluated from the source checkout when recipes are resolved
 for execution, printing, or help; surrounding whitespace is trimmed from stdout
 and the result becomes a shared placeholder value. Recipe-level `vars` override
-top-level vars.
+top-level vars. Static vars may reference other static or dynamic vars with the
+same `{name}` placeholder syntax.
 
 `help`
 : Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
@@ -451,7 +452,7 @@ Bracket-style syntax is preferred for shell completion, especially in fish.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
-expanded in `cmd`, `pre`, `post`, `for_each`, `workdir`, and `sync_out`.
+expanded in `vars`, `cmd`, `pre`, `post`, `for_each`, `workdir`, and `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 

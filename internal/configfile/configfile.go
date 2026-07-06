@@ -63,18 +63,27 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 	if vars == nil {
 		vars = map[string]string{}
 	}
+	dynamicVars := map[string]string{}
 	if opts.EvalDynamicVars {
-		dynamicVars, err := recipe.EvalVarCommands(ctx, dir, loaded.Config.Env, loaded.Config.VarCommands, loaded.Config.Shell, loaded.Config.ShellPrelude)
+		var err error
+		dynamicVars, err = recipe.EvalVarCommands(ctx, dir, loaded.Config.Env, loaded.Config.VarCommands, loaded.Config.Shell, loaded.Config.ShellPrelude)
 		if err != nil {
 			return nil, "", fmt.Errorf("var_commands: %w", err)
 		}
-		maps.Copy(vars, dynamicVars)
+	} else {
+		for name := range loaded.Config.VarCommands {
+			dynamicVars[name] = "{" + name + "}"
+		}
 	}
 	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, recipe.BuiltinOptions{Dir: dir}), loaded.Config.Recipes)
 	if err != nil {
 		return nil, "", err
 	}
-	return recipe.ApplyGlobals(recipes, vars, loaded.Config.Shell, loaded.Config.ShellPrelude), profile, nil
+	recipes, err = recipe.ApplyGlobalsExpanded(recipes, vars, dynamicVars, loaded.Config.Shell, loaded.Config.ShellPrelude)
+	if err != nil {
+		return nil, "", err
+	}
+	return recipes, profile, nil
 }
 
 func Find(cwd string) (Loaded, bool, error) {
