@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -319,6 +320,25 @@ default = `
 	}
 }
 
+func TestCompletionsDoNotRunCommandBackedArgumentValues(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	text := `[recipes.build.arguments.component]
+type = "string"
+values = ` + strconv.Quote("touch "+marker+"\nprintf api") + `
+default =
+
+[recipes.build]
+cmd = ["go", "build"]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = `)})
+	if len(items) != 0 {
+		t.Fatalf("items = %#v, want no command-backed value completions", items)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("command-backed values ran, stat err = %v", err)
+	}
+}
+
 func TestCompletionsEscapeArgumentDefaultStringValues(t *testing.T) {
 	text := `[recipes.build.arguments.component]
 type = "string"
@@ -482,10 +502,10 @@ cmd = '''
 	assertLabels(t, items, "true", "false")
 }
 
-func TestCompletionsIncludeValuesScriptRecipeReferenceDynamicArgumentValues(t *testing.T) {
+func TestCompletionsIncludeValuesScriptRecipeReferenceEnumArgumentValues(t *testing.T) {
 	text := `[recipes.minify.arguments.component]
 type = "string"
-values = "printf '%s\\n' godoxy agent socket-proxy cli"
+values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
 cmd = ["true"]
@@ -500,10 +520,10 @@ values = '''
 	assertLabels(t, items, "godoxy", "agent", "socket-proxy", "cli")
 }
 
-func TestCompletionsIncludeValuesScriptRecipeReferenceDynamicBracketArgumentValues(t *testing.T) {
+func TestCompletionsIncludeValuesScriptRecipeReferenceEnumBracketArgumentValues(t *testing.T) {
 	text := `[recipes.minify.arguments.component]
 type = "string"
-values = "printf '%s\\n' godoxy agent socket-proxy cli"
+values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
 cmd = ["true"]

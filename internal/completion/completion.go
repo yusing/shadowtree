@@ -22,9 +22,10 @@ type Candidate struct {
 }
 
 type Options struct {
-	Dir        string
-	ConfigPath string
-	Env        map[string]string
+	Dir                        string
+	ConfigPath                 string
+	Env                        map[string]string
+	DisableCommandBackedValues bool
 }
 
 type Request struct {
@@ -533,6 +534,9 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 		return candidates
 	}
 	if recipes == nil {
+		return nil
+	}
+	if opts.DisableCommandBackedValues {
 		return nil
 	}
 	command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)

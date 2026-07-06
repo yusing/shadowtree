@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -67,13 +66,18 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 
 func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Config, opts diagnosticOptions) []lspDiagnostic {
 	lines := strings.Split(text, "\n")
+	refs := commandReferenceSpans(lines)
+	if len(refs) == 0 {
+		return nil
+	}
 	completionOpts := completionOptionsForURI(opts.URI)
 	recipes, ok := diagnosticRecipes(ctx, cfg, completionOpts)
 	if !ok {
 		return nil
 	}
+	crossConfigRecipes := map[string]diagnosticCrossConfigResult{}
 	var diagnostics []lspDiagnostic
-	for _, ref := range commandReferenceSpans(lines) {
+	for _, ref := range refs {
 		if ref.isArgumentValuesBuiltin() {
 			continue
 		}
@@ -93,24 +97,30 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 			if strings.Contains(ref.Path, "{") {
 				continue
 			}
-			if err := validateCrossConfigReference(ctx, ref, opts); err != nil {
+			targetOpts := crossConfigDiagnosticCompletionOptions(ref.Path, completionOpts)
+			crossRecipes, err := diagnosticCrossConfigRecipes(ctx, targetOpts, crossConfigRecipes)
+			if err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
 					Severity: diagnosticSeverityError,
 					Source:   "shadowtree",
-					Message:  err.Error(),
+					Message:  fmt.Sprintf("invalid recipe reference @%s: %v", ref.Target(), err),
 				})
 				continue
 			}
-			crossRecipes, ok := crossConfigCompletionRecipes(ctx, ref.Path, completionOpts)
-			if !ok {
+			if crossRecipes == nil {
 				continue
 			}
 			rec, ok := crossRecipes[ref.Name]
 			if !ok {
+				diagnostics = append(diagnostics, lspDiagnostic{
+					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
+					Severity: diagnosticSeverityError,
+					Source:   "shadowtree",
+					Message:  "unknown recipe reference @" + ref.Target(),
+				})
 				continue
 			}
-			targetOpts := crossConfigDiagnosticCompletionOptions(ref.Path, completionOpts)
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes, targetOpts)...)
 			continue
 		}
@@ -157,7 +167,7 @@ func crossConfigDiagnosticCompletionOptions(path string, opts completionOptions)
 	}
 	return completionOptions{
 		Dir:        targetDir,
-		ConfigPath: filepath.Join(targetDir, ".shadowtree.toml"),
+		ConfigPath: filepath.Join(targetDir, configfile.Names[0]),
 	}
 }
 
@@ -206,7 +216,7 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
 			continue
 		}
-		if len(arg.Values) > 0 && value != "" && !recipeReferenceArgumentValueExists(ctx, name, value, rec, recipes, opts) {
+		if len(arg.Values) > 0 && value != "" && recipeReferenceArgumentValueCheckAllowed(arg.Values) && !recipeReferenceArgumentValueExists(ctx, name, value, rec, recipes, opts) {
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, fmt.Sprintf("%s: invalid value %q", name, value)))
 		}
 	}
@@ -236,7 +246,7 @@ func recipeReferenceArgumentValueExists(ctx context.Context, name, value string,
 		name+"="+value,
 		rec,
 		recipes,
-		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+		lspCompletionCandidateOptions(opts),
 	)
 	for _, candidate := range candidates {
 		if candidate.Value == name+"="+value {
@@ -244,6 +254,11 @@ func recipeReferenceArgumentValueExists(ctx context.Context, name, value string,
 		}
 	}
 	return false
+}
+
+func recipeReferenceArgumentValueCheckAllowed(values recipe.Command) bool {
+	_, ok, err := recipe.ValidateValueBuiltin(values)
+	return ok && err == nil
 }
 
 func unquoteRecipeReferenceArgumentValue(value string) string {
@@ -257,34 +272,31 @@ func unquoteRecipeReferenceArgumentValue(value string) string {
 	return value[1 : len(value)-1]
 }
 
-func validateCrossConfigReference(ctx context.Context, ref commandReferenceSpan, opts diagnosticOptions) error {
-	base, ok := lspConfigDir(opts.URI)
-	if !ok {
-		return nil
+type diagnosticCrossConfigResult struct {
+	recipes map[string]recipe.Recipe
+	err     error
+}
+
+func diagnosticCrossConfigRecipes(ctx context.Context, opts completionOptions, cache map[string]diagnosticCrossConfigResult) (map[string]recipe.Recipe, error) {
+	if opts.Dir == "" || opts.ConfigPath == "" {
+		return nil, nil
 	}
-	targetDir := ref.Path
-	if !filepath.IsAbs(targetDir) {
-		targetDir = filepath.Join(base, targetDir)
+	key := filepath.Clean(opts.Dir)
+	if result, ok := cache[key]; ok {
+		return result.recipes, result.err
 	}
-	info, err := os.Stat(targetDir)
+	loaded, err := configfile.Load(opts.ConfigPath)
 	if err != nil {
-		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
+		cache[key] = diagnosticCrossConfigResult{err: err}
+		return nil, err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("invalid recipe reference @%s: not a directory", ref.Target())
-	}
-	loaded, err := configfile.Load(filepath.Join(targetDir, ".shadowtree.toml"))
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, opts.Dir, configfile.ResolveOptions{})
 	if err != nil {
-		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
+		cache[key] = diagnosticCrossConfigResult{err: err}
+		return nil, err
 	}
-	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, targetDir, configfile.ResolveOptions{})
-	if err != nil {
-		return fmt.Errorf("invalid recipe reference @%s: %w", ref.Target(), err)
-	}
-	if _, ok := recipes[ref.Name]; !ok {
-		return fmt.Errorf("unknown recipe reference @%s", ref.Target())
-	}
-	return nil
+	cache[key] = diagnosticCrossConfigResult{recipes: recipes}
+	return recipes, nil
 }
 
 func parseDiagnostic(text string, err error) lspDiagnostic {

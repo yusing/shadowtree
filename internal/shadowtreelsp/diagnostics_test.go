@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -160,6 +161,107 @@ func TestServerClearsDiagnosticsOnClose(t *testing.T) {
 	}
 	if len(paramsOut.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want cleared", paramsOut.Diagnostics)
+	}
+}
+
+func TestServerShutdownResponseIncludesNullResult(t *testing.T) {
+	var input bytes.Buffer
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "shutdown"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", Method: "exit"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := Serve(t.Context(), &input, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := readMessage(bufio.NewReader(bytes.NewReader(output.Bytes())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Result json.RawMessage `json:"result"`
+		Error  *rpcError       `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response.Result) != "null" || response.Error != nil {
+		t.Fatalf("response = %s, want result null and no error", body)
+	}
+}
+
+func TestServerUnknownRequestReturnsMethodNotFound(t *testing.T) {
+	var input bytes.Buffer
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "shadowtree/unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", Method: "exit"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := Serve(t.Context(), &input, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := readMessage(bufio.NewReader(bytes.NewReader(output.Bytes())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Error *rpcError `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != -32601 {
+		t.Fatalf("response = %s, want method-not-found error", body)
+	}
+}
+
+func TestServerIgnoresMalformedNotification(t *testing.T) {
+	var input bytes.Buffer
+	if err := writeMessage(&input, rpcMessage{
+		JSONRPC: "2.0",
+		Method:  "textDocument/didOpen",
+		Params:  json.RawMessage(`[]`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "shutdown"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMessage(&input, rpcMessage{JSONRPC: "2.0", Method: "exit"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := Serve(t.Context(), &input, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := readMessage(bufio.NewReader(bytes.NewReader(output.Bytes())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Result json.RawMessage `json:"result"`
+		Error  *rpcError       `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response.Result) != "null" || response.Error != nil {
+		t.Fatalf("response = %s, want shutdown result null", body)
+	}
+}
+
+func TestReadMessageRejectsOversizedContentLength(t *testing.T) {
+	header := "Content-Length: " + strconv.Itoa(maxLSPMessageBytes+1) + "\r\n\r\n"
+	_, err := readMessage(bufio.NewReader(strings.NewReader(header)))
+	if err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("err = %v, want content length limit", err)
 	}
 }
 
@@ -400,10 +502,10 @@ cmd = ["go", "test"]
 	assertDiagnosticRange(t, diagnostics[0], 2, 0, len(`@missing`))
 }
 
-func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceArgumentValue(t *testing.T) {
+func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceEnumArgumentValue(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.minify.arguments.component]
 type = "string"
-values = "printf '%s\\n' godoxy agent socket-proxy cli"
+values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
 cmd = ["true"]
@@ -418,10 +520,10 @@ values = '''
 	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify `), len(`@minify component=foo`))
 }
 
-func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceBracketArgumentValue(t *testing.T) {
+func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceEnumBracketArgumentValue(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.minify.arguments.component]
 type = "string"
-values = "printf '%s\\n' godoxy agent socket-proxy cli"
+values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
 cmd = ["true"]
@@ -600,7 +702,7 @@ func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentValue(t *testing.T) 
 	}
 	targetConfig := `[recipes.minify.arguments.component]
 type = "string"
-values = "printf '%s\\n' godoxy agent socket-proxy cli"
+values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
 cmd = ["true"]
@@ -615,6 +717,27 @@ cmd = ["@webui:minify[component=foo]"]
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["@webui:minify[`), len(`cmd = ["@webui:minify[component=foo`))
+}
+
+func TestDocumentDiagnosticsDoNotRunCommandBackedArgumentValues(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	text := `[recipes.build.arguments.component]
+type = "string"
+values = ` + strconv.Quote("touch "+marker+"\nprintf api") + `
+
+[recipes.build]
+cmd = ["go", "build"]
+
+[recipes.test]
+cmd = ["@build[component=api]"]
+`
+	diagnostics := documentDiagnostics(t.Context(), text)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("command-backed values ran, stat err = %v", err)
+	}
 }
 
 func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentType(t *testing.T) {

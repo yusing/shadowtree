@@ -43,13 +43,40 @@ type rpcMessage struct {
 type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Result  any             `json:"result"`
+}
+
+type rpcErrorResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Error   rpcError        `json:"error"`
 }
 
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+const maxLSPMessageBytes = 4 << 20
+
+type methodNotFoundError struct {
+	method string
+}
+
+func (err methodNotFoundError) Error() string {
+	return "method not found: " + err.method
+}
+
+type transportError struct {
+	err error
+}
+
+func (err transportError) Error() string {
+	return err.err.Error()
+}
+
+func (err transportError) Unwrap() error {
+	return err.err
 }
 
 type lspPosition struct {
@@ -75,13 +102,20 @@ func (server *server) serve() error {
 		}
 		result, err := server.handle(msg)
 		if len(msg.ID) == 0 {
+			if _, ok := err.(transportError); ok {
+				return err
+			}
 			continue
 		}
 		if err != nil {
-			if writeErr := writeMessage(server.output, rpcResponse{
+			rpcErr := rpcError{Code: -32603, Message: err.Error()}
+			if methodErr, ok := err.(methodNotFoundError); ok {
+				rpcErr = rpcError{Code: -32601, Message: methodErr.method + ": method not found"}
+			}
+			if writeErr := writeMessage(server.output, rpcErrorResponse{
 				JSONRPC: "2.0",
 				ID:      msg.ID,
-				Error:   &rpcError{Code: -32603, Message: err.Error()},
+				Error:   rpcErr,
 			}); writeErr != nil {
 				return writeErr
 			}
@@ -110,7 +144,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 		}
 		server.documents[params.TextDocument.URI] = params.TextDocument.Text
 		if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err != nil {
-			return nil, err
+			return nil, transportError{err: err}
 		}
 		return nil, nil
 	case "textDocument/didChange":
@@ -125,7 +159,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 			}
 			server.documents[params.TextDocument.URI] = text
 			if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, text, params.TextDocument.Version); err != nil {
-				return nil, err
+				return nil, transportError{err: err}
 			}
 		}
 		return nil, nil
@@ -136,7 +170,7 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 		}
 		delete(server.documents, params.TextDocument.URI)
 		if err := server.publishDiagnostics(server.ctx, params.TextDocument.URI, "", nil); err != nil {
-			return nil, err
+			return nil, transportError{err: err}
 		}
 		return nil, nil
 	case "textDocument/completion":
@@ -152,7 +186,10 @@ func (server *server) handle(msg rpcMessage) (any, error) {
 		}
 		return map[string]any{"data": semanticTokens(server.documents[params.TextDocument.URI])}, nil
 	default:
-		return nil, nil
+		if len(msg.ID) == 0 {
+			return nil, nil
+		}
+		return nil, methodNotFoundError{method: msg.Method}
 	}
 }
 
@@ -261,6 +298,8 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 	lines := strings.Split(text, "\n")
 	bytePosition := lspToBytePosition(lines, position)
 	completions := completionsAtWithOptions(ctx, text, bytePosition, opts)
+	line := lineAt(lines, bytePosition.Line)
+	tableHeader := inTableHeaderLine(line, bytePosition)
 	items := make([]map[string]any, 0, len(completions))
 	for _, item := range completions {
 		out := map[string]any{
@@ -271,19 +310,17 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 		}
 		switch {
 		case item.Edit != nil:
-			lines := strings.Split(text, "\n")
-			line := lineAt(lines, bytePosition.Line)
 			out["textEdit"] = textEdit(line, bytePosition.Line, item.Edit.Start, item.Edit.End, item.InsertText)
 		case item.Quote:
-			out["textEdit"] = quotedValueTextEdit(text, bytePosition, item.Label)
+			out["textEdit"] = quotedValueTextEditLine(line, bytePosition, item.Label)
 		case item.Placeholder:
-			out["textEdit"] = placeholderTextEdit(text, bytePosition, item.Label)
+			out["textEdit"] = placeholderTextEditLine(line, bytePosition, item.Label)
 		case item.RecipeReference:
-			out["textEdit"] = recipeReferenceTextEdit(text, bytePosition, item.InsertText)
-		case inTableHeader(text, bytePosition):
-			out["textEdit"] = tableTextEdit(text, bytePosition, item.InsertText)
+			out["textEdit"] = recipeReferenceTextEditLine(line, bytePosition, item.InsertText)
+		case tableHeader:
+			out["textEdit"] = tableTextEditLine(line, bytePosition, item.InsertText)
 		case item.Kind == completionKindKeyword:
-			out["textEdit"] = keyTextEdit(text, bytePosition, item.Label, item.InsertText)
+			out["textEdit"] = keyTextEditLine(line, bytePosition, item.Label, item.InsertText)
 		}
 		items = append(items, out)
 	}
@@ -295,7 +332,10 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 
 func recipeReferenceTextEdit(text string, position lspPosition, name string) map[string]any {
 	lines := strings.Split(text, "\n")
-	line := lineAt(lines, position.Line)
+	return recipeReferenceTextEditLine(lineAt(lines, position.Line), position, name)
+}
+
+func recipeReferenceTextEditLine(line string, position lspPosition, name string) map[string]any {
 	prefix := linePrefix(line, position.Character)
 	at := strings.LastIndexByte(prefix, '@')
 	if at < 0 {
@@ -311,7 +351,10 @@ func recipeReferenceTextEdit(text string, position lspPosition, name string) map
 
 func keyTextEdit(text string, position lspPosition, label, insertText string) map[string]any {
 	lines := strings.Split(text, "\n")
-	line := lineAt(lines, position.Line)
+	return keyTextEditLine(lineAt(lines, position.Line), position, label, insertText)
+}
+
+func keyTextEditLine(line string, position lspPosition, label, insertText string) map[string]any {
 	start := wordStart(line, position.Character)
 	end := wordEnd(line, position.Character)
 	newText := insertText
@@ -323,7 +366,10 @@ func keyTextEdit(text string, position lspPosition, label, insertText string) ma
 
 func quotedValueTextEdit(text string, position lspPosition, value string) map[string]any {
 	lines := strings.Split(text, "\n")
-	line := lineAt(lines, position.Line)
+	return quotedValueTextEditLine(lineAt(lines, position.Line), position, value)
+}
+
+func quotedValueTextEditLine(line string, position lspPosition, value string) map[string]any {
 	start := strings.IndexByte(line, '=')
 	if start < 0 {
 		start = position.Character
@@ -375,7 +421,10 @@ func tomlBasicStringContent(value string) string {
 
 func placeholderTextEdit(text string, position lspPosition, label string) map[string]any {
 	lines := strings.Split(text, "\n")
-	line := lineAt(lines, position.Line)
+	return placeholderTextEditLine(lineAt(lines, position.Line), position, label)
+}
+
+func placeholderTextEditLine(line string, position lspPosition, label string) map[string]any {
 	prefix := linePrefix(line, position.Character)
 	open := strings.LastIndexByte(prefix, '{')
 	if open < 0 {
@@ -394,7 +443,10 @@ func placeholderTextEdit(text string, position lspPosition, label string) map[st
 
 func tableTextEdit(text string, position lspPosition, insertText string) map[string]any {
 	lines := strings.Split(text, "\n")
-	line := lineAt(lines, position.Line)
+	return tableTextEditLine(lineAt(lines, position.Line), position, insertText)
+}
+
+func tableTextEditLine(line string, position lspPosition, insertText string) map[string]any {
 	start := tableSegmentStart(linePrefix(line, position.Character))
 	end := position.Character
 	if close := strings.IndexByte(line[position.Character:], ']'); close >= 0 {
@@ -408,7 +460,11 @@ func tableTextEdit(text string, position lspPosition, insertText string) map[str
 
 func inTableHeader(text string, position lspPosition) bool {
 	lines := strings.Split(text, "\n")
-	_, ok := openTablePrefix(linePrefix(lineAt(lines, position.Line), position.Character))
+	return inTableHeaderLine(lineAt(lines, position.Line), position)
+}
+
+func inTableHeaderLine(line string, position lspPosition) bool {
+	_, ok := openTablePrefix(linePrefix(line, position.Character))
 	return ok
 }
 
@@ -550,6 +606,9 @@ func readMessage(reader *bufio.Reader) ([]byte, error) {
 	}
 	if contentLength <= 0 {
 		return nil, fmt.Errorf("missing content length")
+	}
+	if contentLength > maxLSPMessageBytes {
+		return nil, fmt.Errorf("content length %d exceeds limit %d", contentLength, maxLSPMessageBytes)
 	}
 	body := make([]byte, contentLength)
 	_, err := io.ReadFull(reader, body)

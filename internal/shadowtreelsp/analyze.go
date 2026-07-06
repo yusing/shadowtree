@@ -2,6 +2,7 @@ package shadowtreelsp
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -244,14 +245,14 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		content,
 		rec,
 		recipes,
-		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+		lspCompletionCandidateOptions(opts),
 	)
 	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character), true
 }
 
 func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
 	region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos)
-	if !ok || !recipeScriptReferenceRegion(region) || (region.Shell != "" && region.Shell != "sh" && region.Shell != "bash") {
+	if !ok || !recipeScriptReferenceRegion(region) || !scriptref.SupportedShell(region.Shell) {
 		return nil, false
 	}
 	line := lineAt(analysis.Lines, pos.Line)
@@ -297,7 +298,7 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 		content,
 		rec,
 		recipes,
-		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+		lspCompletionCandidateOptions(opts),
 	)
 	return recipeArgumentCompletions(candidates, start+1, pos.Character)
 }
@@ -332,7 +333,7 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	if before != "" {
 		content = strings.Join(strings.Fields(before), ", ") + ", " + active
 	}
-	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, recipes, recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath})
+	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, recipes, lspCompletionCandidateOptions(opts))
 	editStart := start + 1 + len(name) + 1 + currentStart
 	return recipeArgumentCompletions(candidates, editStart, pos.Character)
 }
@@ -547,7 +548,7 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fal
 		return crossConfigRecipeReferenceCompletions(ctx, pathPrefix, recipePrefix, opts)
 	}
 	recipes, ok := completionRecipes(ctx, text, opts)
-	names := mapsKeys(recipes)
+	names := slices.Collect(maps.Keys(recipes))
 	if !ok {
 		names = slices.Clone(fallbackRecipeNames)
 	}
@@ -592,7 +593,7 @@ func crossConfigDirectoryCompletions(prefix string, opts completionOptions) []co
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		configPath := filepath.Join(base, name, ".shadowtree.toml")
+		configPath := filepath.Join(base, name, configfile.Names[0])
 		if _, err := os.Stat(configPath); err != nil {
 			continue
 		}
@@ -614,8 +615,7 @@ func crossConfigRecipeReferenceCompletions(ctx context.Context, pathPrefix, reci
 	if !ok {
 		return nil
 	}
-	names := mapsKeys(recipes)
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(recipes))
 	var items []completion
 	for _, name := range names {
 		if !strings.HasPrefix(name, recipePrefix) {
@@ -661,7 +661,7 @@ func crossConfigCompletionRecipes(ctx context.Context, path string, opts complet
 	if !filepath.IsAbs(targetDir) {
 		targetDir = filepath.Join(base, targetDir)
 	}
-	loaded, err := configfile.Load(filepath.Join(targetDir, ".shadowtree.toml"))
+	loaded, err := configfile.Load(filepath.Join(targetDir, configfile.Names[0]))
 	if err != nil {
 		return nil, false
 	}
@@ -739,9 +739,17 @@ func argumentDefaultValueCompletions(ctx context.Context, text, table, key, pref
 		argName+"="+valuePrefix,
 		rec,
 		recipes,
-		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+		lspCompletionCandidateOptions(opts),
 	)
 	return argumentDefaultValueCompletionItems(candidates, argName, defaultValueNeedsQuote(arg)), true
+}
+
+func lspCompletionCandidateOptions(opts completionOptions) recipecompletion.Options {
+	return recipecompletion.Options{
+		Dir:                        opts.Dir,
+		ConfigPath:                 opts.ConfigPath,
+		DisableCommandBackedValues: true,
+	}
 }
 
 func completionRecipesIgnoringLine(ctx context.Context, text string, line int, opts completionOptions) (map[string]recipe.Recipe, bool) {
@@ -1612,10 +1620,7 @@ type commandReferenceArgumentSpan struct {
 }
 
 func (ref commandReferenceSpan) Target() string {
-	if ref.Path == "" {
-		return ref.Name
-	}
-	return ref.Path + ":" + ref.Name
+	return (recipe.RecipeReferenceTarget{Path: ref.Path, Name: ref.Name}).Target()
 }
 
 type commandReferenceScan struct {
@@ -1820,7 +1825,7 @@ func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []comma
 		if !recipeScriptReferenceRegion(region) {
 			continue
 		}
-		if region.Shell != "" && region.Shell != "sh" && region.Shell != "bash" {
+		if !scriptref.SupportedShell(region.Shell) {
 			continue
 		}
 		_, refs, err := scriptref.Parse(region.Shell, scriptRegionText(lines, region))
@@ -2193,7 +2198,8 @@ func openTablePrefix(prefix string) (string, bool) {
 
 func completeTableHeader(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
-	trimmed = strings.TrimSuffix(strings.TrimSpace(strings.Split(trimmed, "#")[0]), "\r")
+	beforeComment, _, _ := strings.Cut(trimmed, "#")
+	trimmed = strings.TrimSuffix(strings.TrimSpace(beforeComment), "\r")
 	switch {
 	case strings.HasPrefix(trimmed, "[[") && strings.HasSuffix(trimmed, "]]"):
 		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "[["), "]]")), true
@@ -2263,14 +2269,6 @@ func appendUnique(values []string, value string) []string {
 		return values
 	}
 	return append(values, value)
-}
-
-func mapsKeys[V any](items map[string]V) []string {
-	keys := make([]string, 0, len(items))
-	for key := range items {
-		keys = append(keys, key)
-	}
-	return keys
 }
 
 func uniqueSorted(values []string) []string {
