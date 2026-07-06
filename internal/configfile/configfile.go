@@ -114,36 +114,27 @@ func Init(path string) error {
 
 [recipes.test]
 help = "Run Go tests."
-cmd = "go test {pkg} {@}"
-
-[recipes.test.arguments.pkg]
-help = "Go package pattern to test."
-type = "rel_path"
-default = "./..."
+for_each = "@go-modules"
+workdir = "{item}"
+cmd = "go test ./... {@}"
 
 [recipes.build]
-help = "Build a Go package."
-cmd = "go build {project} {@}"
-
-[recipes.build.arguments.project]
-help = "Go package to build."
-type = "rel_path"
-position = 1
-default = "./..."
+help = "Build Go packages."
+for_each = "@go-modules"
+workdir = "{item}"
+cmd = "go build ./... {@}"
 
 [recipes.codegen-test]
 help = "Generate code, then run Go tests."
-pre = ["go generate ./..."]
-cmd = "go test {pkg} {@}"
-
-[recipes.codegen-test.arguments.pkg]
-help = "Go package pattern to test."
-type = "rel_path"
-default = "./..."
+for_each = "@go-modules"
+workdir = "{item}"
+cmd = "set -e; go generate ./...; go test ./... {@}"
 
 [recipes.tidy]
 help = "Tidy Go module files."
 sandboxed = false
+for_each = "@go-modules"
+workdir = "{item}"
 cmd = "go mod tidy"
 `
 	return os.WriteFile(path, []byte(sample), 0o644)

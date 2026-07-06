@@ -387,7 +387,7 @@ values = "@"
 cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
-	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@test", "@vars")
+	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@test", "@vars")
 	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
 }
 
@@ -397,7 +397,7 @@ for_each = "@"
 cmd = "true"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`for_each = "@`)})
-	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@vars")
+	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@vars")
 	assertCompletionDetail(t, items, "@go-modules", "Go module directories (builtin)")
 }
 
@@ -624,15 +624,15 @@ func TestCompletionsIncludeGoMainPackagesArgumentDefaultValues(t *testing.T) {
 	text := `[recipes.build.arguments.project]
 type = "string"
 values = "@go-main-packages"
-default = c`
+default = ./c`
 	items := completionsAtWithOptions(
 		t.Context(),
 		text,
-		lspPosition{Line: 3, Character: len(`default = c`)},
+		lspPosition{Line: 3, Character: len(`default = ./c`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
-	assertLabels(t, items, "cmd/api")
-	assertCompletionDetail(t, items, "cmd/api", "Package main builds the API.")
+	assertLabels(t, items, "./cmd/api")
+	assertCompletionDetail(t, items, "./cmd/api", "Package main builds the API.")
 }
 
 func TestCompletionsDoNotRunCommandBackedArgumentValues(t *testing.T) {

@@ -490,11 +490,43 @@ values = "@go-modules"
 [recipes.build.arguments.project]
 values = "@go-main-packages"
 
+[recipes.lint.arguments.pkg]
+values = "@go-packages"
+
 [recipes.test]
 cmd = "go test"
 
 [recipes.build]
 cmd = "go build"
+
+[recipes.lint]
+cmd = "go vet"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAllowOpenDiscoveryArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.pkg]
+type = "rel_path"
+values = "@go-packages"
+
+[recipes.run.arguments.command]
+type = "rel_path"
+values = '@go-main-packages; @glob "*.go"'
+
+[recipes.test]
+cmd = "go test {pkg}"
+
+[recipes.run]
+cmd = "go run {command}"
+
+[recipes.check]
+cmd = '''
+@test[pkg=./internal/...]
+@run[command=./cmd/api/main.go]
+'''
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -504,7 +536,7 @@ cmd = "go build"
 func TestDocumentDiagnosticsAcceptDiscoveryArgumentValuesWithoutRecipeCommand(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.pkg]
 values = "@go-modules"
-default = "./..."
+default = "."
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -516,7 +548,7 @@ func TestDocumentDiagnosticsAcceptScriptDiscoveryArgumentValues(t *testing.T) {
 values = '''
 @go-modules
 '''
-default = "./..."
+default = "."
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -531,7 +563,7 @@ echo installed
 
 [recipes.test.arguments.pkg]
 values = "@go-modules"
-default = "./..."
+default = "."
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -725,7 +757,7 @@ cmd = "go test {pkg} {@}"
 [recipes.build.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+default = "."
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -744,7 +776,7 @@ cmd = "go test {pkg} {@}"
 [recipes.build.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+default = "."
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -763,7 +795,7 @@ cmd = "go test {pkg} {@}"
 [recipes.build.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+default = "."
 `)
 	assertOneDiagnostic(t, diagnostics, `unknown argument "count"`)
 	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build ./internal/recipe `), len(`@build ./internal/recipe count=1`))
@@ -857,7 +889,7 @@ GENERATED = "printf generated"
 local = "./internal/shadowtreelsp"
 
 [recipes.test.arguments.pkg]
-default = "./..."
+default = "."
 
 [recipes.test]
 for_each = "@enum one two"

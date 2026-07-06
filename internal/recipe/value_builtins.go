@@ -2,6 +2,8 @@ package recipe
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/parser"
@@ -9,9 +11,12 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/scriptref"
 	"mvdan.cc/sh/v3/syntax"
@@ -22,16 +27,20 @@ const (
 	globValuesName           = "glob"
 	goMainPackagesValuesName = "go-main-packages"
 	goModulesValuesName      = "go-modules"
+	goPackagesValuesName     = "go-packages"
 	linesValuesName          = "lines"
 	recipesValuesName        = "recipes"
 	varsValuesName           = "vars"
 )
 
+const goListTimeout = 5 * time.Second
+
 var builtinReferenceDetails = map[string]string{
 	enumValuesName:           "Static argument values",
 	globValuesName:           "Globbed filesystem values",
-	goMainPackagesValuesName: "Go main package directories",
+	goMainPackagesValuesName: "Go main package arguments",
 	goModulesValuesName:      "Go module directories",
+	goPackagesValuesName:     "Go package arguments",
 	linesValuesName:          "Values from a text file",
 	recipesValuesName:        "Resolved recipe names",
 	varsValuesName:           "Recipe placeholder names",
@@ -43,6 +52,7 @@ type ValueCandidate struct {
 }
 
 type ValueBuiltinOptions struct {
+	Context     context.Context
 	Dir         string
 	ConfigPath  string
 	Recipe      Recipe
@@ -95,7 +105,7 @@ func ValueBuiltinUsesFilesystem(command Command) (bool, bool, error) {
 	}
 	for _, call := range calls {
 		switch call.name {
-		case globValuesName, goMainPackagesValuesName, goModulesValuesName, linesValuesName:
+		case globValuesName, goMainPackagesValuesName, goModulesValuesName, goPackagesValuesName, linesValuesName:
 			return true, true, nil
 		}
 	}
@@ -130,6 +140,8 @@ func builtinValuesForCall(call valueBuiltinCall, opts ValueBuiltinOptions) ([]Va
 		return discoverGoMainPackages(valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case goModulesValuesName:
 		return discoverGoModules(valueBuiltinBaseDir(opts), opts.ValuePrefix)
+	case goPackagesValuesName:
+		return discoverGoPackagesContext(opts.Context, valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case linesValuesName:
 		return lineCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
 	case recipesValuesName:
@@ -162,7 +174,7 @@ func validateValueBuiltinArgs(name string, args []string) (string, bool, error) 
 		if len(args) != 1 {
 			return name, true, fmt.Errorf("@%s requires one argument", name)
 		}
-	case goMainPackagesValuesName, goModulesValuesName:
+	case goMainPackagesValuesName, goModulesValuesName, goPackagesValuesName:
 		if len(args) != 0 {
 			return name, true, fmt.Errorf("@%s does not take arguments", name)
 		}
@@ -333,7 +345,7 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 			if path != baseDir && skipGoDiscoveryDir(entry.Name()) {
 				return filepath.SkipDir
 			}
-			skip, err := skipGoDiscoveryPrefix(baseDir, path, prefix)
+			skip, err := skipGoPackagePrefix(baseDir, path, prefix)
 			if err != nil {
 				return err
 			}
@@ -349,7 +361,7 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 		if finalDirs[dir] {
 			return nil
 		}
-		value, err := relativeSlashPath(baseDir, dir)
+		value, err := goPackageValue(baseDir, dir)
 		if err != nil {
 			return err
 		}
@@ -376,7 +388,7 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 	dirs := slices.Sorted(maps.Keys(packageHelp))
 	candidates := make([]ValueCandidate, 0, len(dirs))
 	for _, dir := range dirs {
-		value, err := relativeSlashPath(baseDir, dir)
+		value, err := goPackageValue(baseDir, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -385,6 +397,115 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 			help = value
 		}
 		candidates = append(candidates, ValueCandidate{Value: value, Help: help})
+	}
+	return candidates, nil
+}
+
+func discoverGoPackages(baseDir, prefix string) ([]ValueCandidate, error) {
+	if !goPackagePrefixCanMatch(prefix) {
+		return nil, nil
+	}
+	return discoverGoPackagesContext(context.Background(), baseDir, prefix)
+}
+
+func discoverGoPackagesContext(parent context.Context, baseDir, prefix string) ([]ValueCandidate, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, goListTimeout)
+	defer cancel()
+	seen := map[string]ValueCandidate{}
+	addModulePackages := func(moduleDir, moduleValue string) {
+		modulePrefix := goModulePackagePrefix(moduleValue, prefix)
+		values, err := goListPackageCandidates(ctx, baseDir, moduleDir, goListPackagePattern(modulePrefix))
+		if err != nil {
+			return
+		}
+		for _, value := range values {
+			seen[value.Value] = value
+		}
+	}
+	addModulePackages(baseDir, ".")
+	if _, err := os.Stat(filepath.Join(baseDir, "go.work")); err == nil {
+		modules, err := goWorkModules(ctx, baseDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, module := range modules {
+			if module.Value == "." {
+				continue
+			}
+			moduleValue := "./" + module.Value
+			if !valuePrefixOverlaps(moduleValue, prefix) {
+				continue
+			}
+			addModulePackages(filepath.Join(baseDir, filepath.FromSlash(module.Value)), moduleValue)
+		}
+	}
+	return filterValueCandidates(slices.SortedFunc(maps.Values(seen), func(a, b ValueCandidate) int {
+		return strings.Compare(a.Value, b.Value)
+	}), prefix), nil
+}
+
+func goListPackageCandidates(ctx context.Context, baseDir, moduleDir, pattern string) ([]ValueCandidate, error) {
+	cmd := exec.CommandContext(ctx, "go", "list", "-e", "-buildvcs=false", "-f", "{{if not .Error}}{{.Dir}}\t{{.ImportPath}}{{end}}", pattern)
+	cmd.Dir = moduleDir
+	output, err := cmd.Output()
+	if err != nil && len(output) == 0 {
+		return nil, err
+	}
+	return parseGoListPackageCandidates(baseDir, output)
+}
+
+func goWorkModules(ctx context.Context, baseDir string) ([]ValueCandidate, error) {
+	cmd := exec.CommandContext(ctx, "go", "work", "edit", "-json", "go.work")
+	cmd.Dir = baseDir
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var work struct {
+		Use []struct {
+			DiskPath   string
+			ModulePath string
+		}
+	}
+	if err := json.Unmarshal(output, &work); err != nil {
+		return nil, err
+	}
+	candidates := make([]ValueCandidate, 0, len(work.Use))
+	for _, use := range work.Use {
+		moduleDir := filepath.FromSlash(use.DiskPath)
+		if !filepath.IsAbs(moduleDir) {
+			moduleDir = filepath.Join(baseDir, moduleDir)
+		}
+		value, err := relativeSlashPath(baseDir, moduleDir)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, ValueCandidate{
+			Value: value,
+			Help:  goModuleHelp(filepath.Join(moduleDir, "go.mod"), value),
+		})
+	}
+	return candidates, nil
+}
+
+func parseGoListPackageCandidates(baseDir string, output []byte) ([]ValueCandidate, error) {
+	var candidates []ValueCandidate
+	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		dir, importPath, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		value, err := goPackageValue(baseDir, dir)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, ValueCandidate{Value: value, Help: importPath})
 	}
 	return candidates, nil
 }
@@ -417,14 +538,75 @@ func skipGoDiscoveryDir(name string) bool {
 }
 
 func skipGoDiscoveryPrefix(baseDir, path, prefix string) (bool, error) {
+	return skipValuePrefix(baseDir, path, prefix, relativeSlashPath)
+}
+
+func skipGoPackagePrefix(baseDir, path, prefix string) (bool, error) {
+	return skipValuePrefix(baseDir, path, prefix, goPackageValue)
+}
+
+func skipValuePrefix(baseDir, path, prefix string, valueForPath func(string, string) (string, error)) (bool, error) {
 	if prefix == "" || path == baseDir {
 		return false, nil
 	}
-	value, err := relativeSlashPath(baseDir, path)
+	value, err := valueForPath(baseDir, path)
 	if err != nil {
 		return false, err
 	}
-	return !strings.HasPrefix(value, prefix) && !strings.HasPrefix(prefix, value+"/"), nil
+	return !valuePrefixOverlaps(value, prefix), nil
+}
+
+func goPackageValue(baseDir, path string) (string, error) {
+	value, err := relativeSlashPath(baseDir, path)
+	if err != nil {
+		return "", err
+	}
+	if value == "." {
+		return value, nil
+	}
+	return "./" + value, nil
+}
+
+func goPackagePrefixCanMatch(prefix string) bool {
+	return valuePrefixOverlaps(".", prefix)
+}
+
+func goModulePackagePrefix(moduleValue, prefix string) string {
+	if moduleValue == "." || prefix == "" {
+		return prefix
+	}
+	if prefix == moduleValue || prefix == moduleValue+"/" || strings.HasPrefix(moduleValue, strings.TrimSuffix(prefix, "/")) {
+		return ""
+	}
+	if strings.HasPrefix(prefix, moduleValue+"/") {
+		return "." + strings.TrimPrefix(prefix, moduleValue)
+	}
+	return prefix
+}
+
+func goListPackagePattern(prefix string) string {
+	if prefix == "" || strings.HasPrefix(".", prefix) || prefix == "." || prefix == "./" {
+		return "./..."
+	}
+	if !strings.HasPrefix(prefix, "./") {
+		return "./..."
+	}
+	trimmed := strings.TrimPrefix(prefix, "./")
+	if trimmed == "" {
+		return "./..."
+	}
+	if strings.HasSuffix(trimmed, "/") {
+		return "./" + trimmed + "..."
+	}
+	parent := path.Dir(trimmed)
+	if parent == "." {
+		return "./..."
+	}
+	return "./" + parent + "/..."
+}
+
+func valuePrefixOverlaps(value, prefix string) bool {
+	return prefix == "" || strings.HasPrefix(value, prefix) || strings.HasPrefix(prefix, value+"/")
 }
 
 func relativeSlashPath(baseDir, path string) (string, error) {

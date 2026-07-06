@@ -550,6 +550,7 @@ func (colors helpColors) color(code, text string) string {
 func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) ([]completion.Candidate, error) {
 	if len(arg.Values) > 0 {
 		if values, ok, err := recipe.BuiltinValues(arg.Values, recipe.ValueBuiltinOptions{
+			Context:    ctx,
 			Dir:        opts.Dir,
 			ConfigPath: opts.ConfigPath,
 			Recipe:     rec,

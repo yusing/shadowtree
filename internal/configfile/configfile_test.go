@@ -30,7 +30,7 @@ pre = ["go generate ./..."]
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+default = "."
 
 [recipes.test.arguments.count]
 help = "Repeat count."
@@ -73,6 +73,26 @@ default = 1
 	}
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")
+	}
+}
+
+func TestInitWritesGoModuleWorkflows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := Init(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"build", "codegen-test", "test", "tidy"} {
+		rec := loaded.Config.Recipes[name]
+		if values := recipe.ScriptBody(rec.ForEach); values != recipe.GoModuleValuesCommand {
+			t.Fatalf("%s for_each = %q", name, values)
+		}
+		if rec.Workdir != "{item}" {
+			t.Fatalf("%s workdir = %q, want {item}", name, rec.Workdir)
+		}
 	}
 }
 
@@ -121,7 +141,7 @@ func TestLoadShellCommandUsesArgumentDefault(t *testing.T) {
 cmd = 'printf "%s\n" {pkg}'
 
 [recipes.test.arguments.pkg]
-default = "./..."
+default = "."
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +157,7 @@ default = "./..."
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output != "./...\n" {
+	if output != ".\n" {
 		t.Fatalf("output = %q, want default argument forwarded", output)
 	}
 }

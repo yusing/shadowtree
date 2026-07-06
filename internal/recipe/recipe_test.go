@@ -309,8 +309,8 @@ func TestBuiltinValuesDiscoversGoMainPackages(t *testing.T) {
 		t.Fatal("BuiltinValues did not detect @go-main-packages")
 	}
 	want := []ValueCandidate{
-		{Value: "cmd/api", Help: "cmd/api"},
-		{Value: "tools/worker", Help: "Package main runs the worker."},
+		{Value: "./cmd/api", Help: "./cmd/api"},
+		{Value: "./tools/worker", Help: "Package main runs the worker."},
 	}
 	if !slices.Equal(values, want) {
 		t.Fatalf("values = %#v, want %#v", values, want)
@@ -327,7 +327,7 @@ func TestBuiltinValuesDiscoversGoMainPackagesWithPrefixAndBrokenFile(t *testing.
 
 	values, ok, err := BuiltinValues(
 		ScriptCommand("@go-main-packages"),
-		ValueBuiltinOptions{Dir: dir, ValuePrefix: "cmd/"},
+		ValueBuiltinOptions{Dir: dir, ValuePrefix: "./cmd/"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -336,10 +336,140 @@ func TestBuiltinValuesDiscoversGoMainPackagesWithPrefixAndBrokenFile(t *testing.
 		t.Fatal("BuiltinValues did not detect @go-main-packages")
 	}
 	want := []ValueCandidate{
-		{Value: "cmd/api", Help: "cmd/api"},
+		{Value: "./cmd/api", Help: "./cmd/api"},
 	}
 	if !slices.Equal(values, want) {
 		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoPackages(t *testing.T) {
+	dir := t.TempDir()
+	writeRootGoPackagesFixture(t, dir)
+
+	values, ok, err := BuiltinValues(ScriptCommand("@go-packages"), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-packages")
+	}
+	want := []ValueCandidate{
+		{Value: "./cmd/api", Help: "example.com/root/cmd/api"},
+		{Value: "./internal/lib", Help: "example.com/root/internal/lib"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoPackagesWithPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeRootGoPackagesFixture(t, dir)
+
+	values, ok, err := BuiltinValues(
+		ScriptCommand("@go-packages"),
+		ValueBuiltinOptions{Dir: dir, ValuePrefix: "./internal/"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-packages")
+	}
+	want := []ValueCandidate{{Value: "./internal/lib", Help: "example.com/root/internal/lib"}}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoPackagesWithBrokenSibling(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "good"))
+	writeFile(t, filepath.Join(dir, "good", "good.go"), "package good\n")
+	mkdirAll(t, filepath.Join(dir, "broken"))
+	writeFile(t, filepath.Join(dir, "broken", "broken.go"), "package\n")
+
+	values, ok, err := BuiltinValues(ScriptCommand("@go-packages"), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-packages")
+	}
+	want := []ValueCandidate{{Value: "./good", Help: "example.com/root/good"}}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesSkipsNestedGoPackagesWithoutWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "rootlib"))
+	writeFile(t, filepath.Join(dir, "internal", "rootlib", "rootlib.go"), "package rootlib\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api", "internal", "handler"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+	writeFile(t, filepath.Join(dir, "services", "api", "internal", "handler", "handler.go"), "package handler\n")
+
+	values, ok, err := BuiltinValues(ScriptCommand("@go-packages"), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-packages")
+	}
+	want := []ValueCandidate{
+		{Value: "./internal/rootlib", Help: "example.com/root/internal/rootlib"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestBuiltinValuesDiscoversGoPackagesAcrossWorkspaceModules(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	writeFile(t, filepath.Join(dir, "go.work"), "go 1.26\n\nuse (\n\t.\n\t./services/api\n)\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "rootlib"))
+	writeFile(t, filepath.Join(dir, "internal", "rootlib", "rootlib.go"), "package rootlib\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api", "internal", "handler"))
+	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+	writeFile(t, filepath.Join(dir, "services", "api", "internal", "handler", "handler.go"), "package handler\n")
+	mkdirAll(t, filepath.Join(dir, "services", "worker"))
+	writeFile(t, filepath.Join(dir, "services", "worker", "go.mod"), "module example.com/worker\n")
+	writeFile(t, filepath.Join(dir, "services", "worker", "worker.go"), "package worker\n")
+
+	values, ok, err := BuiltinValues(ScriptCommand("@go-packages"), ValueBuiltinOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("BuiltinValues did not detect @go-packages")
+	}
+	want := []ValueCandidate{
+		{Value: "./internal/rootlib", Help: "example.com/root/internal/rootlib"},
+		{Value: "./services/api/internal/handler", Help: "example.com/api/internal/handler"},
+	}
+	if !slices.Equal(values, want) {
+		t.Fatalf("values = %#v, want %#v", values, want)
+	}
+}
+
+func TestGoListPackagePatternNarrowsDirectoryPrefixes(t *testing.T) {
+	for prefix, want := range map[string]string{
+		"":                  "./...",
+		".":                 "./...",
+		"./":                "./...",
+		"./internal":        "./...",
+		"./internal/":       "./internal/...",
+		"./internal/hand":   "./internal/...",
+		"./internal/pkg/ha": "./internal/pkg/...",
+	} {
+		if got := goListPackagePattern(prefix); got != want {
+			t.Fatalf("goListPackagePattern(%q) = %q, want %q", prefix, got, want)
+		}
 	}
 }
 
@@ -394,6 +524,7 @@ func TestValidateValueBuiltinRejectsInvalidForms(t *testing.T) {
 		{name: "lines extra arg", command: ScriptCommand("@lines a b")},
 		{name: "go modules extra arg", command: ScriptCommand("@go-modules x")},
 		{name: "go main packages extra arg", command: ScriptCommand("@go-main-packages x")},
+		{name: "go packages extra arg", command: ScriptCommand("@go-packages x")},
 		{name: "recipes extra arg", command: ScriptCommand("@recipes x")},
 		{name: "vars extra arg", command: ScriptCommand("@vars x")},
 		{name: "non literal word", command: ScriptCommand(`@enum "$x"`)},
@@ -559,6 +690,16 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	if RecipeSandboxed(builtins["fmt"]) {
 		t.Fatal("built-in fmt is sandboxed, want unsandboxed")
 	}
+	if !slices.Equal(builtins["fmt"].Cmd, Command{"go", "fmt", "{target}", "{@}"}) {
+		t.Fatalf("fmt Cmd = %#v", builtins["fmt"].Cmd)
+	}
+	target := builtins["fmt"].Arguments["target"]
+	if target.Type != "rel_path" || target.Position != 1 || target.Default != "./..." {
+		t.Fatalf("fmt target argument = %#v", target)
+	}
+	if values := ScriptBody(target.Values); values != GoFmtTargetValuesCommand {
+		t.Fatalf("fmt target values = %q", values)
+	}
 	check := builtins["check"]
 	if body := ScriptBody(check.Cmd); body != "set -e; @vet {@}; @test {@}" {
 		t.Fatalf("check script = %q", body)
@@ -571,6 +712,52 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	command := run.Arguments["command"]
 	if command.Type != "rel_path" || command.Position != 1 || !command.Required {
 		t.Fatalf("run command argument = %#v", command)
+	}
+	if values := ScriptBody(command.Values); values != GoRunCommandValuesCommand {
+		t.Fatalf("run command values = %q", values)
+	}
+}
+
+func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
+	builtins := Builtins(GoProfile, BuiltinOptions{})
+	for _, name := range []string{"build", "fmt", "generate", "lint", "test", "test-race", "tidy", "vet"} {
+		rec := builtins[name]
+		if values := ScriptBody(rec.ForEach); values != GoModuleValuesCommand {
+			t.Fatalf("%s for_each = %q", name, values)
+		}
+		if rec.Workdir != "{item}" {
+			t.Fatalf("%s workdir = %q, want {item}", name, rec.Workdir)
+		}
+	}
+}
+
+func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
+	builtins := Builtins(GoProfile, BuiltinOptions{})
+	for _, name := range []string{"build", "generate", "lint", "test", "test-race", "vet"} {
+		arg := builtins[name].Arguments["pkg"]
+		if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
+			t.Fatalf("%s pkg argument = %#v", name, arg)
+		}
+		if values := ScriptBody(arg.Values); values != GoPackageValuesCommand {
+			t.Fatalf("%s pkg values = %q", name, values)
+		}
+	}
+}
+
+func TestGoBuiltinOverrideCanReplaceModuleFanOutWithRootItem(t *testing.T) {
+	merged := MergeRecipe(Builtins(GoProfile, BuiltinOptions{})["test"], Recipe{
+		ForEach: ScriptCommand("@enum ."),
+		Workdir: ".",
+		Cmd:     Command{"go", "test", "{pkg}"},
+		Arguments: map[string]Argument{
+			"pkg": {Type: "rel_path", Required: true, Values: ScriptCommand(GoPackageValuesCommand)},
+		},
+	})
+	if values := ScriptBody(merged.ForEach); values != "@enum ." {
+		t.Fatalf("for_each = %q, want @enum .", values)
+	}
+	if merged.Workdir != "." {
+		t.Fatalf("workdir = %q, want .", merged.Workdir)
 	}
 }
 
@@ -1397,6 +1584,15 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeRootGoPackagesFixture(t *testing.T, dir string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
+	writeFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "package main\n")
 }
 
 func writeNodePackage(t *testing.T, dir, content string) {

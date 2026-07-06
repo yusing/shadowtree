@@ -18,6 +18,14 @@ const (
 	GoProfile   = "go"
 	NodeProfile = "node"
 )
+
+const (
+	GoPackageValuesCommand    = "@go-packages"
+	GoFmtTargetValuesCommand  = `@go-packages; @glob "*.go"`
+	GoModuleValuesCommand     = "@go-modules"
+	GoRunCommandValuesCommand = `@go-main-packages; @glob "*.go"`
+)
+
 const scriptCommand = "__shadowtree_script__"
 const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
@@ -140,72 +148,85 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		}
 		return map[string]Recipe{}
 	}
-	defaultGoPackageArgument := Argument{Type: "rel_path", Default: "./..."}
-	lint := Recipe{
+	moduleWide := func(rec Recipe) Recipe {
+		rec.ForEach = ScriptCommand(GoModuleValuesCommand)
+		rec.Workdir = "{" + ForEachItemPlaceholder + "}"
+		return rec
+	}
+	defaultGoPackageArgument := Argument{
+		Type:     "rel_path",
+		Position: 1,
+		Default:  "./...",
+		Values:   ScriptCommand(GoPackageValuesCommand),
+	}
+	lint := moduleWide(Recipe{
 		Help: "Run Go lint checks.",
 		Cmd:  Command{"golangci-lint", "run", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": defaultGoPackageArgument,
 		},
-	}
+	})
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
-		lint = Recipe{
+		lint = moduleWide(Recipe{
 			Help: "Run Go static checks with go vet.",
 			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		}
+		})
 	}
 	return map[string]Recipe{
 		"check": {
 			Help: "Run vet and tests.",
 			Cmd:  ScriptCommand(`set -e; @vet {@}; @test {@}`),
 		},
-		"test": {
+		"test": moduleWide(Recipe{
 			Help: "Run Go tests.",
 			Cmd:  Command{"go", "test", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		},
-		"test-race": {
+		}),
+		"test-race": moduleWide(Recipe{
 			Help: "Run Go tests with the race detector.",
 			Cmd:  Command{"go", "test", "-race", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		},
-		"vet": {
+		}),
+		"vet": moduleWide(Recipe{
 			Help: "Run go vet.",
 			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		},
+		}),
 		"lint": lint,
-		"fmt": {
+		"fmt": moduleWide(Recipe{
 			Help: "Format Go source files.",
-			Cmd:  Command{"gofmt", "-w", "{target}", "{@}"},
-			Arguments: map[string]Argument{
-				"target": {Type: "rel_path", Default: "."},
-			},
+			Cmd:  Command{"go", "fmt", "{target}", "{@}"},
+			Arguments: map[string]Argument{"target": {
+				Type:     "rel_path",
+				Position: 1,
+				Default:  "./...",
+				Values:   ScriptCommand(GoFmtTargetValuesCommand),
+			}},
 			Sandboxed: new(false),
-		},
-		"build": {
+		}),
+		"build": moduleWide(Recipe{
 			Help: "Build Go packages.",
 			Cmd:  Command{"go", "build", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		},
-		"generate": {
+		}),
+		"generate": moduleWide(Recipe{
 			Help: "Run go generate.",
 			Cmd:  Command{"go", "generate", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		},
+		}),
 		"run": {
 			Help: "Run a Go command.",
 			Cmd:  Command{"go", "run", "{command}", "{@}"},
@@ -214,14 +235,15 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 					Type:     "rel_path",
 					Position: 1,
 					Required: true,
+					Values:   ScriptCommand(GoRunCommandValuesCommand),
 				},
 			},
 		},
-		"tidy": {
+		"tidy": moduleWide(Recipe{
 			Help:      "Tidy Go module files.",
 			Cmd:       Command{"go", "mod", "tidy"},
 			Sandboxed: new(false),
-		},
+		}),
 	}
 }
 

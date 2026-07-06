@@ -73,17 +73,18 @@ shadowtree --print test
 shadowtree --verbose build
 ```
 
-Built-in recipes now model defaults through typed `arguments` plus placeholders in
-`cmd`:
+Built-in Go workflow recipes run once per discovered Go module:
 
 ```sh
-shadowtree test ./internal/recipe
+shadowtree --print test
 ```
 
-runs:
+prints the module fan-out:
 
-```sh
-go test ./internal/recipe
+```text
+for_each: @go-modules
+workdir: {item}
+main: go test ./... {@}
 ```
 
 ## Sandboxed By Default
@@ -96,6 +97,8 @@ Recipes that intentionally edit the checkout can opt out:
 ```toml
 [recipes.tidy]
 sandboxed = false
+for_each = "@go-modules"
+workdir = "{item}"
 cmd = "go mod tidy"
 ```
 
@@ -154,7 +157,8 @@ cmd = "go test {pkg} {@}"
 [recipes.test.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+required = true
+values = "@go-packages"
 
 [recipes.build]
 help = "Build a Go package."
@@ -165,10 +169,13 @@ help = "Go package to build."
 type = "string"
 position = 1
 default = "./cmd/shadowtree"
+values = "@go-packages"
 
 [recipes.tidy]
 help = "Tidy Go module files."
 sandboxed = false
+for_each = "@go-modules"
+workdir = "{item}"
 cmd = "go mod tidy"
 ```
 
@@ -180,7 +187,8 @@ cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
+values = "@go-packages"
 ```
 
 Command strings run through the configured shell after placeholder expansion.
@@ -202,7 +210,8 @@ cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
+values = "@go-packages"
 ```
 
 Referenced recipes run in the current workspace. They do not start a nested
@@ -269,7 +278,8 @@ cmd = "go test {pkg} {@}"
 [recipes.test.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+required = true
+values = "@go-packages"
 ```
 
 For typed recipes, positional values and known `key=value` argument values are
@@ -294,22 +304,28 @@ When `--profile go` is set, config has `profile = "go"`, or Shadowtree runs in a
 detected Go project without a config file, it adds these recipes:
 
 ```text
-build      go build ./...
-check      @vet && @test ./...
-fmt        gofmt -w .
-generate   go generate ./...
-lint       golangci-lint run ./... or go vet ./...
+build      for each @go-modules: go build ./...
+check      @vet && @test
+fmt        for each @go-modules: go fmt ./...
+generate   for each @go-modules: go generate ./...
+lint       for each @go-modules: golangci-lint run ./... or go vet ./...
 run        go run {command}
-test       go test ./...
-test-race  go test -race ./...
-tidy       go mod tidy
-vet        go vet ./...
+test       for each @go-modules: go test ./...
+test-race  for each @go-modules: go test -race ./...
+tidy       for each @go-modules: go mod tidy
+vet        for each @go-modules: go vet ./...
 ```
 
-`fmt` and `tidy` are unsandboxed by default, so `gofmt -w` and `go mod tidy`
+`fmt` and `tidy` are unsandboxed by default, so `go fmt` and `go mod tidy`
 write directly to the host checkout. Other built-in Go recipes are sandboxed
-unless project config overrides them. Built-in `run` takes a required positional
-`command` argument with `rel_path` type.
+unless project config overrides them. Module-wide Go built-ins use
+`for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
+is evaluated inside each module directory, not at the repo root. Package-style
+Go built-ins also expose an optional positional `pkg` argument for shell
+completion from `@go-packages`; `fmt` exposes an optional positional `target`
+from `@go-packages` plus `@glob "*.go"`. Built-in `run` takes a required
+positional `command` argument with `rel_path` type and completes from
+`@go-main-packages` plus `@glob "*.go"`.
 
 Project config can override any built-in recipe field. Use
 `shadowtree --print <recipe>` to inspect the final command.

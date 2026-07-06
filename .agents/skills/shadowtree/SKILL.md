@@ -149,7 +149,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
 
-Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
+Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses typed `arguments` plus placeholders in `cmd` instead of extra argument lists.
 
@@ -163,13 +163,13 @@ cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
 ```
 
 Command strings run through the configured shell after placeholder expansion.
 A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
-other strings run in the shell. Put defaults in typed `arguments` and
-reference them from `cmd`.
+other strings run in the shell. Put typed `arguments` in placeholders when a
+recipe needs validated inputs.
 
 Use recipe references from `cmd`, `pre`, `post`, or argument `values`:
 
@@ -180,7 +180,7 @@ cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
 ```
 
 Use bracket-style syntax to pass args to referenced recipes, e.g.
@@ -257,8 +257,8 @@ Fan-out placeholders exist only when a recipe has `for_each`:
 - `{item_index}`: zero-based candidate index.
 
 `for_each` accepts the same value-provider forms as argument `values`, including
-`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-main-packages`, `@recipes`,
-`@vars`, command output, and recipe references. `pre` runs once before the loop;
+`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-packages`,
+`@go-main-packages`, `@recipes`, `@vars`, command output, and recipe references. `pre` runs once before the loop;
 `post` runs once after it; the first failing item stops later items. `workdir`
 can also be used without `for_each`; it must resolve to a relative workspace path.
 
@@ -275,9 +275,9 @@ Use fields under `[recipes.<name>.arguments.<arg>]`:
 - `required`: true when user must supply the argument.
 - `default`: string, integer, number, or boolean default; converted to string then type-validated.
 - `values`: shell string command that prints completion/help candidates, one per line as `value` or `value<TAB>help`; TOML arrays are invalid here, including `values = []`.
-  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@enum api='API service'`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-main-packages`, `@recipes`, and `@vars`.
+  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@enum api='API service'`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-packages`, `@go-main-packages`, `@recipes`, and `@vars`.
   `@enum` attaches help for `value=help text` entries when the help side contains whitespace; quote the help side, for example `@enum all='all modules'`. Single-token values such as `GOOS=linux` remain literal values.
-  `@go-modules` returns directories containing `go.mod`, using `.` for the config-directory module and module paths as help. `@go-main-packages` returns directories containing non-test Go files with `package main`, using package comments as help when available. Both Go discovery builtins are filesystem-only and skip common generated/vendor directories.
+  `@go-modules` returns directories containing `go.mod`, using `.` for the config-directory module and module paths as help. `@go-packages` runs `go list` in the config-directory module and, when `go.work` is present, in modules listed by the workspace. It returns package arguments such as `./internal/recipe`, with import paths as help. `@go-main-packages` returns package arguments for directories containing non-test Go files with `package main`, using package comments as help when available. Go discovery builtins are filesystem-backed and skip common generated/vendor directories where applicable.
   A scalar value that is exactly `@recipe` or `@path:recipe` invokes that recipe directly. Pass args with bracket syntax, for example `values = "@targets[kind=go]"`.
   Other scalar `values` commands run once through the configured recipe shell, for example `values = "printf 'api\tAPI service\n'"`.
   Builtin `values` can concatenate multiple simple builtin commands with semicolons without running a shell, for example `values = "@go-modules; @enum all='all modules'"`.
@@ -298,7 +298,7 @@ Resolution rules:
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
-- Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, and `@go-main-packages` for editor-safe completions.
+- Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, `@go-packages`, and `@go-main-packages` for editor-safe completions.
 
 Completion criterion: typed args are used when the recipe needs named, validated, defaulted, positional, or completable values.
 
@@ -337,19 +337,19 @@ Completion criterion: sync-out paths are narrow and deletion semantics are inten
 When profile is `go`, built-ins are:
 
 ```text
-build      go build ./...
-check      @vet && @test ./...
-fmt        gofmt -w .
-generate   go generate ./...
-lint       golangci-lint run ./... or go vet ./...
+build      for each @go-modules: go build ./...
+check      @vet && @test
+fmt        for each @go-modules: go fmt ./...
+generate   for each @go-modules: go generate ./...
+lint       for each @go-modules: golangci-lint run ./... or go vet ./...
 run        go run {command}
-test       go test ./...
-test-race  go test -race ./...
-tidy       go mod tidy
-vet        go vet ./...
+test       for each @go-modules: go test ./...
+test-race  for each @go-modules: go test -race ./...
+tidy       for each @go-modules: go mod tidy
+vet        for each @go-modules: go vet ./...
 ```
 
-`fmt` and `tidy` are unsandboxed by default. `run` has a required positional `command` argument with `rel_path` type. Project config can override any built-in recipe field; partial overrides preserve unspecified built-in fields.
+`fmt` and `tidy` are unsandboxed by default. Module-wide Go built-ins use `for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern is evaluated inside each module directory, not at the repo root. Package-style Go built-ins also expose an optional positional `pkg` argument for shell completion from `@go-packages`; `fmt` exposes an optional positional `target` from `@go-packages` plus `@glob "*.go"`. `run` has a required positional `command` argument with `rel_path` type and completes from `@go-main-packages` plus `@glob "*.go"`. Project config can override any built-in recipe field; partial overrides preserve unspecified built-in fields.
 
 Completion criterion: use `shadowtree recipes` or `shadowtree --print <recipe>` to confirm the built-in or overridden behavior before relying on it.
 
@@ -379,6 +379,6 @@ shadowtree completion fish > ~/.config/fish/completions/shadowtree.fish
 command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 ```
 
-Completion includes commands, resolved recipes, `--profile go` and `--profile node`, typed argument names, bool values, path/rel_path filesystem candidates, dynamic `values` output, and argument-values builtins including Go module/main-package discovery. Completion reads `--config` and `--profile` when they appear before the command.
+Completion includes commands, resolved recipes, `--profile go` and `--profile node`, typed argument names, bool values, path/rel_path filesystem candidates, dynamic `values` output, and argument-values builtins including Go module/package/main-package discovery. Completion reads `--config` and `--profile` when they appear before the command.
 
 Completion criterion: after config changes affecting recipes or arguments, regenerate or re-source shell completion before testing interactive behavior.

@@ -25,9 +25,9 @@ This document describes the behavior currently implemented by the project.
 - Shadowtree does not require reflinks.
 - Shadowtree does not currently provide Docker, remote execution, matrix jobs,
   watch mode, or persistent named sessions.
-- Shadowtree does not provide built-in language-aware argument completion.
-  Projects can opt into dynamic argument completion with recipe `values`
-  commands.
+- Shadowtree does not try to cover every language-specific workflow. Supported
+  profiles provide focused defaults, and projects can add more dynamic argument
+  completion with recipe `values` commands.
 - Shadowtree's editor integrations do not replace runtime config validation.
   The CLI loader remains authoritative.
 
@@ -203,7 +203,8 @@ cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
+values = "@go-packages"
 
 [recipes.build.arguments.project]
 values = "@list-build-targets"
@@ -311,8 +312,9 @@ and shell completion.
 `for_each`
 : Optional value-provider command. When set, `cmd` runs once per candidate
 value. It accepts the same value-provider forms as argument `values`, including
-`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-main-packages`, `@recipes`,
-`@vars`, command output, and recipe references.
+`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-packages`,
+`@go-main-packages`, `@recipes`, `@vars`, command output, and recipe
+references.
 
 `workdir`
 : Optional relative workspace path used as the working directory for the main
@@ -379,6 +381,7 @@ values = "@enum api='API service' worker='Worker service'"
 values = '@lines config/targets.txt'
 values = '@glob "cmd/*"'
 values = "@go-modules; @enum all='all modules'"
+values = '@go-packages'
 values = '@go-main-packages'
 values = '@recipes'
 values = '@vars'
@@ -391,11 +394,15 @@ Single-token values such as `GOOS=linux` remain
 literal values. `@lines` reads candidates from a text file, using the same
 `value<TAB>help` line format. `@glob` returns filesystem matches. `@go-modules`
 returns directories containing `go.mod`, with `.` representing the config
-directory module and help from the module directive. `@go-main-packages`
-returns directories containing non-test Go files with `package main`, with
-help from package comments when available. Multiple builtin value commands in a
-`values` field can be separated with `;`; their candidates are concatenated
-without running a shell. `@recipes` returns resolved recipe names.
+directory module and help from the module directive. `@go-packages` runs
+`go list` in the config-directory module and, when `go.work` is present, in
+modules listed by the workspace. It returns package arguments such as
+`./internal/recipe`, with help from import paths. `@go-main-packages` returns
+package arguments for directories containing non-test Go files with
+`package main`, with help from package comments when available. Multiple builtin
+value commands in a `values` field can be separated with `;`; their candidates
+are concatenated without running a shell. `@recipes` returns resolved recipe
+names.
 `@vars` returns recipe placeholder and argument names. Relative `@lines` paths,
 `@glob` patterns, and Go discovery walks resolve from the config file directory
 when available.
@@ -414,9 +421,7 @@ help = "Go package to build."
 type = "string"
 position = 1
 default = "./cmd/shadowtree"
-values = '''
-go list -f '{{.ImportPath}}{{"\t"}}{{.Doc}}' ./cmd/...
-'''
+values = "@go-packages"
 
 [recipes.build.arguments.binary]
 help = "Output binary name under bin/."
@@ -466,7 +471,8 @@ cmd = "go test {pkg} {@}"
 [recipes.test.arguments.pkg]
 type = "rel_path"
 position = 1
-default = "./..."
+required = true
+values = "@go-packages"
 ```
 
 ```sh
@@ -527,29 +533,34 @@ Example:
 ```toml
 [recipes.test]
 help = "Run generated-code tests."
-pre = ["go generate ./..."]
+for_each = "@enum ."
+workdir = "."
+pre = ["go generate {pkg}"]
 cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
-default = "./..."
+required = true
+values = "@go-packages"
 ```
 
-The built-in `test` placeholder defaults remain:
+The built-in `test` recipe keeps the module fan-out from the Go profile unless
+the override explicitly replaces `for_each` and `workdir`:
 
 ```text
-cmd = "go test {pkg} {@}"
-pkg default = "./..."
+for_each = @go-modules
+workdir = {item}
+cmd = "go test ./... {@}"
 ```
 
-Resolved without CLI args:
+The built-in `test` recipe runs once per module. In each module workdir it runs:
 
 ```sh
-go generate ./...
 go test ./...
 ```
 
-Resolved with CLI args:
+With the override above, `for_each = "@enum ."` runs one item from the root
+workdir and CLI args are parsed by the custom typed argument:
 
 ```sh
 shadowtree test ./internal/recipe
@@ -558,7 +569,7 @@ shadowtree test ./internal/recipe
 runs:
 
 ```sh
-go generate ./...
+go generate ./internal/recipe
 go test ./internal/recipe
 ```
 
@@ -617,6 +628,7 @@ enum
 glob
 go-main-packages
 go-modules
+go-packages
 help
 lines
 vars
@@ -625,8 +637,8 @@ __complete
 ```
 
 The argument-values builtins (`enum`, `glob`, `go-main-packages`, `go-modules`,
-`lines`, `recipes`, and `vars`) are reserved as recipe names. Future built-in
-`@` command identifiers are also reserved.
+`go-packages`, `lines`, `recipes`, and `vars`) are reserved as recipe names.
+Future built-in `@` command identifiers are also reserved.
 
 ## Built-In Profiles
 
@@ -658,22 +670,28 @@ The Go profile is selected when:
 Built-in Go recipes:
 
 ```text
-build      go build ./...
-check      @vet && @test ./...
-fmt        gofmt -w .
-generate   go generate ./...
-lint       golangci-lint run ./... if available, otherwise go vet ./...
+build      for each @go-modules: go build ./...
+check      @vet && @test
+fmt        for each @go-modules: go fmt ./...
+generate   for each @go-modules: go generate ./...
+lint       for each @go-modules: golangci-lint run ./... if available, otherwise go vet ./...
 run        go run {command}
-test       go test ./...
-test-race  go test -race ./...
-tidy       go mod tidy
-vet        go vet ./...
+test       for each @go-modules: go test ./...
+test-race  for each @go-modules: go test -race ./...
+tidy       for each @go-modules: go mod tidy
+vet        for each @go-modules: go vet ./...
 ```
 
-Built-in `fmt` and `tidy` are unsandboxed by default, so `gofmt -w` and
+Built-in `fmt` and `tidy` are unsandboxed by default, so `go fmt` and
 `go mod tidy` update the host checkout directly. Other built-in Go recipes are
-sandboxed unless project config overrides them. Built-in `run` has a required
-positional `command` argument with `rel_path` type.
+sandboxed unless project config overrides them. Module-wide Go built-ins use
+`for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
+is evaluated inside each module directory, not at the repo root. Package-style
+Go built-ins also expose an optional positional `pkg` argument for shell
+completion from `@go-packages`; `fmt` exposes an optional positional `target`
+from `@go-packages` plus `@glob "*.go"`. Built-in `run` has a required
+positional `command` argument with `rel_path` type and completes from
+`@go-main-packages` plus `@glob "*.go"`.
 
 ## Built-In Node Profile
 

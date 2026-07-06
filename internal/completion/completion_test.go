@@ -331,14 +331,89 @@ func TestCandidatesCompleteComposedBuiltinArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteGoPackagesBuiltinArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeTextFile(t, filepath.Join(dir, "services", "api", "api.go"), "package api\n")
+
+	recipes := map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test", "{pkg}"},
+			Arguments: map[string]recipe.Argument{
+				"pkg": {
+					Type:   "rel_path",
+					Values: recipe.ScriptCommand("@go-packages"),
+				},
+			},
+		},
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "test", "pkg=./s"}, recipes, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "pkg=./services/api", Help: "example.com/root/services/api"}) {
+		t.Fatalf("candidates = %#v, want services/api package value", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoPackagesBuiltinArgumentValuesAcrossWorkspaceModules(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	writeTextFile(t, filepath.Join(dir, "go.work"), "go 1.26\n\nuse (\n\t.\n\t./services/api\n)\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api", "internal", "handler"))
+	writeTextFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
+	writeTextFile(t, filepath.Join(dir, "services", "api", "internal", "handler", "handler.go"), "package handler\n")
+
+	recipes := map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test", "{pkg}"},
+			Arguments: map[string]recipe.Argument{
+				"pkg": {
+					Type:   "rel_path",
+					Values: recipe.ScriptCommand("@go-packages"),
+				},
+			},
+		},
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "test", "pkg=./services/"}, recipes, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "pkg=./services/api/internal/handler", Help: "example.com/api/internal/handler"}) {
+		t.Fatalf("candidates = %#v, want nested module package value", candidates)
+	}
+}
+
+func TestCandidatesDoNotInventGoPackagesAllPackagesValue(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
+	writeTextFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
+
+	recipes := map[string]recipe.Recipe{
+		"test": {
+			Cmd: recipe.Command{"go", "test", "{pkg}"},
+			Arguments: map[string]recipe.Argument{
+				"pkg": {
+					Type:   "rel_path",
+					Values: recipe.ScriptCommand("@go-packages"),
+				},
+			},
+		},
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "test", "pkg=./"}, recipes, Options{Dir: dir})
+
+	if hasCandidate(candidates, "pkg=./...") {
+		t.Fatalf("candidates = %#v, want no synthetic all-packages value", candidates)
+	}
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "pkg=./internal/lib", Help: "example.com/root/internal/lib"}) {
+		t.Fatalf("candidates = %#v, want real package value", candidates)
+	}
+}
+
 func TestCandidatesCompleteGoMainPackagesBuiltinArgumentValues(t *testing.T) {
 	dir := t.TempDir()
 	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
-	if err := os.WriteFile(filepath.Join(dir, "cmd", "api", "main.go"), []byte("// Package main builds the API.\npackage main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeTextFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "// Package main builds the API.\npackage main\n")
 
-	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project=cmd/"}, map[string]recipe.Recipe{
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project=./cmd/"}, map[string]recipe.Recipe{
 		"build": {
 			Cmd: recipe.Command{"go", "build"},
 			Arguments: map[string]recipe.Argument{
@@ -350,8 +425,101 @@ func TestCandidatesCompleteGoMainPackagesBuiltinArgumentValues(t *testing.T) {
 		},
 	}, Options{Dir: dir})
 
-	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "project=cmd/api", Help: "Package main builds the API."}) {
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "project=./cmd/api", Help: "Package main builds the API."}) {
 		t.Fatalf("candidates = %#v, want cmd/api main package value", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoBuiltinRunCommandArgumentValues(t *testing.T) {
+	dir := t.TempDir()
+	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
+	writeTextFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "// Package main builds the API.\npackage main\n")
+
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: dir})
+	candidates := completeWithOptions(t, []string{"shadowtree", "run", "command=./cmd/"}, recipes, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "command=./cmd/api", Help: "Package main builds the API."}) {
+		t.Fatalf("candidates = %#v, want cmd/api main package value", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoBuiltinPackageAndFmtPositionals(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	writeTextFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
+	writeTextFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
+
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: dir})
+	candidates := completeWithOptions(t, []string{"shadowtree", "vet", ""}, recipes, Options{Dir: dir})
+	if !hasCandidate(candidates, "./internal/lib") || hasCandidate(candidates, "pkg=") {
+		t.Fatalf("vet candidates = %#v, want package positional value", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "fmt", ""}, recipes, Options{Dir: dir})
+	if !hasCandidate(candidates, "./internal/lib") || !hasCandidate(candidates, "main.go") {
+		t.Fatalf("fmt candidates = %#v, want package and file positional values", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoFmtTargetValuesCommand(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	writeTextFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
+	writeTextFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
+
+	recipes := map[string]recipe.Recipe{
+		"fmt": {
+			Cmd: recipe.Command{"go", "fmt", "{target}"},
+			Arguments: map[string]recipe.Argument{
+				"target": {
+					Type:   "rel_path",
+					Values: recipe.ScriptCommand(recipe.GoFmtTargetValuesCommand),
+				},
+			},
+		},
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "fmt", "target=./internal/"}, recipes, Options{Dir: dir})
+
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "target=./internal/lib", Help: "example.com/root/internal/lib"}) {
+		t.Fatalf("candidates = %#v, want internal/lib package target", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "fmt", "target=m"}, recipes, Options{Dir: dir})
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "target=main.go", Help: "file"}) {
+		t.Fatalf("candidates = %#v, want main.go file target", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "fmt", "target=./"}, recipes, Options{Dir: dir})
+	if hasCandidate(candidates, "target=./...") {
+		t.Fatalf("candidates = %#v, want no synthetic ./... target", candidates)
+	}
+}
+
+func TestCandidatesCompleteGoFmtTargetValuesCommandWithoutModule(t *testing.T) {
+	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "main.go"), "package main\n")
+
+	recipes := map[string]recipe.Recipe{
+		"fmt": {
+			Cmd: recipe.Command{"go", "fmt", "{target}"},
+			Arguments: map[string]recipe.Argument{
+				"target": {
+					Type:   "rel_path",
+					Values: recipe.ScriptCommand(recipe.GoFmtTargetValuesCommand),
+				},
+			},
+		},
+	}
+	candidates := completeWithOptions(t, []string{"shadowtree", "fmt", "target=m"}, recipes, Options{Dir: dir})
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "target=main.go", Help: "file"}) {
+		t.Fatalf("candidates = %#v, want main.go file target", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "fmt", "target=./"}, recipes, Options{Dir: dir})
+	if hasCandidate(candidates, "target=./...") {
+		t.Fatalf("candidates = %#v, want no synthetic ./... target", candidates)
 	}
 }
 
@@ -919,6 +1087,13 @@ func mkdirAll(t *testing.T, path string) {
 func writeFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTextFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

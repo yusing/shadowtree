@@ -406,8 +406,8 @@ func recipeReferenceArgumentValueExists(ctx context.Context, name, value string,
 }
 
 func recipeReferenceArgumentValueCheckAllowed(values recipe.Command) bool {
-	_, ok, err := recipe.ValidateValueBuiltin(values)
-	return ok && err == nil
+	usesFilesystem, ok, err := recipe.ValueBuiltinUsesFilesystem(values)
+	return ok && err == nil && !usesFilesystem
 }
 
 func unquoteRecipeReferenceArgumentValue(value string) string {

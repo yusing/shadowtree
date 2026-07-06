@@ -272,6 +272,7 @@ func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, en
 		}
 		defer cleanup()
 		values, _, err := recipe.BuiltinValues(command, recipe.ValueBuiltinOptions{
+			Context: ctx,
 			Dir:     builtinDir,
 			Recipe:  options.Resolved.Recipe,
 			Recipes: options.Recipes,

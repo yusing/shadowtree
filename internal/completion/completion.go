@@ -412,7 +412,7 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 		return candidates
 	}
 	if active != "" {
-		if candidates := positionalValueCandidates(tokenPrefix, active, rec, used, opts); len(candidates) > 0 {
+		if candidates := positionalValueCandidates(ctx, tokenPrefix, active, rec, recipes, used, opts); len(candidates) > 0 {
 			return candidates
 		}
 	}
@@ -435,11 +435,16 @@ func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Re
 		valuePrefix, prefix := splitQuotedValuePrefix(valuePrefix, key+"=")
 		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
+	if current == "" {
+		if candidates := positionalValueCandidates(ctx, "", current, rec, recipes, used, opts); len(candidates) > 0 {
+			return candidates
+		}
+	}
 	if candidates := argumentNameCandidates("", current, rec, used); len(candidates) > 0 {
 		return candidates
 	}
 	if current != "" {
-		if candidates := positionalValueCandidates("", current, rec, used, opts); len(candidates) > 0 {
+		if candidates := positionalValueCandidates(ctx, "", current, rec, recipes, used, opts); len(candidates) > 0 {
 			return candidates
 		}
 	}
@@ -518,6 +523,7 @@ func staticValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts
 
 func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
 	if values, ok, err := recipe.BuiltinValues(arg.Values, recipe.ValueBuiltinOptions{
+		Context:     ctx,
 		Dir:         opts.Dir,
 		ConfigPath:  opts.ConfigPath,
 		Recipe:      rec,
@@ -594,16 +600,13 @@ func usedArguments(spec shellSpec, tokens []string, current string, rec recipe.R
 	return used
 }
 
-func positionalValueCandidates(prefix, valuePrefix string, rec recipe.Recipe, used map[string]bool, opts Options) []Candidate {
+func positionalValueCandidates(ctx context.Context, prefix, valuePrefix string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	for _, name := range recipe.PositionalArguments(rec.Arguments) {
 		if used[name] {
 			continue
 		}
 		arg := rec.Arguments[name]
-		if argumentType(arg) != "path" && argumentType(arg) != "rel_path" {
-			return nil
-		}
-		return pathValueCandidates(prefix, valuePrefix, arg, opts)
+		return valueCandidates(ctx, prefix, valuePrefix, arg, rec, recipes, opts)
 	}
 	return nil
 }
