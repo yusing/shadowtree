@@ -676,7 +676,7 @@ fix        for each @go-modules when go > 1.26: go fix ./...
 fmt        for each @go-modules: go fmt ./...
 generate   for each @go-modules: go generate ./...
 lint       for each @go-modules: golangci-lint run ./... if available, otherwise go vet ./...
-run        go run {command}
+run        go -C {cwd} run {command}
 test       for each @go-modules: go test ./...
 test-race  for each @go-modules: go test -race ./...
 tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
@@ -692,9 +692,12 @@ is evaluated inside each module directory, not at the repo root. Built-in
 `@go-main-packages`; other package-style Go built-ins expose `pkg` completion
 from `@go-packages`; `fix` is available when the most common
 `go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
-from `@go-packages` plus `@glob "*.go"`. Built-in `run` has a required
-positional `command` argument with `rel_path` type and completes from
-`@go-main-packages` plus `@glob "*.go"`.
+from `@go-packages` plus `@glob "*.go"`. Built-in `run` has a named `cwd`
+argument defaulting to `.` and a required positional `command` argument with
+`rel_path` type. `cwd` completes from `@go-modules`; `command` completes from
+`@go-main-packages` plus `@glob "*.go"`. `command` is interpreted by `go run`
+after `go -C {cwd}`, so non-default `cwd` values use paths relative to that
+directory.
 
 ## Built-In Node Profile
 

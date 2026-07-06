@@ -432,6 +432,9 @@ func TestCandidatesCompleteGoMainPackagesBuiltinArgumentValues(t *testing.T) {
 
 func TestCandidatesCompleteGoBuiltinRunCommandArgumentValues(t *testing.T) {
 	dir := t.TempDir()
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n")
+	mkdirAll(t, filepath.Join(dir, "services", "api"))
+	writeTextFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
 	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
 	writeTextFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "// Package main builds the API.\npackage main\n")
 
@@ -440,6 +443,11 @@ func TestCandidatesCompleteGoBuiltinRunCommandArgumentValues(t *testing.T) {
 
 	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "command=./cmd/api", Help: "Package main builds the API."}) {
 		t.Fatalf("candidates = %#v, want cmd/api main package value", candidates)
+	}
+
+	candidates = completeWithOptions(t, []string{"shadowtree", "run", "cwd=s"}, recipes, Options{Dir: dir})
+	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "cwd=services/api", Help: "example.com/api"}) {
+		t.Fatalf("candidates = %#v, want services/api cwd value", candidates)
 	}
 }
 

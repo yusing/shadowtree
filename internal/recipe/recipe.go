@@ -234,8 +234,13 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		}),
 		"run": {
 			Help: "Run a Go command.",
-			Cmd:  Command{"go", "run", "{command}", "{@}"},
+			Cmd:  Command{"go", "-C", "{cwd}", "run", "{command}", "{@}"},
 			Arguments: map[string]Argument{
+				"cwd": {
+					Type:    "rel_path",
+					Default: ".",
+					Values:  ScriptCommand(GoModuleValuesCommand),
+				},
 				"command": {
 					Type:     "rel_path",
 					Position: 1,

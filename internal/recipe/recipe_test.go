@@ -768,8 +768,15 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	}
 
 	run := builtins["run"]
-	if !slices.Equal(run.Cmd, Command{"go", "run", "{command}", "{@}"}) {
+	if !slices.Equal(run.Cmd, Command{"go", "-C", "{cwd}", "run", "{command}", "{@}"}) {
 		t.Fatalf("run Cmd = %#v", run.Cmd)
+	}
+	cwd := run.Arguments["cwd"]
+	if cwd.Type != "rel_path" || cwd.Default != "." {
+		t.Fatalf("run cwd argument = %#v", cwd)
+	}
+	if values := ScriptBody(cwd.Values); values != GoModuleValuesCommand {
+		t.Fatalf("run cwd values = %q", values)
 	}
 	command := run.Arguments["command"]
 	if command.Type != "rel_path" || command.Position != 1 || !command.Required {
@@ -777,6 +784,18 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	}
 	if values := ScriptBody(command.Values); values != GoRunCommandValuesCommand {
 		t.Fatalf("run command values = %q", values)
+	}
+}
+
+func TestGoBuiltinRunPassesCwdToGoC(t *testing.T) {
+	run := Builtins(GoProfile, BuiltinOptions{})["run"]
+
+	got, err := Resolve("run", run, []string{"./cmd/api", "cwd=services/api", "--", "-tags=integration"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "-C", "services/api", "run", "./cmd/api", "-tags=integration"}) {
+		t.Fatalf("Main = %#v", got.Main)
 	}
 }
 
