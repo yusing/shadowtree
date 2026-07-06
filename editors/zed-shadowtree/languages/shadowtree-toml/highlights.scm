@@ -47,6 +47,8 @@
     "help"
     "arguments"
     "sandboxed"
+    "for_each"
+    "workdir"
     "cmd"
     "pre"
     "post"

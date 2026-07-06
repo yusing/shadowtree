@@ -147,6 +147,8 @@ DYNAMIC_NAME = "cmd arg"
 [recipes.<name>]
 help = "Short recipe help text."
 sandboxed = true
+for_each = "cmd arg"
+workdir = "{item}"
 pre = ["cmd arg"]
 cmd = "cmd {placeholders}"
 post = ["cmd arg"]
@@ -214,10 +216,10 @@ CLI arguments to the referenced recipe:
 pre = ["@build-api[service=public]"]
 ```
 
-For `sh` and `bash` script commands, including `cmd`, `pre`, `post`, argument
-`values`, and `shell_prelude`, a literal `@recipe` command word also invokes
-the referenced recipe directly. This works anywhere a normal shell command can
-run, including conditionals:
+For `sh` and `bash` script commands, including `cmd`, `pre`, `post`,
+`for_each`, argument `values`, and `shell_prelude`, a literal `@recipe` command
+word also invokes the referenced recipe directly. This works anywhere a normal
+shell command can run, including conditionals:
 
 ```toml
 [recipes.test]
@@ -305,6 +307,16 @@ and shell completion.
 
 `cmd`
 : Required shell string or `@recipe` reference for the main command.
+
+`for_each`
+: Optional value-provider command. When set, `cmd` runs once per candidate
+value. It accepts the same value-provider forms as argument `values`, including
+`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-main-packages`, `@recipes`,
+`@vars`, command output, and recipe references.
+
+`workdir`
+: Optional relative workspace path used as the working directory for each
+`for_each` item. It can use `{item}`, `{item_help}`, and `{item_index}`.
 
 `pre`
 : Commands run before the main command, in order.
@@ -433,7 +445,7 @@ Bracket-style syntax is preferred for shell completion, especially in fish.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
-expanded in `cmd`, `pre`, `post`, and `sync_out`.
+expanded in `cmd`, `pre`, `post`, `for_each`, `workdir`, and `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 
@@ -460,6 +472,38 @@ default = "./..."
 shadowtree test ./internal/recipe -run=TestResolve -count=1
 shadowtree test pkg=./internal/recipe -- pkg=literal
 ```
+
+## Fan-Out Recipes
+
+`for_each` runs a recipe's main command once per value candidate:
+
+```toml
+[recipes.lint]
+help = "Run golangci-lint in every Go module."
+for_each = "@go-modules"
+workdir = "{item}"
+cmd = "golangci-lint run ./..."
+```
+
+`for_each` uses the same candidate format and builtins as argument `values`.
+Builtin providers can be composed with semicolons without running a shell:
+
+```toml
+for_each = "@go-modules; @enum all='all modules'"
+```
+
+Per iteration, these placeholders are available to `cmd` and `workdir`:
+
+- `{item}`: candidate value.
+- `{item_help}`: candidate help text, or empty string.
+- `{item_index}`: zero-based item index.
+
+`pre` commands run once before candidate resolution. `post` commands run once
+after the loop, even if `pre`, candidate resolution, or an item command fails.
+Items run sequentially; the first failing item stops later items. For sandboxed
+recipes, `sync_out` runs once after all items and `post` commands succeed.
+`sync_out` does not accept `{item}` placeholders. `workdir`, when set, must
+resolve to a relative path under the recipe workspace.
 
 ## Recipe Resolution
 
@@ -528,7 +572,7 @@ For a sandboxed recipe:
 1. Create a temporary workspace with namespace overlayfs, or copy the source
    tree if namespace overlayfs is unavailable.
 2. Run `pre` commands in order.
-3. Run the resolved main command.
+3. Run the resolved main command, or once per `for_each` candidate when set.
 4. Run `post` commands in order.
 5. If all phases succeeded, sync configured/requested paths back.
 6. Remove the temporary workspace.
@@ -850,10 +894,10 @@ The Zed extension defines a `Shadowtree TOML` language backed by the pinned
 - base TOML highlighting
 - Shadowtree-specific key, recipe, argument, and variable highlighting
 - semantic shell highlighting for script-valued `cmd`, `pre`, `post`,
-  `shell_prelude`, and `values` strings
+  `for_each`, `shell_prelude`, and `values` strings
 - recipe-reference completion, diagnostics, and semantic tokens for literal
   command-position `@recipe` in `sh`/`bash` script strings, including
-  `shell_prelude` and `pre`/`post`
+  `shell_prelude`, `for_each`, and `pre`/`post`
 
 Shell semantic highlighting supports `shell = "bash"`, `shell = "sh"`, and
 `shell = "fish"` without hardcoding a single Zed shell language name.

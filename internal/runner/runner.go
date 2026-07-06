@@ -165,11 +165,30 @@ func (sandbox *sandboxWorkspace) namespaceDir(dir string) string {
 	if !sandbox.overlay {
 		return dir
 	}
-	rel, err := filepath.Rel(sandbox.root, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+	rel, ok := sandbox.relInsideRoot(dir)
+	if !ok {
 		return dir
 	}
 	return filepath.Join(sandbox.target, rel)
+}
+
+func (sandbox *sandboxWorkspace) relInsideRoot(dir string) (string, bool) {
+	return relInside(sandbox.root, dir)
+}
+
+func (sandbox *sandboxWorkspace) relInsideOverlayView(dir string) (string, bool) {
+	if rel, ok := relInside(sandbox.root, dir); ok {
+		return rel, true
+	}
+	return relInside(sandbox.target, dir)
+}
+
+func relInside(root, dir string) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return rel, true
 }
 
 func (sandbox *sandboxWorkspace) materialize(dst string) error {
@@ -191,7 +210,7 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 		}
 	}
 	if firstErr == nil {
-		firstErr = runCommand(ctx, sandbox, dir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
+		firstErr = runMainCommands(ctx, sandbox, dir, env, options, stdin, stdout, stderr, stack)
 	}
 	for i, command := range options.Resolved.Recipe.Post {
 		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, "post", i, stack); err != nil && firstErr == nil {
@@ -201,10 +220,99 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 	return firstErr
 }
 
+func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
+	if len(options.Resolved.Recipe.ForEach) == 0 {
+		return runCommand(ctx, sandbox, dir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
+	}
+	items, err := forEachItems(ctx, sandbox, dir, env, options, stderr, stack)
+	if err != nil {
+		return err
+	}
+	for index, item := range items {
+		command, err := recipe.ExpandForEachCommand(options.Resolved.Main, item, index)
+		if err != nil {
+			return fmt.Errorf("for_each[%d] cmd: %w", index, err)
+		}
+		workdir := dir
+		if options.Resolved.Recipe.Workdir != "" {
+			expanded, err := recipe.ExpandForEachString(options.Resolved.Recipe.Workdir, item, index)
+			if err != nil {
+				return fmt.Errorf("for_each[%d] workdir: %w", index, err)
+			}
+			workdir, err = recipeWorkdir(dir, expanded)
+			if err != nil {
+				return fmt.Errorf("for_each[%d] workdir: %w", index, err)
+			}
+		}
+		if err := runCommand(ctx, sandbox, workdir, env, command, stdin, stdout, stderr, options, "main", index, stack); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stderr io.Writer, stack []string) ([]recipe.ValueCandidate, error) {
+	command := options.Resolved.Recipe.ForEach
+	usesFilesystem, ok, err := recipe.ValueBuiltinUsesFilesystem(command)
+	if ok {
+		if err != nil {
+			return nil, err
+		}
+		builtinDir := dir
+		cleanup := func() {}
+		if usesFilesystem {
+			builtinDir, cleanup, err = forEachBuiltinDir(sandbox, dir)
+			if err != nil {
+				return nil, err
+			}
+		}
+		defer cleanup()
+		values, _, err := recipe.BuiltinValues(command, recipe.ValueBuiltinOptions{
+			Dir:     builtinDir,
+			Recipe:  options.Resolved.Recipe,
+			Recipes: options.Recipes,
+		})
+		return values, err
+	}
+	command = recipe.CommandWithRecipeReference(command, options.Resolved.Recipe.Shell, options.Resolved.Recipe.ShellPrelude)
+	var stdout bytes.Buffer
+	if err := runCommand(ctx, sandbox, dir, env, command, nil, &stdout, stderr, options, "for_each", 0, stack); err != nil {
+		return nil, err
+	}
+	return recipe.ParseValueCandidates(stdout.String()), nil
+}
+
+func forEachBuiltinDir(sandbox *sandboxWorkspace, dir string) (string, func(), error) {
+	cleanup := func() {}
+	if sandbox == nil || !sandbox.overlay {
+		return dir, cleanup, nil
+	}
+	rel, ok := sandbox.relInsideOverlayView(dir)
+	if !ok {
+		return dir, cleanup, nil
+	}
+	root := filepath.Join(sandbox.workDir, "for-each-values")
+	if err := sandbox.materialize(root); err != nil {
+		return "", cleanup, fmt.Errorf("materialize workspace: %w", err)
+	}
+	return filepath.Join(root, rel), func() { _ = os.RemoveAll(root) }, nil
+}
+
+func recipeWorkdir(root, value string) (string, error) {
+	value = filepath.Clean(filepath.FromSlash(value))
+	if value == "." {
+		return root, nil
+	}
+	if filepath.IsAbs(value) || !filepath.IsLocal(value) {
+		return "", fmt.Errorf("must be relative to recipe workspace: %s", value)
+	}
+	return filepath.Join(root, value), nil
+}
+
 func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
 	if options.Verbose {
 		label := phase
-		if phase != "main" {
+		if phase != "main" || len(options.Resolved.Recipe.ForEach) > 0 {
 			label = fmt.Sprintf("%s[%d]", phase, index)
 		}
 		fmt.Fprintf(stderr, "shadowtree: %s: %s\n", label, strings.Join(command, " "))
@@ -463,6 +571,12 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	for i, command := range resolved.Recipe.Pre {
 		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.CommandHelpText(command))
+	}
+	if len(resolved.Recipe.ForEach) > 0 {
+		fmt.Fprintf(w, "for_each: %s\n", recipe.CommandHelpText(resolved.Recipe.ForEach))
+		if resolved.Recipe.Workdir != "" {
+			fmt.Fprintf(w, "workdir: %s\n", resolved.Recipe.Workdir)
+		}
 	}
 	fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
 	for i, command := range resolved.Recipe.Post {

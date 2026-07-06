@@ -22,6 +22,11 @@ const scriptCommand = "__shadowtree_script__"
 const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
 const variadicArgsPlaceholder = "{@}"
+const (
+	ForEachItemPlaceholder      = "item"
+	ForEachItemHelpPlaceholder  = "item_help"
+	ForEachItemIndexPlaceholder = "item_index"
+)
 
 var ReservedNames = map[string]bool{
 	"recipes":    true,
@@ -63,6 +68,8 @@ type Recipe struct {
 	Shell        string              `toml:"shell"`
 	ShellPrelude string              `toml:"shell_prelude"`
 	Sandboxed    *bool               `toml:"sandboxed"`
+	ForEach      Command             `toml:"for_each"`
+	Workdir      string              `toml:"workdir"`
 	Cmd          Command             `toml:"cmd"`
 	Pre          []Command           `toml:"pre"`
 	Post         []Command           `toml:"post"`
@@ -249,6 +256,12 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.Sandboxed != nil {
 		out.Sandboxed = new(*override.Sandboxed)
 	}
+	if len(override.ForEach) > 0 {
+		out.ForEach = slices.Clone(override.ForEach)
+	}
+	if override.Workdir != "" {
+		out.Workdir = override.Workdir
+	}
 	if len(override.Cmd) > 0 {
 		out.Cmd = slices.Clone(override.Cmd)
 	}
@@ -289,7 +302,11 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
 	values = mergeStringMaps(rec.Vars, values)
-	cmd, err := expandCommand(rec.Cmd, values, variadicArgs)
+	commandValues := values
+	if len(rec.ForEach) > 0 {
+		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
+	}
+	cmd, err := expandCommand(rec.Cmd, commandValues, variadicArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
@@ -319,8 +336,28 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
 		}
 	}
+	var forEach Command
+	if len(rec.ForEach) > 0 {
+		forEach, err = expandCommand(rec.ForEach, values, nil)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q for_each: %w", name, err)
+		}
+	}
+	workdir := rec.Workdir
+	if workdir != "" {
+		expanded, err := expandStrings([]string{workdir}, commandValues, nil)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q workdir: %w", name, err)
+		}
+		workdir = expanded[0]
+	}
 	if err := ValidateCommand(cmd); err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
+	}
+	if len(forEach) > 0 {
+		if err := ValidateCommand(forEach); err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q for_each: %w", name, err)
+		}
 	}
 	for i, command := range pre {
 		if err := ValidateCommand(command); err != nil {
@@ -333,6 +370,8 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		}
 	}
 	resolvedRecipe := rec
+	resolvedRecipe.ForEach = forEach
+	resolvedRecipe.Workdir = workdir
 	resolvedRecipe.Pre = pre
 	resolvedRecipe.Post = post
 	return Resolved{
@@ -371,6 +410,11 @@ func ValidateConfig(cfg Config) error {
 		if len(rec.Cmd) > 0 {
 			if err := ValidateCommand(rec.Cmd); err != nil {
 				return fmt.Errorf("recipe %q cmd: %w", name, err)
+			}
+		}
+		if len(rec.ForEach) > 0 {
+			if err := validateValueCommand("for_each", rec.ForEach); err != nil {
+				return fmt.Errorf("recipe %q for_each: %w", name, err)
 			}
 		}
 		for i, command := range rec.Pre {
@@ -551,18 +595,22 @@ func ValidateArguments(args map[string]Argument) error {
 			}
 		}
 		if arg.Values != nil {
-			if !IsScriptCommand(arg.Values) {
-				return fmt.Errorf("%s values: values must be a shell string", name)
-			}
-			if _, ok, err := ValidateValueBuiltin(arg.Values); ok && err != nil {
-				return fmt.Errorf("%s values: %w", name, err)
-			}
-			if err := ValidateCommand(arg.Values); err != nil {
+			if err := validateValueCommand("values", arg.Values); err != nil {
 				return fmt.Errorf("%s values: %w", name, err)
 			}
 		}
 	}
 	return nil
+}
+
+func validateValueCommand(field string, command Command) error {
+	if !IsScriptCommand(command) {
+		return fmt.Errorf("%s must be a shell string", field)
+	}
+	if _, ok, err := ValidateValueBuiltin(command); ok && err != nil {
+		return err
+	}
+	return ValidateCommand(command)
 }
 
 func ValidateCommandsMap(name string, commands map[string]Command) error {
@@ -654,6 +702,9 @@ func CommandSummary(rec Recipe) string {
 	var suffix []string
 	if len(rec.Pre) > 0 {
 		suffix = append(suffix, fmt.Sprintf("+%d pre", len(rec.Pre)))
+	}
+	if len(rec.ForEach) > 0 {
+		suffix = append(suffix, "for_each")
 	}
 	if len(rec.Post) > 0 {
 		suffix = append(suffix, fmt.Sprintf("+%d post", len(rec.Post)))
@@ -816,14 +867,47 @@ func expandCommands(commands []Command, values map[string]string, variadicArgs [
 
 func expandCommand(command Command, values map[string]string, variadicArgs []string) (Command, error) {
 	if IsScriptCommand(command) {
-		body, err := expandScript(command[1], values, variadicArgs)
+		body, err := expandScript(ScriptBody(command), values, variadicArgs)
 		if err != nil {
 			return nil, err
+		}
+		if len(command) >= 4 {
+			return append(Command{scriptCommand, command[1], body}, command[3:]...), nil
 		}
 		return ScriptCommand(body), nil
 	}
 	expanded, err := expandStrings(command, values, variadicArgs)
 	return Command(expanded), err
+}
+
+// ExpandForEachCommand expands for_each placeholders in command.
+func ExpandForEachCommand(command Command, item ValueCandidate, index int) (Command, error) {
+	return expandCommand(command, forEachPlaceholderValues(item, index), nil)
+}
+
+// ExpandForEachString expands for_each placeholders in value.
+func ExpandForEachString(value string, item ValueCandidate, index int) (string, error) {
+	expanded, err := expandStrings([]string{value}, forEachPlaceholderValues(item, index), nil)
+	if err != nil {
+		return "", err
+	}
+	return expanded[0], nil
+}
+
+func forEachPlaceholderValues(item ValueCandidate, index int) map[string]string {
+	return map[string]string{
+		ForEachItemPlaceholder:      item.Value,
+		ForEachItemHelpPlaceholder:  item.Help,
+		ForEachItemIndexPlaceholder: strconv.Itoa(index),
+	}
+}
+
+func forEachPlaceholderSentinels() map[string]string {
+	return map[string]string{
+		ForEachItemPlaceholder:      "{" + ForEachItemPlaceholder + "}",
+		ForEachItemHelpPlaceholder:  "{" + ForEachItemHelpPlaceholder + "}",
+		ForEachItemIndexPlaceholder: "{" + ForEachItemIndexPlaceholder + "}",
+	}
 }
 
 func expandStrings(items []string, values map[string]string, variadicArgs []string) ([]string, error) {

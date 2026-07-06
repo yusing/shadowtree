@@ -421,6 +421,13 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.CommandHelpText(command)))
 		}
 	}
+	if len(rec.ForEach) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- For each:"))
+		fmt.Fprintf(w, "    %s\n", colors.literal(recipe.CommandHelpText(rec.ForEach)))
+		if rec.Workdir != "" {
+			fmt.Fprintf(w, "    %s %s\n", colors.label("workdir:"), colors.literal(rec.Workdir))
+		}
+	}
 	argNames := mapsKeys(rec.Arguments)
 	slices.Sort(argNames)
 	if len(argNames) > 0 {

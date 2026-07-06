@@ -82,7 +82,7 @@ Completion criterion: persistence expectations match sandbox mode.
 For a recipe:
 
 1. `pre` commands run in order.
-2. If all `pre` commands succeed, the resolved `cmd` runs.
+2. If all `pre` commands succeed, the resolved `cmd` runs once, or once per `for_each` value when set.
 3. `post` commands run even when a `pre` or main command failed.
 4. The first pre/main error wins unless only `post` failed.
 5. For sandboxed recipes, sync-out runs only after all recipe commands finish successfully.
@@ -98,8 +98,9 @@ sync-out. Pass args with bracket syntax, e.g. `@build[mode=dev]`. Recursive
 references fail with a cycle error.
 
 In `sh` and `bash` script commands, including `cmd`, `pre`, `post`, scalar
-argument `values`, and `shell_prelude`, a literal command-position `@recipe`
-also invokes the referenced recipe directly, including inside conditionals.
+`for_each`, argument `values`, and `shell_prelude`, a literal
+command-position `@recipe` also invokes the referenced recipe directly,
+including inside conditionals.
 For example, `if @generate; then ...; fi` dispatches `generate`, and
 `@build mode=dev` passes `mode=dev` as a recipe CLI arg. Assignments and
 expanded variables do not dispatch recipes: `FOO="@build"` is just a shell
@@ -136,6 +137,8 @@ Use these fields under `[recipes.<name>]`:
 
 - `help`: short text shown by `help`, `recipes`, and shell completion.
 - `cmd`: required main command; prefer a shell string.
+- `for_each`: optional value-provider command; when set, runs `cmd` once per candidate.
+- `workdir`: optional relative working directory per `for_each` item.
 - `pre`: list of commands before `cmd`.
 - `post`: list of commands after `cmd`.
 - `sandboxed`: boolean; defaults to `true`.
@@ -227,14 +230,14 @@ Completion criterion: command examples use scalar shell strings. Do not write
 TOML argv arrays for command fields; they are invalid in config.
 
 Editor support: Shadowtree LSP provides shell highlighting for script-valued
-`cmd`, `pre`, `post`, `shell_prelude`, and scalar argument `values`, plus the
-same recipe-reference completion and diagnostics for literal command-position
-`@recipe` in those `sh`/`bash` strings as it provides for scalar `values`
-recipe references.
+`cmd`, `pre`, `post`, `for_each`, `shell_prelude`, and scalar argument
+`values`, plus the same recipe-reference completion and diagnostics for literal
+command-position `@recipe` in those `sh`/`bash` strings as it provides for
+scalar `values` recipe references.
 
 ## Placeholders And Vars
 
-`{NAME}` placeholders expand in `cmd`, `pre`, `post`, and `sync_out`.
+`{NAME}` placeholders expand in `cmd`, `pre`, `post`, `for_each`, `workdir`, and `sync_out`.
 
 Value sources:
 
@@ -246,6 +249,18 @@ Value sources:
 Shell parameter expansion is preserved: `${NAME}` is not treated as a Shadowtree placeholder.
 
 `var_commands` use top-level `env`, configured `shell`, and top-level `shell_prelude`. They are not evaluated during shell completion.
+
+Fan-out placeholders exist only when a recipe has `for_each`:
+
+- `{item}`: current candidate value.
+- `{item_help}`: current candidate help text, if any.
+- `{item_index}`: zero-based candidate index.
+
+`for_each` accepts the same value-provider forms as argument `values`, including
+`@enum`, `@lines`, `@glob`, `@go-modules`, `@go-main-packages`, `@recipes`,
+`@vars`, command output, and recipe references. `pre` runs once before the loop;
+`post` runs once after it; the first failing item stops later items. `workdir`
+must resolve to a relative workspace path.
 
 Completion criterion: placeholders have a value at resolve time, or `--print`/run will fail with a missing value error.
 

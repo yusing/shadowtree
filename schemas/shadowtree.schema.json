@@ -48,7 +48,7 @@
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in cmd, pre, post, and sync_out.",
+      "description": "Static placeholder values. Use {NAME} in cmd, pre, post, for_each, workdir, and sync_out.",
       "additionalProperties": false,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
@@ -105,9 +105,17 @@
           "description": "Whether to run this recipe in a disposable workspace. Defaults to true.",
           "default": true
         },
+        "for_each": {
+          "$ref": "#/definitions/command",
+          "description": "Optional value-provider command. When set, Shadowtree runs cmd once per candidate. Supports the same builtins as argument values, such as @enum, @lines, @glob, @go-modules, @go-main-packages, @recipes, and @vars."
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Optional relative working directory for each for_each item. May use {item}, {item_help}, and {item_index}."
+        },
         "cmd": {
           "$ref": "#/definitions/command",
-          "description": "Required main command. Use {@} in cmd to splice leftover recipe CLI args."
+          "description": "Required main command. Use {@} in cmd to splice leftover recipe CLI args. Recipes with for_each may also use {item}, {item_help}, and {item_index}."
         },
         "pre": {
           "$ref": "#/definitions/commandList",

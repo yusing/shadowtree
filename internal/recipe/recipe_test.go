@@ -476,6 +476,62 @@ func TestResolveUnsandboxedIgnoresSyncOut(t *testing.T) {
 	}
 }
 
+func TestResolveAllowsForEachItemPlaceholders(t *testing.T) {
+	got, err := Resolve(
+		"lint",
+		Recipe{
+			ForEach: ScriptCommand("@enum a b"),
+			Workdir: "{item}",
+			Cmd:     ScriptCommand(`printf '%s:%s:%s' "{item_index}" "{item}" "{item_help}"`),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		GoProfile,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Recipe.Workdir != "{item}" {
+		t.Fatalf("Workdir = %q, want {item}", got.Recipe.Workdir)
+	}
+	if body := ScriptBody(got.Main); !strings.Contains(body, "{item_index}") || !strings.Contains(body, "{item_help}") {
+		t.Fatalf("main body = %q, want item placeholders preserved", body)
+	}
+}
+
+func TestResolveRejectsForEachItemPlaceholderInSyncOut(t *testing.T) {
+	_, err := Resolve(
+		"lint",
+		Recipe{
+			ForEach: ScriptCommand("@enum a b"),
+			Cmd:     ScriptCommand("true"),
+			SyncOut: []string{"out/{item}.txt"},
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		GoProfile,
+	)
+	if err == nil || !strings.Contains(err.Error(), "sync_out: missing value for {item}") {
+		t.Fatalf("err = %v, want sync_out item placeholder rejection", err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidForEachBuiltin(t *testing.T) {
+	err := ValidateConfig(Config{Recipes: map[string]Recipe{
+		"lint": {
+			ForEach: ScriptCommand("@go-modules x"),
+			Cmd:     ScriptCommand("true"),
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `recipe "lint" for_each: @go-modules does not take arguments`) {
+		t.Fatalf("err = %v, want invalid for_each builtin", err)
+	}
+}
+
 func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 	builtins := Builtins(GoProfile, BuiltinOptions{})
 	if RecipeSandboxed(builtins["tidy"]) {

@@ -63,6 +63,81 @@ cmd = '''go build {'''
 	}
 }
 
+func TestCompletionsIncludeForEachItemPlaceholders(t *testing.T) {
+	text := `[recipes.lint]
+for_each = "@enum a b"
+cmd = "echo {"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`cmd = "echo {`)})
+	assertLabels(t, items, "{item}", "{item_help}", "{item_index}")
+	assertCompletionDetail(t, items, "{item}", "Current for_each value")
+}
+
+func TestCompletionsIncludeForEachItemPlaceholdersInWorkdir(t *testing.T) {
+	text := `[recipes.lint]
+for_each = "@enum a b"
+workdir = "{"
+cmd = "echo {item}"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`workdir = "{`)})
+	assertLabels(t, items, "{item}", "{item_help}", "{item_index}")
+}
+
+func TestCompletionsExcludeForEachItemPlaceholdersOutsideMainAndWorkdir(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		line int
+		col  int
+	}{
+		{
+			name: "for_each",
+			text: `[recipes.lint]
+for_each = "{"
+cmd = "echo {item}"
+`,
+			line: 1,
+			col:  len(`for_each = "{`),
+		},
+		{
+			name: "pre",
+			text: `[recipes.lint]
+for_each = "@enum a b"
+pre = ["echo {"]
+cmd = "echo {item}"
+`,
+			line: 2,
+			col:  len(`pre = ["echo {`),
+		},
+		{
+			name: "post",
+			text: `[recipes.lint]
+for_each = "@enum a b"
+cmd = "echo {item}"
+post = ["echo {"]
+`,
+			line: 3,
+			col:  len(`post = ["echo {`),
+		},
+		{
+			name: "sync_out",
+			text: `[recipes.lint]
+for_each = "@enum a b"
+cmd = "echo {item}"
+sync_out = ["out/{"]
+`,
+			line: 3,
+			col:  len(`sync_out = ["out/{`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			items := completionsAt(t.Context(), tc.text, lspPosition{Line: tc.line, Character: tc.col})
+			assertNoLabels(t, items, "{item}", "{item_help}", "{item_index}")
+		})
+	}
+}
+
 func TestCompletionsIncludeVariadicArgsPlaceholder(t *testing.T) {
 	text := `[recipes.test]
 cmd = "echo {`
@@ -160,6 +235,16 @@ cmd = "go test"
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
 	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@test", "@vars")
 	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
+}
+
+func TestCompletionsIncludeEnumInForEachReferences(t *testing.T) {
+	text := `[recipes.lint]
+for_each = "@"
+cmd = "true"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`for_each = "@`)})
+	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@vars")
+	assertCompletionDetail(t, items, "@go-modules", "Go module directories (builtin)")
 }
 
 func TestCompletionsIncludeEnumInScriptArgumentValuesReferences(t *testing.T) {
@@ -1303,6 +1388,19 @@ func assertLabels(t *testing.T, items []completion, labels ...string) {
 	for _, label := range labels {
 		if !slices.Contains(got, label) {
 			t.Fatalf("missing label %q in %#v", label, got)
+		}
+	}
+}
+
+func assertNoLabels(t *testing.T, items []completion, labels ...string) {
+	t.Helper()
+	var got []string
+	for _, item := range items {
+		got = append(got, item.Label)
+	}
+	for _, label := range labels {
+		if slices.Contains(got, label) {
+			t.Fatalf("unexpected label %q in %#v", label, got)
 		}
 	}
 }

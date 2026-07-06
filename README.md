@@ -224,6 +224,23 @@ pre = ["@build[component=godoxy, mode=dev]"]
 Use shell script strings when a workflow needs shared shell logic, conditionals,
 pipes, or multiple statements.
 
+Use `for_each` to fan out one recipe command across values from the same value
+providers used by argument `values`. `pre` runs once before all items, `cmd`
+runs once per item, `post` runs once after the loop, and the first failing item
+stops later items:
+
+```toml
+[recipes.lint]
+help = "Run golangci-lint in every Go module."
+for_each = "@go-modules"
+workdir = "{item}"
+cmd = "golangci-lint run ./..."
+```
+
+Per iteration, `{item}` is the candidate value, `{item_help}` is its help text
+when present, and `{item_index}` is the zero-based index. `workdir` is optional
+and must resolve to a relative workspace path.
+
 ## Typed Arguments
 
 Recipes can define typed arguments. Arguments can be passed positionally, by

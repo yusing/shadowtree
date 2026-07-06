@@ -87,6 +87,21 @@ func ValidateValueBuiltin(command Command) (string, bool, error) {
 	return calls[0].name, true, nil
 }
 
+// ValueBuiltinUsesFilesystem reports whether command is a filesystem-backed value builtin.
+func ValueBuiltinUsesFilesystem(command Command) (bool, bool, error) {
+	calls, ok, err := validatedValueBuiltinInvocations(command)
+	if err != nil || !ok {
+		return false, ok, err
+	}
+	for _, call := range calls {
+		switch call.name {
+		case globValuesName, goMainPackagesValuesName, goModulesValuesName, linesValuesName:
+			return true, true, nil
+		}
+	}
+	return false, true, nil
+}
+
 func BuiltinValues(command Command, opts ValueBuiltinOptions) ([]ValueCandidate, bool, error) {
 	calls, ok, err := validatedValueBuiltinInvocations(command)
 	if err != nil || !ok {

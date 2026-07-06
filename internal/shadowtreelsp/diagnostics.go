@@ -78,7 +78,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 	crossConfigRecipes := map[string]diagnosticCrossConfigResult{}
 	var diagnostics []lspDiagnostic
 	for _, ref := range refs {
-		if ref.isArgumentValuesBuiltin() {
+		if ref.isValueBuiltin() {
 			continue
 		}
 		if ref.Name == "" {
@@ -139,8 +139,11 @@ func commandReferenceDiagnostics(ctx context.Context, text string, cfg recipe.Co
 	return diagnostics
 }
 
-func (ref commandReferenceSpan) isArgumentValuesBuiltin() bool {
-	return ref.Path == "" && recipe.IsBuiltinReferenceName(ref.Name) && recipeArgumentTable(ref.Table) && ref.Key == "values"
+func (ref commandReferenceSpan) isValueBuiltin() bool {
+	if ref.Path != "" || !recipe.IsBuiltinReferenceName(ref.Name) {
+		return false
+	}
+	return valueBuiltinReferenceContext(ref.Table, ref.Key)
 }
 
 func diagnosticRecipes(ctx context.Context, cfg recipe.Config, opts completionOptions) (map[string]recipe.Recipe, bool) {

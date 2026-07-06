@@ -24,6 +24,7 @@ type documentAnalysis struct {
 	RecipeVars    map[string][]string
 	Arguments     map[string][]string
 	ArgumentHelp  map[string]map[string]string
+	FanOutRecipes map[string]bool
 	ScriptRegions []scriptRegion
 	CurrentTable  string
 }
@@ -69,6 +70,8 @@ var recipeKeys = []completion{
 	{Label: "shell", InsertText: `shell = "sh"`, Kind: completionKindKeyword, Detail: "Recipe shell"},
 	{Label: "shell_prelude", InsertText: "shell_prelude = '''\n\n'''", Kind: completionKindKeyword, Detail: "Recipe shell prelude"},
 	{Label: "sandboxed", InsertText: "sandboxed = true", Kind: completionKindKeyword, Detail: "Run in disposable workspace"},
+	{Label: "for_each", InsertText: `for_each = ""`, Kind: completionKindKeyword, Detail: "Run main command once per value"},
+	{Label: "workdir", InsertText: `workdir = ""`, Kind: completionKindKeyword, Detail: "Relative working directory for each item"},
 	{Label: "cmd", InsertText: `cmd = ""`, Kind: completionKindKeyword, Detail: "Main command"},
 	{Label: "pre", InsertText: "pre = []", Kind: completionKindKeyword, Detail: "Commands before main"},
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
@@ -115,10 +118,11 @@ var boolValues = []completion{
 func analyzeDocument(text string, line int) documentAnalysis {
 	lines := strings.Split(text, "\n")
 	analysis := documentAnalysis{
-		Lines:        lines,
-		RecipeVars:   map[string][]string{},
-		Arguments:    map[string][]string{},
-		ArgumentHelp: map[string]map[string]string{},
+		Lines:         lines,
+		RecipeVars:    map[string][]string{},
+		Arguments:     map[string][]string{},
+		ArgumentHelp:  map[string]map[string]string{},
+		FanOutRecipes: map[string]bool{},
 	}
 	table := ""
 	for i, raw := range lines {
@@ -160,6 +164,9 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	var cfg recipe.Config
 	if _, err := toml.Decode(text, &cfg); err == nil {
 		for recipeName, rec := range cfg.Recipes {
+			if len(rec.ForEach) > 0 {
+				analysis.FanOutRecipes[recipeName] = true
+			}
 			for argName, arg := range rec.Arguments {
 				if analysis.ArgumentHelp[recipeName] == nil {
 					analysis.ArgumentHelp[recipeName] = map[string]string{}
@@ -193,7 +200,8 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, recipePrefix, valueBuiltinReferenceContext(analysis.CurrentTable, key), opts)
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
-		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos))
+		key, _ := keyBeforeValue(prefix)
+		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key))
 	}
 	if key, ok := keyBeforeValue(prefix); ok {
 		if items, ok := argumentDefaultValueCompletions(ctx, text, analysis.CurrentTable, key, prefix, pos, opts); ok {
@@ -819,24 +827,32 @@ func recipeArgumentTableParts(table string) (string, string, bool) {
 	return recipeName, argName, true
 }
 
-func placeholderCompletions(analysis documentAnalysis, recipe, prefix string, allowVariadic bool) []completion {
+func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, allowVariadic, allowForEach bool) []completion {
 	var names []string
 	names = append(names, analysis.GlobalVars...)
-	names = append(names, analysis.RecipeVars[recipe]...)
-	names = append(names, analysis.Arguments[recipe]...)
+	names = append(names, analysis.RecipeVars[recipeName]...)
+	names = append(names, analysis.Arguments[recipeName]...)
+	if allowForEach && analysis.FanOutRecipes[recipeName] {
+		names = append(names, recipe.ForEachItemPlaceholder, recipe.ForEachItemHelpPlaceholder, recipe.ForEachItemIndexPlaceholder)
+	}
 	names = uniqueSorted(names)
 	detail := map[string]string{}
 	for _, name := range analysis.GlobalVars {
 		detail[name] = "Shared placeholder"
 	}
-	for _, name := range analysis.RecipeVars[recipe] {
+	for _, name := range analysis.RecipeVars[recipeName] {
 		detail[name] = "Recipe placeholder"
 	}
-	for _, name := range analysis.Arguments[recipe] {
+	for _, name := range analysis.Arguments[recipeName] {
 		detail[name] = "Argument placeholder"
-		if help := analysis.ArgumentHelp[recipe][name]; help != "" {
+		if help := analysis.ArgumentHelp[recipeName][name]; help != "" {
 			detail[name] = help
 		}
+	}
+	if allowForEach && analysis.FanOutRecipes[recipeName] {
+		detail[recipe.ForEachItemPlaceholder] = "Current for_each value"
+		detail[recipe.ForEachItemHelpPlaceholder] = "Current for_each help text"
+		detail[recipe.ForEachItemIndexPlaceholder] = "Current for_each index"
 	}
 	var items []completion
 	if allowVariadic && strings.HasPrefix("@", prefix) {
@@ -869,6 +885,10 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string, al
 		})
 	}
 	return items
+}
+
+func forEachPlaceholderCompletionAllowed(table, key string) bool {
+	return recipeTable(table) && (key == "cmd" || key == "workdir")
 }
 
 func variadicPlaceholderCompletionAllowed(analysis documentAnalysis, prefix string, pos lspPosition) bool {
@@ -1194,7 +1214,7 @@ func supportedShell(shell string) bool {
 }
 
 func scriptKey(key string) bool {
-	return key == "cmd" || key == "pre" || key == "post" || key == "shell_prelude" || key == "values"
+	return key == "cmd" || key == "pre" || key == "post" || key == "for_each" || key == "shell_prelude" || key == "values"
 }
 
 func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
@@ -1886,13 +1906,7 @@ func recipeScriptReferenceRegion(region scriptRegion) bool {
 	if region.Key == "shell_prelude" {
 		return region.Table == "" || recipeTable(region.Table)
 	}
-	if recipeTable(region.Table) {
-		return region.Key == "cmd" || region.Key == "pre" || region.Key == "post"
-	}
-	if recipeArgumentTable(region.Table) {
-		return region.Key == "values"
-	}
-	return false
+	return recipeReferenceKey(region.Table, region.Key)
 }
 
 func scanShellAssignment(line string, start, end int) (int, bool) {
@@ -2037,7 +2051,7 @@ func recipeReferencePrefix(table, prefix string) (string, string, bool) {
 }
 
 func valueBuiltinReferenceContext(table, key string) bool {
-	return key == "values" && recipeArgumentTable(table)
+	return key == "for_each" && recipeTable(table) || key == "values" && recipeArgumentTable(table)
 }
 
 func lastOpenQuote(prefix string) int {
@@ -2056,7 +2070,7 @@ func lastOpenQuote(prefix string) int {
 
 func recipeReferenceKey(table, key string) bool {
 	switch key {
-	case "cmd", "pre", "post":
+	case "cmd", "pre", "post", "for_each":
 		return recipeTable(table)
 	case "values":
 		return recipeArgumentTable(table)

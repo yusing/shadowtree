@@ -321,6 +321,148 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithBracketArguments(t *testing.T
 	}
 }
 
+func TestRunForEachRunsMainPerItem(t *testing.T) {
+	source := t.TempDir()
+	for _, dir := range []string{"a", "b"} {
+		if err := os.Mkdir(filepath.Join(source, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, err := recipe.Resolve(
+		"lint",
+		recipe.Recipe{
+			ForEach:   recipe.ScriptCommand("@enum a='alpha item' b='beta item'"),
+			Workdir:   "{item}",
+			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n' > out.txt")},
+			Cmd:       recipe.ScriptCommand(`printf '%s:%s:%s:%s\n' "{item_index}" "{item}" "{item_help}" "$(basename "$PWD")" >> ../out.txt`),
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n' >> out.txt")},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "pre\n0:a:alpha item:a\n1:b:beta item:b\npost\n"
+	if string(data) != want {
+		t.Fatalf("out.txt = %q, want %q", data, want)
+	}
+}
+
+func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"check",
+		recipe.Recipe{
+			ForEach:   recipe.ScriptCommand("@enum a b c"),
+			Cmd:       recipe.ScriptCommand(`printf '%s\n' "{item}" >> out.txt; test "{item}" != b`),
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n' >> out.txt")},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil {
+		t.Fatal("Run succeeded, want failure")
+	}
+	data, readErr := os.ReadFile(filepath.Join(source, "out.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	want := "a\nb\npost\n"
+	if string(data) != want {
+		t.Fatalf("out.txt = %q, want %q", data, want)
+	}
+}
+
+func TestRunForEachUsesCommandBackedValues(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"check",
+		recipe.Recipe{
+			ForEach:   recipe.ScriptCommand("printf 'a\\talpha\\nb\\tbeta\\n'"),
+			Cmd:       recipe.ScriptCommand(`printf '%s:%s\n' "{item}" "{item_help}" >> out.txt`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "a:alpha\nb:beta\n"
+	if string(data) != want {
+		t.Fatalf("out.txt = %q, want %q", data, want)
+	}
+}
+
+func TestForEachBuiltinDirMaterializesOverlayTargetPath(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	upper := filepath.Join(t.TempDir(), "upper")
+	if err := os.MkdirAll(filepath.Join(upper, "webui", "generated"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "webui", "generated", "go.mod"), []byte("module example.com/generated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &sandboxWorkspace{
+		root:    filepath.Join(t.TempDir(), "workspace"),
+		source:  source,
+		target:  source,
+		workDir: t.TempDir(),
+		upper:   upper,
+		overlay: true,
+	}
+
+	dir, cleanup, err := forEachBuiltinDir(sandbox, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	data, err := os.ReadFile(filepath.Join(dir, "generated", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "module example.com/generated\n" {
+		t.Fatalf("go.mod = %q", data)
+	}
+}
+
 func TestRunPreservesScriptArgsWithLiteralRecipeReference(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(

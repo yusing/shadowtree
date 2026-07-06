@@ -500,6 +500,24 @@ cmd = "go test"
 	}
 }
 
+func TestDocumentDiagnosticsAcceptComposedBuiltinForEach(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.lint]
+for_each = "@go-modules; @enum all='all modules'"
+cmd = "go test"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectInvalidForEachBuiltin(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.lint]
+for_each = "@go-modules x"
+cmd = "go test"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "lint" for_each: @go-modules does not take arguments`)
+}
+
 func TestDocumentDiagnosticsRejectInvalidArgumentValuesBuiltin(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@glob"
