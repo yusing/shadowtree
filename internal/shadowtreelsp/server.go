@@ -301,7 +301,9 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 	line := lineAt(lines, bytePosition.Line)
 	tableHeader := inTableHeaderLine(line, bytePosition)
 	items := make([]map[string]any, 0, len(completions))
+	isIncomplete := false
 	for _, item := range completions {
+		isIncomplete = isIncomplete || item.Incomplete
 		out := map[string]any{
 			"label":      item.Label,
 			"kind":       item.Kind,
@@ -325,7 +327,7 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 		items = append(items, out)
 	}
 	return map[string]any{
-		"isIncomplete": false,
+		"isIncomplete": isIncomplete,
 		"items":        items,
 	}
 }

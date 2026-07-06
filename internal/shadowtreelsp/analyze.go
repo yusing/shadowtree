@@ -37,6 +37,7 @@ type completion struct {
 	Quote           bool
 	Placeholder     bool
 	RecipeReference bool
+	Incomplete      bool
 	Edit            *completionEdit
 }
 
@@ -771,7 +772,11 @@ func workdirValueCompletions(ctx context.Context, table, key, prefix string, opt
 		nil,
 		lspCompletionCandidateOptions(opts),
 	)
-	return argumentDefaultValueCompletionItems(candidates, argName, true), true
+	items := argumentDefaultValueCompletionItems(candidates, argName, true)
+	for i := range items {
+		items[i].Incomplete = true
+	}
+	return items, true
 }
 
 func argumentDefaultValueCompletions(ctx context.Context, text, table, key, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {

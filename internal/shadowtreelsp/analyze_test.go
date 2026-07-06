@@ -114,6 +114,9 @@ workdir = s`
 		lspPosition{Line: 1, Character: len(`workdir = s`)},
 		completionOptions{Dir: root},
 	)
+	if result["isIncomplete"] != true {
+		t.Fatalf("isIncomplete = %#v, want true so editor re-queries after typing placeholders", result["isIncomplete"])
+	}
 	edit := completionTextEdit(t, result, "services/")
 	if edit["newText"] != `"services/"` {
 		t.Fatalf("newText = %#v, want quoted workdir path", edit["newText"])
