@@ -527,6 +527,109 @@ func TestRunPreservesScriptArgsWithLiteralRecipeReference(t *testing.T) {
 	}
 }
 
+func TestRunSupportsExportBeforeScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("VALUE=shadow\nexport VALUE\n@echo-value"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"echo-value": {Cmd: recipe.Command{"sh", "-c", "printf %s \"$VALUE\""}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q, want exported value", stdout.String())
+	}
+}
+
+func TestRunSupportsExportBeforeExternalCommandInScriptWithRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("VALUE=shadow\nexport VALUE\n@noop\nsh -c 'printf %s \"$VALUE\"'"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"noop": {Cmd: recipe.Command{"true"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q, want exported value", stdout.String())
+	}
+}
+
+func TestRunDoesNotPassUnexportedVariablesToScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("VALUE=shadow\n@echo-value"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"echo-value": {Cmd: recipe.Command{"sh", "-c", "printf %s \"${VALUE:-missing}\""}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "missing" {
+		t.Fatalf("stdout = %q, want unexported value hidden", stdout.String())
+	}
+}
+
 func TestRunPreservesDashPrefixedScriptArgsWithLiteralRecipeReference(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(

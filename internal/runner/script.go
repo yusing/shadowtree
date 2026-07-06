@@ -6,6 +6,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/scriptref"
@@ -31,12 +32,14 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 	if len(references) == 0 {
 		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
 	}
+	exported := map[string]string{}
 	runner, err := interp.New(
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(dir),
 		interp.Params(scriptParams(command)...),
 		interp.StdIO(stdin, stdout, stderr),
-		interp.ExecHandlers(recipeReferenceExecHandler(references, sandbox, options, stack)),
+		interp.CallHandler(exportCallHandler(exported)),
+		interp.ExecHandlers(recipeReferenceExecHandler(references, exported, sandbox, options, stack)),
 	)
 	if err != nil {
 		return err
@@ -51,6 +54,33 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 	return nil
 }
 
+func exportCallHandler(exported map[string]string) interp.CallHandlerFunc {
+	return func(ctx context.Context, args []string) ([]string, error) {
+		if len(args) < 2 || args[0] != "export" {
+			return args, nil
+		}
+		handler := interp.HandlerCtx(ctx)
+		for _, arg := range args[1:] {
+			if arg == "" || arg[0] == '-' {
+				return args, nil
+			}
+			name, value, hasValue := strings.Cut(arg, "=")
+			if !syntax.ValidName(name) {
+				return args, nil
+			}
+			if hasValue {
+				exported[name] = value
+				continue
+			}
+			current := handler.Env.Get(name)
+			if current.IsSet() && current.Kind == expand.String {
+				exported[name] = current.Str
+			}
+		}
+		return []string{":"}, nil
+	}
+}
+
 func scriptReferencePositions(refs []scriptref.Reference) map[syntax.Pos]struct{} {
 	references := map[syntax.Pos]struct{}{}
 	for _, ref := range refs {
@@ -63,13 +93,16 @@ func scriptParams(command recipe.Command) []string {
 	return slices.Concat([]string{"--"}, command[4:])
 }
 
-func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, sandbox *sandboxWorkspace, options Options, stack []string) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map[string]string, sandbox *sandboxWorkspace, options Options, stack []string) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 {
 				return next(ctx, args)
 			}
 			handler := interp.HandlerCtx(ctx)
+			if err := applyScriptExports(handler.Env, exported); err != nil {
+				return err
+			}
 			if _, ok := references[handler.Pos]; !ok {
 				return next(ctx, args)
 			}
@@ -88,6 +121,27 @@ func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, sandbox *san
 			return err
 		}
 	}
+}
+
+func applyScriptExports(env expand.Environ, exported map[string]string) error {
+	if len(exported) == 0 {
+		return nil
+	}
+	writeEnv, ok := env.(expand.WriteEnviron)
+	if !ok {
+		return nil
+	}
+	for name, value := range exported {
+		if err := writeEnv.Set(name, expand.Variable{
+			Set:      true,
+			Exported: true,
+			Kind:     expand.String,
+			Str:      value,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func environList(env expand.Environ) []string {
