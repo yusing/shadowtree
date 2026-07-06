@@ -697,6 +697,119 @@ default = "./..."
 	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build ./internal/recipe `), len(`@build ./internal/recipe count=1`))
 }
 
+func TestDocumentDiagnosticsRejectUnknownPlaceholder(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		line  int
+		start int
+		end   int
+	}{
+		{
+			name: "cmd",
+			text: `[recipes.test]
+cmd = "echo {non_existent}"
+`,
+			line:  1,
+			start: len(`cmd = "echo `),
+			end:   len(`cmd = "echo {non_existent}`),
+		},
+		{
+			name: "workdir",
+			text: `[recipes.test]
+workdir = "services/{non_existent}"
+cmd = "true"
+`,
+			line:  1,
+			start: len(`workdir = "services/`),
+			end:   len(`workdir = "services/{non_existent}`),
+		},
+		{
+			name: "pre",
+			text: `[recipes.test]
+pre = ["echo {non_existent}"]
+cmd = "true"
+`,
+			line:  1,
+			start: len(`pre = ["echo `),
+			end:   len(`pre = ["echo {non_existent}`),
+		},
+		{
+			name: "post",
+			text: `[recipes.test]
+cmd = "true"
+post = ["echo {non_existent}"]
+`,
+			line:  2,
+			start: len(`post = ["echo `),
+			end:   len(`post = ["echo {non_existent}`),
+		},
+		{
+			name: "for_each",
+			text: `[recipes.test]
+for_each = "@enum {non_existent}"
+cmd = "echo {item}"
+`,
+			line:  1,
+			start: len(`for_each = "@enum `),
+			end:   len(`for_each = "@enum {non_existent}`),
+		},
+		{
+			name: "sync_out",
+			text: `[recipes.test]
+cmd = "true"
+sync_out = ["out/{non_existent}.txt"]
+`,
+			line:  2,
+			start: len(`sync_out = ["out/`),
+			end:   len(`sync_out = ["out/{non_existent}`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			assertOneDiagnostic(t, diagnostics, "unknown variable {non_existent}")
+			assertDiagnosticRange(t, diagnostics[0], tc.line, tc.start, tc.end)
+		})
+	}
+}
+
+func TestDocumentDiagnosticsAcceptKnownPlaceholders(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[vars]
+PROJECT = "./cmd/shadowtree"
+
+[var_commands]
+GENERATED = "printf generated"
+
+[recipes.test.vars]
+local = "./internal/shadowtreelsp"
+
+[recipes.test.arguments.pkg]
+default = "./..."
+
+[recipes.test]
+for_each = "@enum one two"
+workdir = "{item}"
+pre = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
+cmd = "go test {PROJECT} {GENERATED} {local} {pkg} {item} {item_help} {item_index} {@}"
+post = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
+sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsIgnoreNonShadowtreePlaceholders(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+shell_prelude = "echo {non_existent}"
+cmd = "echo ${HOME}"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[vars]
 cmd = "@missing"

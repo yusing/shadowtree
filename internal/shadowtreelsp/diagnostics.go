@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -54,6 +55,7 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	}
 
 	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, cfg, opts)...)
+	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
 	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
 		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
@@ -233,6 +235,150 @@ func commandReferenceArgumentDiagnostic(lines []string, arg commandReferenceArgu
 		Source:   "shadowtree",
 		Message:  message,
 	}
+}
+
+func placeholderDiagnostics(text string, cfg recipe.Config) []lspDiagnostic {
+	lines := strings.Split(text, "\n")
+	scriptRegionList := scriptRegions(lines, shellSettings(lines))
+	regions := placeholderDiagnosticRegions(lines, scriptRegionList)
+	var referenceOverlaps map[int][]span
+	var diagnostics []lspDiagnostic
+	for _, region := range regions {
+		known := placeholderDiagnosticNames(cfg, region)
+		if known == nil {
+			continue
+		}
+		for lineNo := region.StartLine; lineNo <= region.EndLine && lineNo < len(lines); lineNo++ {
+			line := lines[lineNo]
+			start, end := 0, len(line)
+			if lineNo == region.StartLine {
+				start = region.StartCol
+			}
+			if lineNo == region.EndLine {
+				end = region.EndCol
+			}
+			for _, item := range placeholderSpansInRange(line, start, end) {
+				name := line[item.Start+1 : item.Start+item.Length-1]
+				if known[name] {
+					continue
+				}
+				if referenceOverlaps == nil {
+					referenceOverlaps = dynamicCommandReferenceOverlapIndex(commandReferenceSpansWithScriptRegions(lines, scriptRegionList))
+				}
+				if overlapsCommandReference(referenceOverlaps, lineNo, item) {
+					continue
+				}
+				diagnostics = append(diagnostics, lspDiagnostic{
+					Range:    lspRange(line, lineNo, item.Start, item.Start+item.Length),
+					Severity: diagnosticSeverityError,
+					Source:   "shadowtree",
+					Message:  "unknown variable {" + name + "}",
+				})
+			}
+		}
+	}
+	return diagnostics
+}
+
+func dynamicCommandReferenceOverlapIndex(references []commandReferenceSpan) map[int][]span {
+	overlaps := map[int][]span{}
+	for _, ref := range references {
+		if !strings.Contains(ref.Name, "{") && !strings.Contains(ref.Path, "{") {
+			continue
+		}
+		overlaps[ref.Line] = append(overlaps[ref.Line], span{Start: ref.Start, Length: ref.End - ref.Start})
+	}
+	return overlaps
+}
+
+func placeholderDiagnosticNames(cfg recipe.Config, region scriptRegion) map[string]bool {
+	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) {
+		return nil
+	}
+	rec, ok := cfg.Recipes[currentRecipe(region.Table)]
+	if !ok {
+		return nil
+	}
+	names := map[string]bool{}
+	for name := range cfg.Vars {
+		names[name] = true
+	}
+	for name := range cfg.VarCommands {
+		names[name] = true
+	}
+	for name := range rec.Vars {
+		names[name] = true
+	}
+	for name := range rec.Arguments {
+		names[name] = true
+	}
+	if len(rec.ForEach) > 0 && (region.Key == "cmd" || region.Key == "workdir") {
+		names[recipe.ForEachItemPlaceholder] = true
+		names[recipe.ForEachItemHelpPlaceholder] = true
+		names[recipe.ForEachItemIndexPlaceholder] = true
+	}
+	if region.Key == "cmd" {
+		names["@"] = true
+	}
+	return names
+}
+
+func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) []scriptRegion {
+	regions := slices.Clone(scriptRegions)
+	table := ""
+	for lineNo := 0; lineNo < len(lines); lineNo++ {
+		raw := lines[lineNo]
+		if parsed, ok := completeTableHeader(raw); ok {
+			table = parsed
+			continue
+		}
+		key, ok := pairKey(raw)
+		if !ok || !placeholderDiagnosticValueKey(table, key) {
+			continue
+		}
+		if key == "sync_out" {
+			listRegions, endLine := commandListStringRegions(lines, lineNo, table, key, "", func(string) bool {
+				return true
+			})
+			regions = append(regions, listRegions...)
+			lineNo = endLine
+			continue
+		}
+		region, endLine, ok := stringValueRegion(lines, lineNo, table, key, "")
+		if ok {
+			regions = append(regions, region)
+			lineNo = endLine
+		}
+	}
+	return regions
+}
+
+func placeholderDiagnosticKey(key string) bool {
+	switch key {
+	case "cmd", "pre", "post", "for_each", "workdir", "sync_out":
+		return true
+	default:
+		return false
+	}
+}
+
+func placeholderDiagnosticValueKey(table, key string) bool {
+	if !recipeTable(table) {
+		return false
+	}
+	return key == "workdir" || key == "sync_out"
+}
+
+func placeholderSpansInRange(line string, start, end int) []span {
+	var out []span
+	for _, item := range placeholderSpans(line[start:end]) {
+		item.Start += start
+		if item.Start > 0 && line[item.Start-1] == '$' {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func validateRecipeReferenceArgumentValue(name string, arg recipe.Argument, value string) error {

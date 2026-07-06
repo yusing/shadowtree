@@ -1070,38 +1070,51 @@ func scriptRegions(lines []string, shells map[string]string) []scriptRegion {
 			lineNo = endLine
 			continue
 		}
-		start, quote, ok := stringStart(raw)
+		region, endLine, ok := stringValueRegion(lines, lineNo, table, key, shell)
 		if !ok {
 			continue
 		}
-		if quote.Triple {
-			bodyStart := start + len(quote.Delimiter)
-			if end := strings.Index(raw[bodyStart:], quote.Delimiter); end >= 0 {
-				regions = append(regions, scriptRegion{
-					Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
-					EndLine: lineNo, EndCol: bodyStart + end,
-				})
-				continue
-			}
-			endLine, endCol := findTripleStringEnd(lines, lineNo+1, quote.Delimiter)
-			regions = append(regions, scriptRegion{
-				Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
-				EndLine: endLine, EndCol: endCol,
-			})
-			lineNo = endLine
-			continue
-		}
-		bodyStart := start + 1
-		bodyEnd := findStringEnd(raw, bodyStart, quote.Delimiter[0])
-		regions = append(regions, scriptRegion{
-			Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
-			EndLine: lineNo, EndCol: bodyEnd,
-		})
+		regions = append(regions, region)
+		lineNo = endLine
 	}
 	return regions
 }
 
+func stringValueRegion(lines []string, lineNo int, table, key, shell string) (scriptRegion, int, bool) {
+	raw := lineAt(lines, lineNo)
+	start, quote, ok := stringStart(raw)
+	if !ok {
+		return scriptRegion{}, lineNo, false
+	}
+	if quote.Triple {
+		bodyStart := start + len(quote.Delimiter)
+		if end := strings.Index(raw[bodyStart:], quote.Delimiter); end >= 0 {
+			return scriptRegion{
+				Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+				EndLine: lineNo, EndCol: bodyStart + end,
+			}, lineNo, true
+		}
+		endLine, endCol := findTripleStringEnd(lines, lineNo+1, quote.Delimiter)
+		return scriptRegion{
+			Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+			EndLine: endLine, EndCol: endCol,
+		}, endLine, true
+	}
+	bodyStart := start + 1
+	bodyEnd := findStringEnd(raw, bodyStart, quote.Delimiter[0])
+	return scriptRegion{
+		Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
+		EndLine: lineNo, EndCol: bodyEnd,
+	}, lineNo, true
+}
+
 func commandListScriptRegions(lines []string, startLine int, table, key, shell string) ([]scriptRegion, int) {
+	return commandListStringRegions(lines, startLine, table, key, shell, func(value string) bool {
+		return !recipe.IsRecipeReferenceString(value)
+	})
+}
+
+func commandListStringRegions(lines []string, startLine int, table, key, shell string, includeString func(string) bool) ([]scriptRegion, int) {
 	var regions []scriptRegion
 	depth := 0
 	started := false
@@ -1141,7 +1154,7 @@ func commandListScriptRegions(lines []string, startLine int, table, key, shell s
 				if quote.Triple {
 					if end := strings.Index(raw[bodyStart:], quote.Delimiter); end >= 0 {
 						bodyEnd := bodyStart + end
-						if depth == 1 && !recipe.IsRecipeReferenceString(raw[bodyStart:bodyEnd]) {
+						if depth == 1 && includeString(raw[bodyStart:bodyEnd]) {
 							regions = append(regions, scriptRegion{
 								Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
 								EndLine: lineNo, EndCol: bodyEnd,
@@ -1163,7 +1176,7 @@ func commandListScriptRegions(lines []string, startLine int, table, key, shell s
 					continue
 				}
 				bodyEnd := findStringEnd(raw, bodyStart, quote.Delimiter[0])
-				if depth == 1 && !recipe.IsRecipeReferenceString(raw[bodyStart:bodyEnd]) {
+				if depth == 1 && includeString(raw[bodyStart:bodyEnd]) {
 					regions = append(regions, scriptRegion{
 						Shell: shell, Table: table, Key: key, StartLine: lineNo, StartCol: bodyStart,
 						EndLine: lineNo, EndCol: bodyEnd,
