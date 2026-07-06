@@ -76,11 +76,97 @@ cmd = "echo {"
 func TestCompletionsIncludeForEachItemPlaceholdersInWorkdir(t *testing.T) {
 	text := `[recipes.lint]
 for_each = "@enum a b"
-workdir = "{"
+workdir = "services/{"
 cmd = "echo {item}"
 `
-	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`workdir = "{`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`workdir = "services/{`)})
 	assertLabels(t, items, "{item}", "{item_help}", "{item_index}")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 2, Character: len(`workdir = "services/{`)})
+	edit := completionTextEdit(t, result, "{item}")
+	if edit["newText"] != "item}" {
+		t.Fatalf("newText = %#v, want placeholder suffix", edit["newText"])
+	}
+}
+
+func TestCompletionsIncludeWorkdirPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "README.md"), []byte("docs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+workdir = s`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`workdir = s`)},
+		completionOptions{Dir: root},
+	)
+	assertLabels(t, items, "services/")
+	assertNoLabels(t, items, "services/README.md")
+
+	result := completionResultWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`workdir = s`)},
+		completionOptions{Dir: root},
+	)
+	edit := completionTextEdit(t, result, "services/")
+	if edit["newText"] != `"services/"` {
+		t.Fatalf("newText = %#v, want quoted workdir path", edit["newText"])
+	}
+
+	text = strings.Replace(text, "workdir = s", `workdir = "services/a`, 1)
+	result = completionResultWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`workdir = "services/a`)},
+		completionOptions{Dir: root},
+	)
+	edit = completionTextEdit(t, result, "services/api/")
+	if edit["newText"] != `services/api/"` {
+		t.Fatalf("newText = %#v, want replacement plus closing quote", edit["newText"])
+	}
+}
+
+func TestCompletionsExcludeAbsoluteWorkdirPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+workdir = /`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`workdir = /`)},
+		completionOptions{Dir: root},
+	)
+	if len(items) != 0 {
+		t.Fatalf("items = %#v, want no absolute workdir path completions", items)
+	}
+}
+
+func TestCompletionsExcludeWorkdirPathsInScriptRegion(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	text := `[recipes.test]
+cmd = '''
+workdir = s
+'''
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 2, Character: len(`workdir = s`)},
+		completionOptions{Dir: root},
+	)
+	assertNoLabels(t, items, "services/")
 }
 
 func TestCompletionsExcludeForEachItemPlaceholdersOutsideMainAndWorkdir(t *testing.T) {

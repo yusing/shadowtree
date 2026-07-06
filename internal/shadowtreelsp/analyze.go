@@ -206,14 +206,17 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		key, _ := keyBeforeValue(prefix)
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key))
 	}
+	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
+		return nil
+	}
 	if key, ok := keyBeforeValue(prefix); ok {
+		if items, ok := workdirValueCompletions(ctx, analysis.CurrentTable, key, prefix, opts); ok {
+			return items
+		}
 		if items, ok := argumentDefaultValueCompletions(ctx, text, analysis.CurrentTable, key, prefix, pos, opts); ok {
 			return items
 		}
 		return valueCompletions(key)
-	}
-	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
-		return nil
 	}
 	return keyCompletions(analysis.CurrentTable)
 }
@@ -746,6 +749,29 @@ func keyCompletions(table string) []completion {
 		}
 	}
 	return nil
+}
+
+func workdirValueCompletions(ctx context.Context, table, key, prefix string, opts completionOptions) ([]completion, bool) {
+	if key != "workdir" || !recipeTable(table) {
+		return nil, false
+	}
+	_, valuePrefix, _ := strings.Cut(prefix, "=")
+	valuePrefix = strings.TrimLeft(valuePrefix, " \t")
+	argName := "workdir"
+	rec := recipe.Recipe{
+		Arguments: map[string]recipe.Argument{
+			argName: {Type: "rel_path", PathKind: "dir"},
+		},
+	}
+	candidates := recipecompletion.GroupedArgumentCandidates(
+		ctx,
+		"",
+		argName+"="+valuePrefix,
+		rec,
+		nil,
+		lspCompletionCandidateOptions(opts),
+	)
+	return argumentDefaultValueCompletionItems(candidates, argName, true), true
 }
 
 func argumentDefaultValueCompletions(ctx context.Context, text, table, key, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
