@@ -193,6 +193,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
 		return items
 	}
+	if items, ok := commandListRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
+		return items
+	}
 	if items, ok := scriptRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
 		return items
 	}
@@ -254,6 +257,34 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		lspCompletionCandidateOptions(opts),
 	)
 	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character), true
+}
+
+func commandListRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
+	line := lineAt(analysis.Lines, pos.Line)
+	if !strings.Contains(linePrefix(line, pos.Character), "@") {
+		return nil, false
+	}
+	for _, span := range commandReferenceSpansWithScriptRegions(analysis.Lines, analysis.ScriptRegions) {
+		if span.Line != pos.Line || span.Key != "pre" && span.Key != "post" {
+			continue
+		}
+		if pos.Character <= span.Start || pos.Character > span.End {
+			continue
+		}
+		prefix := line[span.Start+1 : pos.Character]
+		if strings.Contains(prefix, "[") {
+			return groupedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, span.Start, opts), true
+		}
+		if strings.ContainsAny(prefix, " \t") {
+			return spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, span.Start, opts), true
+		}
+		items := recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, prefix, false, opts)
+		for i := range items {
+			items[i].Edit = &completionEdit{Start: span.Start + 1, End: pos.Character}
+		}
+		return items, true
+	}
+	return nil, false
 }
 
 func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {

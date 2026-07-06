@@ -214,6 +214,75 @@ pre = ["@v"]
 	assertLabels(t, items, "@vet")
 }
 
+func TestCompletionsIncludeBareRecipeReferencePrefixes(t *testing.T) {
+	text := `[recipes.vet]
+cmd = "go vet"
+
+[recipes.check]
+cmd = "@"
+pre = ["@
+post = ["@"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`cmd = "@`)})
+	assertLabels(t, items, "@vet")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 5, Character: len(`pre = ["@`)})
+	assertLabels(t, items, "@vet")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`post = ["@`)})
+	assertLabels(t, items, "@vet")
+}
+
+func TestCompletionsIncludeMultilineCommandListRecipeReferences(t *testing.T) {
+	text := `[recipes.build]
+cmd = "go build"
+
+[recipes.prune-db-types]
+cmd = "go run ./tools/database/go_types_generator"
+
+[recipes.check]
+pre = [
+  "mkdir -p bin",
+  "@build[project=tools/database/go_types_generator]",
+  "@prune-db-t"
+]
+post = [
+  "@prune-db-t"
+]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`  "@prune-db-t`)})
+	assertLabels(t, items, "@prune-db-types")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 13, Character: len(`  "@prune-db-t`)})
+	assertLabels(t, items, "@prune-db-types")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 10, Character: len(`  "@prune-db-t`)})
+	edit := completionTextEdit(t, result, "@prune-db-types")
+	if edit["newText"] != "prune-db-types" {
+		t.Fatalf("newText = %#v, want recipe name", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`  "@`), len(`  "@prune-db-t`))
+}
+
+func TestCompletionsIncludeBareScriptRecipeReferencePrefixes(t *testing.T) {
+	text := `[recipes.vet]
+cmd = "go vet"
+
+[recipes.check]
+pre = ['''
+@
+''']
+post = ['''
+@
+''']
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 5, Character: len(`@`)})
+	assertLabels(t, items, "@vet")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`@`)})
+	assertLabels(t, items, "@vet")
+}
+
 func TestCompletionsIncludeStringRecipeReferences(t *testing.T) {
 	text := `[recipes.test]
 cmd = "go test"
