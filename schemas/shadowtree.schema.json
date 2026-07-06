@@ -20,7 +20,7 @@
     },
     "shell_prelude": {
       "$ref": "#/definitions/shellScript",
-      "description": "Shell code prepended to every script command and every sh -c command. In sh/bash, a literal command-position @recipe invokes that recipe directly."
+      "description": "Shell code prepended to every script command. In sh/bash, a literal command-position @recipe invokes that recipe directly."
     },
     "sync_out": {
       "$ref": "#/definitions/syncOut"
@@ -48,7 +48,7 @@
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in commands, args, default_args, pre, post, and sync_out.",
+      "description": "Static placeholder values. Use {NAME} in cmd, pre, post, and sync_out.",
       "additionalProperties": false,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
@@ -98,7 +98,7 @@
         },
         "shell_prelude": {
           "$ref": "#/definitions/shellScript",
-          "description": "Recipe-local shell code appended after the top-level shell_prelude. In sh/bash, a literal command-position @recipe invokes that recipe directly."
+          "description": "Recipe-local shell code appended after the top-level shell_prelude."
         },
         "sandboxed": {
           "type": "boolean",
@@ -107,23 +107,15 @@
         },
         "cmd": {
           "$ref": "#/definitions/command",
-          "description": "Required main command. Use an argv array for direct execution, an @recipe or @path:recipe marker for another Shadowtree recipe, or a string for a shell script. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly. Use {@} as a whole argv-array item to splice leftover recipe CLI args."
-        },
-        "args": {
-          "$ref": "#/definitions/stringArray",
-          "description": "Fixed arguments always inserted after cmd. Placeholder values such as {project} are expanded. Use {@} as a whole item to splice leftover recipe CLI args."
-        },
-        "default_args": {
-          "$ref": "#/definitions/stringArray",
-          "description": "Arguments used when the user does not provide recipe CLI args. Placeholder values such as {project} are expanded. Use {@} as a whole item to splice leftover recipe CLI args."
+          "description": "Required main command. Use {@} in cmd to splice leftover recipe CLI args."
         },
         "pre": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run before the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly. Use {@} as a whole argv-array item to splice leftover recipe CLI args."
+          "description": "Commands run before the main command."
         },
         "post": {
           "$ref": "#/definitions/commandList",
-          "description": "Commands run after the main command. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe in the current workspace. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly. Use {@} as a whole argv-array item to splice leftover recipe CLI args."
+          "description": "Commands run after the main command."
         },
         "env": {
           "$ref": "#/definitions/env"
@@ -133,12 +125,12 @@
         }
       },
       "x-taplo": {
-        "initKeys": ["help", "cmd", "default_args"]
+        "initKeys": ["help", "cmd", "arguments"]
       }
     },
     "arguments": {
       "type": "object",
-      "description": "Typed recipe arguments available as placeholders in commands and args. Positional values and known key=value values are consumed by typed arguments and excluded from the {@} leftover-args placeholder.",
+      "description": "Typed recipe arguments available as placeholders in commands. Positional values and known key=value values are consumed by typed arguments and excluded from the {@} leftover-args placeholder.",
       "additionalProperties": false,
       "patternProperties": {
         "^[^=()\\[\\], \\t\\r\\n]+$": {
@@ -194,7 +186,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @go-modules, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side in script-valued values, for example @go-modules; @enum all='all modules'. A command array starting with @recipe or @path:recipe invokes another Shadowtree recipe. In sh/bash script strings, a literal command-position @recipe invokes that recipe directly."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @go-modules, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side, for example @go-modules; @enum all='all modules'."
         }
       },
       "x-taplo": {
@@ -202,31 +194,13 @@
       }
     },
     "command": {
-      "description": "Command as a shell script string or an argv array. Script strings run through the configured shell unless the whole string is exactly @recipe or @path:recipe. A string @recipe/@path:recipe, an argv array whose first item is @recipe/@path:recipe, or a literal command-position @recipe inside a sh/bash script, including pre/post and shell_prelude scripts, invokes another Shadowtree recipe directly.",
-      "oneOf": [
-        {
-          "$ref": "#/definitions/shellScript"
-        },
-        {
-          "$ref": "#/definitions/argv"
-        }
-      ]
+      "$ref": "#/definitions/shellScript",
+      "description": "Command string run through the configured shell after placeholder expansion. A string that is exactly @recipe or @path:recipe invokes another recipe. In sh/bash, a literal command-position @recipe inside a script also invokes that recipe."
     },
     "commandList": {
       "type": "array",
       "items": {
         "$ref": "#/definitions/command"
-      }
-    },
-    "argv": {
-      "type": "array",
-      "description": "Direct process argv. The first item is the executable, @recipe, or @path:recipe to invoke another Shadowtree recipe. Use {name} placeholders in any item.",
-      "minItems": 1,
-      "items": {
-        "type": "string"
-      },
-      "x-taplo": {
-        "initKeys": ["go", "node", "test"]
       }
     },
     "shell": {
@@ -246,12 +220,6 @@
       "type": "string",
       "minLength": 1,
       "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly; assignments such as FOO=\"@recipe\" and expanded variables do not."
-    },
-    "stringArray": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
     },
     "syncOut": {
       "type": "array",

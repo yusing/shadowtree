@@ -3,9 +3,7 @@ shell = "sh"
 
 [recipes.build]
 help = "Build the shadowtree binary into bin/."
-cmd = ["go", "build"]
-args = [ "-ldflags=-s -w", "-buildvcs=false", "-o", "bin/{binary}"]
-default_args = ["{project}"]
+cmd = "go build -ldflags='-s -w' -buildvcs=false -o bin/{binary} {project} {@}"
 sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.project]
@@ -23,7 +21,7 @@ default = "shadowtree"
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
 sandboxed = false
-cmd = ["go", "install", "./cmd/shadowtree", "./cmd/shadowtree-lsp"]
+cmd = "go install ./cmd/shadowtree ./cmd/shadowtree-lsp"
 post = ['''
 set -eu
 go_bin=$(go env GOBIN)
@@ -77,27 +75,37 @@ echo "installed shadowtree skill to $skill_dest"
 
 # [recipes.test]
 # help = "Run the test suite."
-# cmd = ["go", "test"]
-# default_args = ["./..."]
+# cmd = "go test {pkg} {@}"
+#
+# [recipes.test.arguments.pkg]
+# type = "rel_path"
+# default = "./..."
 
 # [recipes.vet]
 # help = "Run go vet."
-# cmd = ["go", "vet"]
-# default_args = ["./..."]
+# cmd = "go vet {pkg} {@}"
+#
+# [recipes.vet.arguments.pkg]
+# type = "rel_path"
+# default = "./..."
 
 # [recipes.check]
 # help = "Run vet and tests."
-# pre = ["@vet"]
-# cmd = ["@test"]
-# default_args = ["./..."]
+# cmd = '''
+# @vet {@}
+# @test {@}
+# '''
 
 # [recipes.fmt]
 # help = "Format Go source files."
 # sandboxed = false
-# cmd = ["gofmt", "-w"]
-# default_args = ["."]
+# cmd = "gofmt -w {target} {@}"
+#
+# [recipes.fmt.arguments.target]
+# type = "rel_path"
+# default = "."
 
 # [recipes.tidy]
 # help = "Tidy module dependencies."
 # sandboxed = false
-# cmd = ["go", "mod", "tidy"]
+# cmd = "go mod tidy"

@@ -13,8 +13,8 @@ This document describes the behavior currently implemented by the project.
 - Keep command writes isolated from the host checkout unless explicitly synced.
 - Avoid triggering editor/LSP reindexing for generated or temporary files.
 - Provide useful defaults for Go and Node projects.
-- Keep configuration small and exact, using argv arrays for process execution
-  and shell script strings for workflows that benefit from shared shell logic.
+- Keep configuration small and exact, using shell strings for commands and
+  typed arguments plus placeholders for validated defaults and CLI forwarding.
 - Support dynamic shell completion from resolved recipes.
 - Provide editor-facing schema and syntax support for TOML configuration.
 - Let the project use Shadowtree for its own development tasks.
@@ -142,16 +142,14 @@ KEY = "value"
 NAME = "static value"
 
 [var_commands]
-DYNAMIC_NAME = ["cmd", "arg"]
+DYNAMIC_NAME = "cmd arg"
 
 [recipes.<name>]
 help = "Short recipe help text."
 sandboxed = true
-pre = [["cmd", "arg"]]
-cmd = ["cmd", "arg"]
-args = ["fixed", "args"]
-default_args = ["args", "with", "{placeholders}"]
-post = [["cmd", "arg"]]
+pre = ["cmd arg"]
+cmd = "cmd {placeholders}"
+post = ["cmd arg"]
 sync_out = ["path/from/project/root"]
 
 [recipes.<name>.vars]
@@ -166,13 +164,13 @@ type = "string"
 position = 1
 required = false
 default = "value"
-values = ["cmd", "arg"]
+values = "cmd arg"
 ```
 
 ## Recipe Fields
 
-Commands can be argv arrays, recipe references, or shell script strings. Script
-strings are executed with the configured shell:
+Commands are shell strings, recipe reference strings, or command-list entries
+containing those strings. Shell strings are executed with the configured shell:
 
 ```toml
 shell = "bash"
@@ -186,27 +184,34 @@ echo "hello"
 
 If `shell` is not set, Shadowtree uses `sh`.
 
-An argv array whose first item starts with `@` invokes another Shadowtree recipe
-directly:
+Command strings run through the configured shell after placeholder expansion.
+A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
+other strings run in the shell. Defaults belong in typed `arguments`,
+referenced from `cmd`.
+
+Example:
 
 ```toml
 [recipes.gen-swagger]
-cmd = ["go", "generate", "./internal/api"]
+cmd = "go generate ./internal/api"
 
 [recipes.test]
-pre = [["@gen-swagger"]]
-cmd = ["go", "test"]
-default_args = ["./..."]
+pre = ["@gen-swagger"]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 
 [recipes.build.arguments.project]
-values = ["@list-build-targets"]
+values = "@list-build-targets"
 ```
 
-The text after `@` is the referenced recipe name. Remaining argv items are
-passed to that recipe as CLI arguments:
+The text after `@` is the referenced recipe name. Bracket-style arguments pass
+CLI arguments to the referenced recipe:
 
 ```toml
-pre = [["@build-api", "service=public"]]
+pre = ["@build-api[service=public]"]
 ```
 
 For `sh` and `bash` script commands, including `cmd`, `pre`, `post`, argument
@@ -239,30 +244,29 @@ is resolved relative to the directory containing the referencing
 
 ```toml
 [recipes.gen-schema]
-cmd = ["@webui:gen-schema"]
+cmd = "@webui:gen-schema"
 ```
 
-In command-list fields such as `pre` and `post`, a string command that is
-exactly `@recipe` is also a recipe reference. Other string commands are shell
-scripts:
+In command-list fields such as `pre` and `post`, only strings that are exactly
+`@recipe` are direct recipe references:
 
 ```toml
 pre = ["echo 123", "@gen-swagger"]
 ```
 
-Because non-reference strings in `pre` and `post` are shell scripts, a literal
-command-position `@recipe` inside those strings also dispatches a recipe:
+Non-reference strings in `pre` and `post` still run in the shell, so a literal
+command-position `@recipe` inside them also dispatches a recipe:
 
 ```toml
 post = ["if [ -f schema.json ]; then @publish-schema; fi"]
 ```
 
-String and argv recipe references can use bracket-style arguments. Comma
-separators split the argument list, and surrounding whitespace is ignored:
+Recipe references can use bracket-style arguments. Comma separators split the
+argument list, and surrounding whitespace is ignored:
 
 ```toml
 pre = ["@build[component=godoxy, mode=dev]"]
-cmd = ["@test[package=./internal/recipe]"]
+cmd = "@test[package=./internal/recipe]"
 post = ["@webui:gen-schema[mode=dev]"]
 ```
 
@@ -271,9 +275,8 @@ Placeholders can be used in recipe references. Static references such as
 references such as `@{target}` and `@{target_path}:{target_recipe}` are
 resolved at run time after placeholder expansion.
 
-Top-level `shell_prelude` is prepended to every script command and every
-`["sh", "-c", "..."]` command. It is intended for shared shell functions and
-variables:
+Top-level `shell_prelude` is prepended to every script command. It is intended
+for shared shell functions and variables:
 
 ```toml
 shell_prelude = '''
@@ -301,14 +304,7 @@ and shell completion.
 `false` runs the recipe directly in the source checkout and skips sync-out.
 
 `cmd`
-: Required argv prefix, `@recipe` reference, or shell script for the main
-command.
-
-`args`
-: Fixed arguments always inserted after `cmd`.
-
-`default_args`
-: Arguments used only when the user does not provide recipe CLI args.
+: Required shell string or `@recipe` reference for the main command.
 
 `pre`
 : Commands run before the main command, in order.
@@ -361,11 +357,12 @@ positionally.
 `values`
 : Optional command that produces completion candidates for this argument. Each
 output line is a value, optionally followed by a tab and help text. The
-command can be an `@recipe` reference, or an argument-values builtin:
+command is a shell string. It can be an `@recipe` reference, or an
+argument-values builtin:
 
 ```toml
 values = '@enum api worker "admin ui"'
-values = ["@enum", "api=API service", "worker=Worker service"]
+values = "@enum api='API service' worker='Worker service'"
 values = '@lines config/targets.txt'
 values = '@glob "cmd/*"'
 values = "@go-modules; @enum all='all modules'"
@@ -376,16 +373,16 @@ values = '@vars'
 
 `@enum` returns literal values from its arguments. Enum arguments in
 `value=help text` form attach help when the help side contains whitespace;
-quote the help side in script-valued `values`, for example
-`@enum all='all modules'`. Single-token values such as `GOOS=linux` remain
+quote the help side, for example `@enum all='all modules'`.
+Single-token values such as `GOOS=linux` remain
 literal values. `@lines` reads candidates from a text file, using the same
 `value<TAB>help` line format. `@glob` returns filesystem matches. `@go-modules`
 returns directories containing `go.mod`, with `.` representing the config
 directory module and help from the module directive. `@go-main-packages`
 returns directories containing non-test Go files with `package main`, with
 help from package comments when available. Multiple builtin value commands in a
-script-valued `values` field can be separated with `;`; their candidates are
-concatenated without running a shell. `@recipes` returns resolved recipe names.
+`values` field can be separated with `;`; their candidates are concatenated
+without running a shell. `@recipes` returns resolved recipe names.
 `@vars` returns recipe placeholder and argument names. Relative `@lines` paths,
 `@glob` patterns, and Go discovery walks resolve from the config file directory
 when available.
@@ -395,9 +392,8 @@ Example:
 ```toml
 [recipes.build]
 help = "Build a Go package."
-cmd = ["go", "build"]
-args = ["-o", "bin/{binary}"]
-default_args = ["{project}"]
+cmd = "go build"
+cmd = "go build -o bin/{binary} {project} {@}"
 sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.project]
@@ -437,14 +433,14 @@ Bracket-style syntax is preferred for shell completion, especially in fish.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
-expanded in `cmd`, `args`, `default_args`, `pre`, `post`, and `sync_out`.
+expanded in `cmd`, `pre`, `post`, and `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 
 `{@}` is a variadic placeholder for leftover recipe CLI args. It must be a
-whole argv item in `cmd`, `args`, `default_args`, `pre`, or `post`; Shadowtree
-splices each leftover CLI arg into argv at that position. It is not supported
-inside shell script commands or `sync_out`. For recipes with typed
+whole argument item in argv-style `cmd` values, or a whole shell word in script
+`cmd` values; Shadowtree splices each leftover CLI arg at that position. It is
+supported only in `cmd`, not in `pre`, `post`, or `sync_out`. For recipes with typed
 `arguments`, positional argument values and known `key=value` argument values
 are consumed by those arguments and excluded from `{@}`. Unknown identifier
 `key=value` tokens remain errors; command flags such as `-run=TestName` pass
@@ -452,8 +448,7 @@ through. Use `--` to pass following tokens literally to `{@}`:
 
 ```toml
 [recipes.test]
-cmd = ["go", "test"]
-default_args = ["{pkg}", "{@}"]
+cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -486,22 +481,26 @@ Example:
 ```toml
 [recipes.test]
 help = "Run generated-code tests."
-pre = [["go", "generate", "./..."]]
-args = ["-count=1"]
+pre = ["go generate ./..."]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 ```
 
-The built-in `test` command and defaults remain:
+The built-in `test` placeholder defaults remain:
 
 ```text
-cmd = ["go", "test"]
-default_args = ["./..."]
+cmd = "go test {pkg} {@}"
+pkg default = "./..."
 ```
 
 Resolved without CLI args:
 
 ```sh
 go generate ./...
-go test -count=1 ./...
+go test ./...
 ```
 
 Resolved with CLI args:
@@ -514,15 +513,13 @@ runs:
 
 ```sh
 go generate ./...
-go test -count=1 ./internal/recipe
+go test ./internal/recipe
 ```
 
-CLI args replace `default_args`; they do not append to them.
-
 For recipes with typed `arguments`, CLI args are parsed as argument values
-instead. In that case, `default_args` stays active and can contain placeholders
-such as `{project}`. Use `{@}` in `default_args` when a typed recipe should
-also forward leftover CLI args after its typed argument values.
+instead. Placeholders in `cmd` expand from argument defaults and supplied
+values. Use `{@}` in `cmd` when a typed recipe should also forward leftover CLI
+args after its typed argument values.
 
 ## Execution Semantics
 
@@ -657,10 +654,10 @@ Package manager detection:
 
 Command forms:
 
-- Package scripts run `<pm> run <script> -- "$@"`.
-- Tool commands run `npm exec -- <bin> ... "$@"`, `pnpm exec <bin> ... "$@"`,
-  `yarn exec <bin> ... "$@"`, or `bunx <bin> ... "$@"`.
-- Bun projects without a test script use `bun test "$@"` when Vitest is not
+- Package scripts run `<pm> run <script> -- {@}`.
+- Tool commands run `npm exec -- <bin> ... {@}`, `pnpm exec <bin> ... {@}`,
+  `yarn exec <bin> ... {@}`, or `bunx <bin> ... {@}`.
+- Bun projects without a test script use `bun test {@}` when Vitest is not
   installed.
 
 Default Node recipes:
@@ -923,6 +920,6 @@ tidy
 - Workspace isolation uses namespace overlayfs only when the host supports it.
 - Large repositories may be slower when Shadowtree falls back to copying files.
 - Commands can still intentionally read or write absolute host paths.
-- Shell script strings are supported for recipes that need shell workflows;
-  argv arrays remain preferred for direct process execution.
+- Configured commands are shell strings; direct process argv arrays are only an
+  internal representation used by built-in recipes and resolved execution.
 - Built-in language profiles currently cover Go and Node.

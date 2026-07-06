@@ -104,9 +104,11 @@ func TestNamespaceOverlayPreservesGoTestCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolved, err := recipe.Resolve("test", recipe.Recipe{
-		Cmd:         recipe.Command{"go", "test"},
-		DefaultArgs: []string{"./..."},
-		Env:         map[string]string{"GOCACHE": cache},
+		Cmd: recipe.Command{"go", "test", "{pkg}", "{@}"},
+		Arguments: map[string]recipe.Argument{
+			"pkg": {Type: "rel_path", Default: "./..."},
+		},
+		Env: map[string]string{"GOCACHE": cache},
 	}, nil, nil, nil, "", recipe.GoProfile)
 	if err != nil {
 		t.Fatal(err)

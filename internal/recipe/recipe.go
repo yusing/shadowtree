@@ -64,8 +64,6 @@ type Recipe struct {
 	ShellPrelude string              `toml:"shell_prelude"`
 	Sandboxed    *bool               `toml:"sandboxed"`
 	Cmd          Command             `toml:"cmd"`
-	Args         []string            `toml:"args"`
-	DefaultArgs  []string            `toml:"default_args"`
 	Pre          []Command           `toml:"pre"`
 	Post         []Command           `toml:"post"`
 	Env          map[string]string   `toml:"env"`
@@ -135,62 +133,75 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		}
 		return map[string]Recipe{}
 	}
+	defaultGoPackageArgument := Argument{Type: "rel_path", Default: "./..."}
 	lint := Recipe{
-		Help:        "Run Go lint checks.",
-		Cmd:         Command{"golangci-lint", "run"},
-		DefaultArgs: []string{"./..."},
+		Help: "Run Go lint checks.",
+		Cmd:  Command{"golangci-lint", "run", "{pkg}", "{@}"},
+		Arguments: map[string]Argument{
+			"pkg": defaultGoPackageArgument,
+		},
 	}
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
 		lint = Recipe{
-			Help:        "Run Go static checks with go vet.",
-			Cmd:         Command{"go", "vet"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run Go static checks with go vet.",
+			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		}
 	}
 	return map[string]Recipe{
 		"check": {
-			Help:        "Run vet and tests.",
-			Pre:         []Command{{"@vet"}},
-			Cmd:         Command{"@test"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run vet and tests.",
+			Cmd:  ScriptCommand(`set -e; @vet {@}; @test {@}`),
 		},
 		"test": {
-			Help:        "Run Go tests.",
-			Cmd:         Command{"go", "test"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run Go tests.",
+			Cmd:  Command{"go", "test", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		},
 		"test-race": {
-			Help:        "Run Go tests with the race detector.",
-			Cmd:         Command{"go", "test"},
-			Args:        []string{"-race"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run Go tests with the race detector.",
+			Cmd:  Command{"go", "test", "-race", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		},
 		"vet": {
-			Help:        "Run go vet.",
-			Cmd:         Command{"go", "vet"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run go vet.",
+			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		},
 		"lint": lint,
 		"fmt": {
-			Help:        "Format Go source files.",
-			Cmd:         Command{"gofmt", "-w"},
-			DefaultArgs: []string{"."},
-			Sandboxed:   new(false),
+			Help: "Format Go source files.",
+			Cmd:  Command{"gofmt", "-w", "{target}", "{@}"},
+			Arguments: map[string]Argument{
+				"target": {Type: "rel_path", Default: "."},
+			},
+			Sandboxed: new(false),
 		},
 		"build": {
-			Help:        "Build Go packages.",
-			Cmd:         Command{"go", "build"},
-			DefaultArgs: []string{"./..."},
+			Help: "Build Go packages.",
+			Cmd:  Command{"go", "build", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		},
 		"generate": {
-			Help:        "Run go generate.",
-			Cmd:         Command{"go", "generate"},
-			DefaultArgs: []string{"./..."},
+			Help: "Run go generate.",
+			Cmd:  Command{"go", "generate", "{pkg}", "{@}"},
+			Arguments: map[string]Argument{
+				"pkg": defaultGoPackageArgument,
+			},
 		},
 		"run": {
-			Help:        "Run a Go command.",
-			Cmd:         Command{"go", "run"},
-			DefaultArgs: []string{"{command}"},
+			Help: "Run a Go command.",
+			Cmd:  Command{"go", "run", "{command}", "{@}"},
 			Arguments: map[string]Argument{
 				"command": {
 					Type:     "rel_path",
@@ -241,12 +252,6 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if len(override.Cmd) > 0 {
 		out.Cmd = slices.Clone(override.Cmd)
 	}
-	if override.Args != nil {
-		out.Args = slices.Clone(override.Args)
-	}
-	if override.DefaultArgs != nil {
-		out.DefaultArgs = slices.Clone(override.DefaultArgs)
-	}
 	if override.Pre != nil {
 		out.Pre = cloneCommands(override.Pre)
 	}
@@ -279,7 +284,7 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
 	}
-	values, selectedArgs, variadicArgs, err := resolveArguments(rec, cliArgs)
+	values, variadicArgs, err := resolveArguments(rec, cliArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
@@ -289,22 +294,14 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
 	cmd = CommandWithRecipeReference(cmd, rec.Shell, rec.ShellPrelude)
-	fixedArgs, err := expandStrings(rec.Args, values, variadicArgs)
-	if err != nil {
-		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
-	}
-	selectedArgs, err = expandStrings(selectedArgs, values, variadicArgs)
-	if err != nil {
-		return Resolved{}, fmt.Errorf("recipe %q default_args: %w", name, err)
-	}
-	pre, err := expandCommands(rec.Pre, values, variadicArgs)
+	pre, err := expandCommands(rec.Pre, values, nil)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
 	for i := range pre {
 		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, rec.ShellPrelude)
 	}
-	post, err := expandCommands(rec.Post, values, variadicArgs)
+	post, err := expandCommands(rec.Post, values, nil)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
@@ -335,17 +332,13 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 			return Resolved{}, fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 		}
 	}
-	main := make(Command, 0, len(cmd)+len(fixedArgs)+len(selectedArgs))
-	main = append(main, cmd...)
-	main = append(main, fixedArgs...)
-	main = append(main, selectedArgs...)
 	resolvedRecipe := rec
 	resolvedRecipe.Pre = pre
 	resolvedRecipe.Post = post
 	return Resolved{
 		Name:       name,
 		Recipe:     resolvedRecipe,
-		Main:       main,
+		Main:       cmd,
 		SyncOut:    syncOut,
 		Sandboxed:  sandboxed,
 		GlobalEnv:  maps.Clone(globalEnv),
@@ -381,11 +374,17 @@ func ValidateConfig(cfg Config) error {
 			}
 		}
 		for i, command := range rec.Pre {
+			if containsVariadicArgsPlaceholder(command) {
+				return fmt.Errorf("recipe %q pre[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
+			}
 			if err := ValidateCommand(command); err != nil {
 				return fmt.Errorf("recipe %q pre[%d]: %w", name, i, err)
 			}
 		}
 		for i, command := range rec.Post {
+			if containsVariadicArgsPlaceholder(command) {
+				return fmt.Errorf("recipe %q post[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
+			}
 			if err := ValidateCommand(command); err != nil {
 				return fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 			}
@@ -395,39 +394,41 @@ func ValidateConfig(cfg Config) error {
 }
 
 func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
-	values, selectedArgs, _, err := resolveArguments(rec, cliArgs)
-	return values, selectedArgs, err
+	values, variadicArgs, err := resolveArguments(rec, cliArgs)
+	return values, variadicArgs, err
 }
 
-func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, []string, error) {
+func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
 	usesVariadicArgs := recipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
-		selectedArgs := rec.DefaultArgs
-		if len(cliArgs) > 0 {
-			if usesVariadicArgs {
-				variadicArgs := cliArgs
-				if cliArgs[0] == "--" {
-					variadicArgs = cliArgs[1:]
-				}
-				return map[string]string{}, slices.Clone(selectedArgs), variadicArgs, nil
-			}
-			selectedArgs = cliArgs
+		if len(cliArgs) == 0 {
+			return map[string]string{}, nil, nil
 		}
-		return map[string]string{}, slices.Clone(selectedArgs), nil, nil
+		if usesVariadicArgs {
+			variadicArgs := cliArgs
+			if cliArgs[0] == "--" {
+				variadicArgs = cliArgs[1:]
+			}
+			return map[string]string{}, slices.Clone(variadicArgs), nil
+		}
+		if key, _, ok := strings.Cut(cliArgs[0], "="); ok && !strings.HasPrefix(key, "-") {
+			return nil, nil, fmt.Errorf("unknown argument %q", key)
+		}
+		return nil, nil, fmt.Errorf("unexpected positional argument %q", cliArgs[0])
 	}
 	values := map[string]string{}
 	for name, arg := range rec.Arguments {
 		if arg.Default != nil {
 			value, err := defaultValueString(arg.Default)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s default: %w", name, err)
+				return nil, nil, fmt.Errorf("%s default: %w", name, err)
 			}
 			if err := validateArgumentValue(name, arg, value); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			value, err = expandPathArgumentValue(arg, value)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s: %w", name, err)
+				return nil, nil, fmt.Errorf("%s: %w", name, err)
 			}
 			values[name] = value
 		}
@@ -450,14 +451,14 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 					variadicArgs = append(variadicArgs, token)
 					continue
 				}
-				return nil, nil, nil, fmt.Errorf("unknown argument %q", key)
+				return nil, nil, fmt.Errorf("unknown argument %q", key)
 			}
 			if err := validateArgumentValue(key, arg, value); err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			expanded, err := expandPathArgumentValue(arg, value)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s: %w", key, err)
+				return nil, nil, fmt.Errorf("%s: %w", key, err)
 			}
 			values[key] = expanded
 			continue
@@ -471,28 +472,28 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 				variadicArgs = append(variadicArgs, token)
 				continue
 			}
-			return nil, nil, nil, fmt.Errorf("unexpected positional argument %q", token)
+			return nil, nil, fmt.Errorf("unexpected positional argument %q", token)
 		}
 		name := positionals[nextPositional]
 		nextPositional++
 		arg := rec.Arguments[name]
 		if err := validateArgumentValue(name, arg, token); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		expanded, err := expandPathArgumentValue(arg, token)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 		values[name] = expanded
 	}
 	for name, arg := range rec.Arguments {
 		if arg.Required {
 			if _, ok := values[name]; !ok {
-				return nil, nil, nil, fmt.Errorf("missing required argument %q", name)
+				return nil, nil, fmt.Errorf("missing required argument %q", name)
 			}
 		}
 	}
-	return values, slices.Clone(rec.DefaultArgs), variadicArgs, nil
+	return values, variadicArgs, nil
 }
 
 func PositionalArguments(args map[string]Argument) []string {
@@ -549,7 +550,10 @@ func ValidateArguments(args map[string]Argument) error {
 				return err
 			}
 		}
-		if len(arg.Values) > 0 {
+		if arg.Values != nil {
+			if !IsScriptCommand(arg.Values) {
+				return fmt.Errorf("%s values: values must be a shell string", name)
+			}
 			if _, ok, err := ValidateValueBuiltin(arg.Values); ok && err != nil {
 				return fmt.Errorf("%s values: %w", name, err)
 			}
@@ -646,8 +650,7 @@ func ArgumentHelp(arg Argument) string {
 }
 
 func CommandSummary(rec Recipe) string {
-	main := slices.Concat(rec.Cmd, rec.Args, rec.DefaultArgs)
-	text := CommandHelpText(main)
+	text := CommandHelpText(rec.Cmd)
 	var suffix []string
 	if len(rec.Pre) > 0 {
 		suffix = append(suffix, fmt.Sprintf("+%d pre", len(rec.Pre)))
@@ -665,6 +668,9 @@ func CommandHelpText(command Command) string {
 	if IsScriptCommand(command) {
 		if len(command) >= 2 && IsRecipeReferenceString(command[1]) {
 			return strings.Join(command[1:], " ")
+		}
+		if body := strings.TrimSpace(ScriptBody(command)); body != "" && !strings.ContainsAny(body, "\r\n") {
+			return body
 		}
 		return "<script>"
 	}
@@ -809,8 +815,12 @@ func expandCommands(commands []Command, values map[string]string, variadicArgs [
 }
 
 func expandCommand(command Command, values map[string]string, variadicArgs []string) (Command, error) {
-	if IsScriptCommand(command) && containsVariadicArgsPlaceholder(command[1:]) {
-		return nil, fmt.Errorf("%s is not supported in script commands", variadicArgsPlaceholder)
+	if IsScriptCommand(command) {
+		body, err := expandScript(command[1], values, variadicArgs)
+		if err != nil {
+			return nil, err
+		}
+		return ScriptCommand(body), nil
 	}
 	expanded, err := expandStrings(command, values, variadicArgs)
 	return Command(expanded), err
@@ -828,7 +838,7 @@ func expandStrings(items []string, values map[string]string, variadicArgs []stri
 			continue
 		}
 		if strings.Contains(item, variadicArgsPlaceholder) {
-			return nil, fmt.Errorf("%s must be a whole argv item", variadicArgsPlaceholder)
+			return nil, fmt.Errorf("%s must be a whole argument item", variadicArgsPlaceholder)
 		}
 		expanded, err := expandPlaceholders(item, values)
 		if err != nil {
@@ -845,22 +855,7 @@ func recipeUsesVariadicArgs(rec Recipe) bool {
 
 // RecipeUsesVariadicArgs reports whether rec references the leftover CLI args placeholder.
 func RecipeUsesVariadicArgs(rec Recipe) bool {
-	if containsVariadicArgsPlaceholder(rec.Cmd) ||
-		containsVariadicArgsPlaceholder(rec.Args) ||
-		containsVariadicArgsPlaceholder(rec.DefaultArgs) {
-		return true
-	}
-	for _, command := range rec.Pre {
-		if containsVariadicArgsPlaceholder(command) {
-			return true
-		}
-	}
-	for _, command := range rec.Post {
-		if containsVariadicArgsPlaceholder(command) {
-			return true
-		}
-	}
-	return false
+	return containsVariadicArgsPlaceholder(rec.Cmd)
 }
 
 func containsVariadicArgsPlaceholder(items []string) bool {
@@ -911,6 +906,76 @@ func expandPlaceholders(text string, values map[string]string) (string, error) {
 		return "", fmt.Errorf("missing value for {%s}", missing)
 	}
 	return out, nil
+}
+
+func expandScript(body string, values map[string]string, variadicArgs []string) (string, error) {
+	expanded, err := expandPlaceholders(body, values)
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(expanded, variadicArgsPlaceholder) {
+		return expanded, nil
+	}
+	replacement := shellQuotedWords(variadicArgs)
+	var out strings.Builder
+	for i := 0; i < len(expanded); {
+		start, end, ok := scriptVariadicPlaceholder(expanded, i)
+		if !ok {
+			out.WriteByte(expanded[i])
+			i++
+			continue
+		}
+		if start > i {
+			out.WriteString(expanded[i:start])
+		}
+		out.WriteString(replacement)
+		i = end
+	}
+	if strings.Contains(out.String(), variadicArgsPlaceholder) {
+		return "", fmt.Errorf("%s must be a whole shell word in cmd", variadicArgsPlaceholder)
+	}
+	return out.String(), nil
+}
+
+func scriptVariadicPlaceholder(text string, offset int) (int, int, bool) {
+	index := strings.Index(text[offset:], variadicArgsPlaceholder)
+	if index < 0 {
+		return 0, 0, false
+	}
+	start := offset + index
+	end := start + len(variadicArgsPlaceholder)
+	if start > 0 && end < len(text) && text[start-1] == '"' && text[end] == '"' {
+		start--
+		end++
+	}
+	if start > 0 && end < len(text) && text[start-1] == '\'' && text[end] == '\'' {
+		start--
+		end++
+	}
+	if !scriptWordBoundary(text, start-1) || !scriptWordBoundary(text, end) {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+func scriptWordBoundary(text string, index int) bool {
+	if index < 0 || index >= len(text) {
+		return true
+	}
+	switch text[index] {
+	case ' ', '\t', '\r', '\n', ';', '&', '|', '(', ')', '<', '>', '{', '}':
+		return true
+	default:
+		return false
+	}
+}
+
+func shellQuotedWords(words []string) string {
+	quoted := make([]string, 0, len(words))
+	for _, word := range words {
+		quoted = append(quoted, shellQuote(word))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func CommandWithShell(command Command, shell, shellPrelude string) Command {
@@ -1047,20 +1112,10 @@ func decodeCommand(value any) (Command, error) {
 	switch value := value.(type) {
 	case string:
 		return ScriptCommand(value), nil
-	case []any:
-		out := make(Command, len(value))
-		for i, item := range value {
-			text, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("command item %d must be string", i)
-			}
-			out[i] = text
-		}
-		return out, nil
-	case []string:
-		return Command(value), nil
+	case []any, []string:
+		return nil, errors.New("command arrays are no longer supported; use a shell string")
 	default:
-		return nil, fmt.Errorf("command must be string or string array, got %T", value)
+		return nil, fmt.Errorf("command must be a shell string, got %T", value)
 	}
 }
 

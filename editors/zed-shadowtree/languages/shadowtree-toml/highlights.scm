@@ -48,8 +48,6 @@
     "arguments"
     "sandboxed"
     "cmd"
-    "args"
-    "default_args"
     "pre"
     "post"
     "type"

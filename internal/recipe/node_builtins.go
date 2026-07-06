@@ -35,13 +35,13 @@ type nodePackageManagerLockfile struct {
 
 var frameworkDependencyOrder = []string{"next", "vite", "nuxt", "astro", "@sveltejs/kit"}
 
-const nodeForwardArgs = "\"$@\""
+const nodeForwardArgs = "{@}"
 
 func nodeBuiltins(opts BuiltinOptions) map[string]Recipe {
 	project := loadNodeProject(opts.Dir)
 	recipes := map[string]Recipe{}
 
-	addNodeRecipe(recipes, "install", "Install Node dependencies.", project.shellCommand(project.PM+" install \"$@\""))
+	addNodeRecipe(recipes, "install", "Install Node dependencies.", project.shellCommand(project.PM+" install {@}"))
 	addStandardNodeRecipes(recipes, project)
 	addPackageScriptRecipes(recipes, project)
 	addNodeCheckRecipe(recipes)
@@ -183,7 +183,7 @@ func addNodeTestRecipe(recipes map[string]Recipe, project nodeProject) {
 			addNodeRecipe(recipes, "test", "Run Vitest.", project.toolCommand("vitest"))
 			return
 		}
-		addNodeRecipe(recipes, "test", "Run Bun tests.", project.shellCommand("bun test \"$@\""))
+		addNodeRecipe(recipes, "test", "Run Bun tests.", project.shellCommand("bun test {@}"))
 	case project.hasDependency("vitest"):
 		addNodeRecipe(recipes, "test", "Run Vitest.", project.toolCommand("vitest"))
 	case project.hasDependency("jest"):
@@ -356,7 +356,7 @@ func frameworkRecipeCommand(dependency, recipeName string) ([]string, bool) {
 }
 
 func (project nodeProject) scriptCommand(script string) Command {
-	return project.shellCommand(project.PM + " run " + shellQuote(script) + " -- \"$@\"")
+	return project.shellCommand(project.PM + " run " + shellQuote(script) + " -- {@}")
 }
 
 func (project nodeProject) toolCommand(bin string, args ...string) Command {

@@ -16,7 +16,7 @@ func TestDocumentDiagnosticsRejectNonPositivePosition(t *testing.T) {
 	for _, value := range []string{"-1", "0"} {
 		t.Run(value, func(t *testing.T) {
 			text := `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.build.arguments.project]
 position = ` + value + `
@@ -35,7 +35,7 @@ position = ` + value + `
 
 func TestServerPublishesDiagnosticsOnOpen(t *testing.T) {
 	text := `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.build.arguments.project]
 position = -1
@@ -77,7 +77,7 @@ position = -1
 
 func TestServerClearsDiagnosticsAfterIncrementalUndo(t *testing.T) {
 	text := `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.build.arguments.project]
 position = -1
@@ -279,7 +279,7 @@ cmd = [
 
 func TestDocumentDiagnosticsRejectUnknownRecipeField(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 unknown = true
 `)
 	if len(diagnostics) != 1 {
@@ -294,7 +294,7 @@ unknown = true
 func TestDocumentDiagnosticsRejectUnknownRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["echo 123", "@missing"]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["echo 123", "`), len(`pre = ["echo 123", "@missing`))
@@ -343,10 +343,10 @@ cmd = "@install"
 func TestDocumentDiagnosticsAcceptKnownBracketRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@build[component=godoxy, mode=dev]"]
-cmd = ["go", "test"]
+cmd = "go test"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -356,21 +356,20 @@ cmd = ["go", "build"]
 func TestDocumentDiagnosticsRejectUnknownBracketRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@missing[component=godoxy]"]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["`), len(`pre = ["@missing[component=godoxy]`))
 }
 
-func TestDocumentDiagnosticsRejectUnknownMultilineRecipeReference(t *testing.T) {
+func TestDocumentDiagnosticsRejectArgvPreCommand(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = [
   ["@missing"]
 ]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
-	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
-	assertDiagnosticRange(t, diagnostics[0], 2, len(`  ["`), len(`  ["@missing`))
+	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
 }
 
 func TestDocumentDiagnosticsRejectUnknownScalarRecipeReference(t *testing.T) {
@@ -402,7 +401,7 @@ fi
 '''
 
 [recipes.gen]
-cmd = ["true"]
+cmd = "true"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -453,7 +452,7 @@ func TestDocumentDiagnosticsRejectUnknownScalarValuesRecipeReference(t *testing.
 values = "@missing"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`values = "`), len(`values = "@missing`))
@@ -464,7 +463,7 @@ func TestDocumentDiagnosticsAcceptEnumArgumentValues(t *testing.T) {
 values = "@enum api worker \"admin ui\""
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -479,10 +478,10 @@ values = "@go-modules"
 values = "@go-main-packages"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -494,7 +493,7 @@ func TestDocumentDiagnosticsAcceptComposedBuiltinArgumentValues(t *testing.T) {
 values = "@go-modules; @enum all='all modules'"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -506,19 +505,39 @@ func TestDocumentDiagnosticsRejectInvalidArgumentValuesBuiltin(t *testing.T) {
 values = "@glob"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: @glob requires one argument`)
 }
 
 func TestDocumentDiagnosticsRejectInvalidDiscoveryArgumentValuesBuiltin(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
-values = ["@go-modules", "x"]
+values = "@go-modules x"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: @go-modules does not take arguments`)
+}
+
+func TestDocumentDiagnosticsRejectArgvArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = ["@enum", "api"]
+
+[recipes.test]
+cmd = "go test"
+`)
+	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
+}
+
+func TestDocumentDiagnosticsRejectEmptyArgvArgumentValues(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
+values = []
+
+[recipes.test]
+cmd = "go test"
+`)
+	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
 }
 
 func TestDocumentDiagnosticsRejectShellOperatorComposedBuiltinValues(t *testing.T) {
@@ -526,7 +545,7 @@ func TestDocumentDiagnosticsRejectShellOperatorComposedBuiltinValues(t *testing.
 values = "@go-modules && @enum all='all modules'"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, `recipe "test" arguments: target values: builtin values must contain only simple builtin commands`)
 }
@@ -546,7 +565,7 @@ values = '''
 '''
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
 	assertDiagnosticRange(t, diagnostics[0], 2, 0, len(`@missing`))
@@ -558,7 +577,7 @@ type = "string"
 values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
-cmd = ["true"]
+cmd = "true"
 
 [recipes.test.arguments.target]
 type = "string"
@@ -576,7 +595,7 @@ type = "string"
 values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
-cmd = ["true"]
+cmd = "true"
 
 [recipes.test.arguments.target]
 type = "string"
@@ -598,7 +617,7 @@ cmd = '''
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `)
 	assertOneDiagnostic(t, diagnostics, `mode: want bool, got "nope"`)
 	assertDiagnosticRange(t, diagnostics[0], 2, len(`@build `), len(`@build mode=nope`))
@@ -611,8 +630,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = ["go", "test"]
-default_args = ["{pkg}", "{@}"]
+cmd = "go test {pkg} {@}"
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -631,8 +649,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = ["go", "test"]
-default_args = ["{pkg}", "{@}"]
+cmd = "go test {pkg} {@}"
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -651,8 +668,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = ["go", "test"]
-default_args = ["{pkg}", "{@}"]
+cmd = "go test {pkg} {@}"
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -668,7 +684,7 @@ func TestDocumentDiagnosticsIgnoreRecipeReferenceKeysOutsideRecipeTables(t *test
 cmd = "@missing"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	if diagnostics == nil {
 		t.Fatalf("diagnostics = nil, want empty slice")
@@ -681,7 +697,7 @@ cmd = ["go", "test"]
 func TestDocumentDiagnosticsRejectUnknownScriptCommandStartingWithAt(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@echo hi"]
-cmd = ["go", "test"]
+cmd = "go test"
 `)
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @echo")
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["`), len(`pre = ["@echo`))
@@ -689,8 +705,8 @@ cmd = ["go", "test"]
 
 func TestDocumentDiagnosticsAcceptDynamicRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
-pre = [["@{target}"]]
-cmd = ["go", "test"]
+pre = ["@{target}"]
+cmd = "go test"
 `)
 	if diagnostics == nil {
 		t.Fatalf("diagnostics = nil, want empty slice")
@@ -704,7 +720,7 @@ func TestDocumentDiagnosticsAcceptCrossConfigRecipeReference(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")
 	text := `[recipes.test]
-cmd = ["@webui:gen-schema"]
+cmd = "@webui:gen-schema"
 `
 
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
@@ -717,12 +733,12 @@ func TestDocumentDiagnosticsRejectCrossConfigMissingRecipe(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")
 	text := `[recipes.test]
-cmd = ["@webui:missing"]
+cmd = "@webui:missing"
 `
 
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @webui:missing")
-	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["`), len(`cmd = ["@webui:missing`))
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "`), len(`cmd = "@webui:missing`))
 }
 
 func TestDocumentDiagnosticsRejectCrossConfigMissingConfig(t *testing.T) {
@@ -731,7 +747,7 @@ func TestDocumentDiagnosticsRejectCrossConfigMissingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := `[recipes.test]
-cmd = ["@webui:gen-schema"]
+cmd = "@webui:gen-schema"
 `
 
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
@@ -755,18 +771,18 @@ type = "string"
 values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
-cmd = ["true"]
+cmd = "true"
 `
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(targetConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	text := `[recipes.test]
-cmd = ["@webui:minify[component=foo]"]
+cmd = "@webui:minify[component=foo]"
 `
 
 	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
-	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = ["@webui:minify[`), len(`cmd = ["@webui:minify[component=foo`))
+	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "@webui:minify[`), len(`cmd = "@webui:minify[component=foo`))
 }
 
 func TestDocumentDiagnosticsDoNotRunCommandBackedArgumentValues(t *testing.T) {
@@ -776,10 +792,10 @@ type = "string"
 values = ` + strconv.Quote("touch "+marker+"\nprintf api") + `
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
-cmd = ["@build[component=api]"]
+cmd = "@build[component=api]"
 `
 	diagnostics := documentDiagnostics(t.Context(), text)
 	if len(diagnostics) != 0 {
@@ -800,7 +816,7 @@ func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentType(t *testing.T) {
 type = "bool"
 
 [recipes.build]
-cmd = ["true"]
+cmd = "true"
 `
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(targetConfig), 0o644); err != nil {
 		t.Fatal(err)
@@ -820,7 +836,7 @@ func TestDocumentDiagnosticsAcceptSchemaKey(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `"$schema" = "https://example.com/schema.json"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `)
 	if diagnostics == nil {
 		t.Fatalf("diagnostics = nil, want empty slice")
@@ -832,7 +848,7 @@ cmd = ["go", "build"]
 
 func TestDocumentDiagnosticsAcceptValidConfig(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.build.arguments.project]
 position = 1
@@ -899,7 +915,7 @@ func writeLSPTargetConfig(t *testing.T, root, recipeName string) {
 	if err := os.Mkdir(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	text := "[recipes." + recipeName + "]\nhelp = \"Target recipe help.\"\ncmd = [\"true\"]\n"
+	text := "[recipes." + recipeName + "]\nhelp = \"Target recipe help.\"\ncmd = \"true\"\n"
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -73,7 +73,8 @@ shadowtree --print test
 shadowtree --verbose build
 ```
 
-CLI args replace `default_args`:
+Built-in recipes now model defaults through typed `arguments` plus placeholders in
+`cmd`:
 
 ```sh
 shadowtree test ./internal/recipe
@@ -95,7 +96,7 @@ Recipes that intentionally edit the checkout can opt out:
 ```toml
 [recipes.tidy]
 sandboxed = false
-cmd = ["go", "mod", "tidy"]
+cmd = "go mod tidy"
 ```
 
 Use sync-out when a sandboxed recipe should copy selected results back:
@@ -109,7 +110,7 @@ Recipe-level sync-out:
 
 ```toml
 [recipes.generate]
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 sync_out = ["internal/generated"]
 ```
 
@@ -147,16 +148,17 @@ go_ldflags = "-buildvcs=false"
 
 [recipes.test]
 help = "Run tests after regenerating code."
-pre = [["@generate"]]
-cmd = ["go", "test"]
-default_args = ["./..."]
+pre = ["@generate"]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "./..."
 
 [recipes.build]
 help = "Build a Go package."
-cmd = '''
-go build {go_ldflags} "$@"
-'''
-default_args = ["{project}"]
+cmd = "go build {go_ldflags} {project} {@}"
 
 [recipes.build.arguments.project]
 help = "Go package to build."
@@ -167,45 +169,53 @@ default = "./cmd/shadowtree"
 [recipes.tidy]
 help = "Tidy Go module files."
 sandboxed = false
-cmd = ["go", "mod", "tidy"]
+cmd = "go mod tidy"
 ```
 
-Prefer argv arrays for exact process execution:
+Use shell strings for process execution:
 
 ```toml
 [recipes.test]
-cmd = ["go", "test"]
-default_args = ["./..."]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 ```
 
-Use `@recipe` as the first argv item to invoke another Shadowtree recipe
-directly from `cmd`, `pre`, `post`, or argument `values`:
+Command strings run through the configured shell after placeholder expansion.
+A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
+other strings run in the shell. Put defaults directly in `cmd` through typed
+`arguments`.
+
+Use a recipe reference from `cmd`, `pre`, or `post`:
 
 ```toml
 [recipes.gen-swagger]
 help = "Regenerate Swagger files."
-cmd = ["go", "generate", "./internal/api"]
+cmd = "go generate ./internal/api"
 
 [recipes.test]
 help = "Regenerate API files, then test."
-pre = [["@gen-swagger"]]
-cmd = ["go", "test"]
-default_args = ["./..."]
+pre = ["@gen-swagger"]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 ```
 
 Referenced recipes run in the current workspace. They do not start a nested
-sandbox or run their own sync-out; sync-out is applied only for the top-level
-recipe invocation.
+sandbox or run their own sync-out.
 
-In `pre` and `post` command lists, a string that is exactly `@recipe` is also a
-recipe reference. Other strings remain shell scripts:
+In command lists, only strings that are exactly `@recipe` are direct recipe
+references:
 
 ```toml
 pre = ["echo 123", "@gen-swagger"]
 ```
 
-Use bracket-style arguments to pass named or positional arguments from a string
-recipe reference:
+Use bracket-style arguments to pass named or positional arguments:
 
 ```toml
 pre = ["@build[component=godoxy, mode=dev]"]
@@ -232,13 +242,11 @@ accepts relative paths only and completes relative checkout paths. Path
 arguments can set `path_kind` to `any`, `file`, `dir`, or `executable` to
 filter completion candidates.
 
-Use `{@}` as a whole argv item to splice leftover recipe CLI args into `cmd`,
-`args`, `default_args`, `pre`, or `post`:
+Use `{@}` in `cmd` to splice leftover recipe CLI args:
 
 ```toml
 [recipes.test]
-cmd = ["go", "test"]
-default_args = ["{pkg}", "{@}"]
+cmd = "go test {pkg} {@}"
 
 [recipes.test.arguments.pkg]
 type = "rel_path"

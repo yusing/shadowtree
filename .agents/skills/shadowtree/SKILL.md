@@ -82,28 +82,28 @@ Completion criterion: persistence expectations match sandbox mode.
 For a recipe:
 
 1. `pre` commands run in order.
-2. If all `pre` commands succeed, `cmd + args + selected_args` runs.
+2. If all `pre` commands succeed, the resolved `cmd` runs.
 3. `post` commands run even when a `pre` or main command failed.
 4. The first pre/main error wins unless only `post` failed.
 5. For sandboxed recipes, sync-out runs only after all recipe commands finish successfully.
 
 Command env is `os.Environ()` overlaid by top-level `env`, then recipe `env`.
 
-An argv command whose first item is `@recipe` invokes another resolved
-Shadowtree recipe directly in the current workspace. Use `@path:recipe` to load
+A scalar command that is exactly `@recipe` invokes another resolved Shadowtree
+recipe directly in the current workspace. Use `@path:recipe` to load
 `path/.shadowtree.toml` relative to the referencing config directory and run the
 target recipe from that path. Recipe references do not spawn another
 `shadowtree` process, start a nested sandbox, or run the referenced recipe's
-sync-out. Remaining argv items are passed as that recipe's CLI args. Recursive
+sync-out. Pass args with bracket syntax, e.g. `@build[mode=dev]`. Recursive
 references fail with a cycle error.
 
-In `sh` and `bash` script commands, including `cmd`, `pre`, `post`, argument
-`values`, and `shell_prelude`, a literal command-position `@recipe` also invokes
-the referenced recipe directly, including inside conditionals. For example,
-`if @generate; then ...; fi` dispatches `generate`, and `@build mode=dev` passes
-`mode=dev` as a recipe CLI arg. Assignments and expanded variables do not
-dispatch recipes: `FOO="@build"` is just a shell assignment, and `$FOO` uses
-normal shell command lookup.
+In `sh` and `bash` script commands, including `cmd`, `pre`, `post`, scalar
+argument `values`, and `shell_prelude`, a literal command-position `@recipe`
+also invokes the referenced recipe directly, including inside conditionals.
+For example, `if @generate; then ...; fi` dispatches `generate`, and
+`@build mode=dev` passes `mode=dev` as a recipe CLI arg. Assignments and
+expanded variables do not dispatch recipes: `FOO="@build"` is just a shell
+assignment, and `$FOO` uses normal shell command lookup.
 
 In command-list fields such as `pre` and `post`, a string command that is
 exactly `@recipe` is also a recipe reference. Other string commands remain shell
@@ -119,7 +119,7 @@ Use these fields at config root:
 
 - `profile`: `go` or `node`.
 - `shell`: shell for script commands; defaults to `sh`.
-- `shell_prelude`: shell code prepended to every script command and every `["sh", "-c", "..."]` command.
+- `shell_prelude`: shell code prepended to every script command.
 - `sync_out`: sandboxed paths copied back after successful runs for every recipe unless unsandboxed.
 - `env`: environment variables for recipe commands and top-level `var_commands`.
 - `vars`: static placeholders usable as `{NAME}`.
@@ -135,9 +135,7 @@ Completion criterion: every top-level setting affects more than one recipe or in
 Use these fields under `[recipes.<name>]`:
 
 - `help`: short text shown by `help`, `recipes`, and shell completion.
-- `cmd`: required main command; argv array or script string.
-- `args`: fixed args always appended after `cmd`.
-- `default_args`: selected only when the user provides no recipe CLI args, or used as placeholder-bearing selected args when typed arguments exist.
+- `cmd`: required main command; prefer a shell string.
 - `pre`: list of commands before `cmd`.
 - `post`: list of commands after `cmd`.
 - `sandboxed`: boolean; defaults to `true`.
@@ -150,44 +148,51 @@ Use these fields under `[recipes.<name>]`:
 
 Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
-Completion criterion: each recipe has `help` and `cmd`, and uses `args` for fixed args versus `default_args` for caller-replaceable args.
+Completion criterion: each recipe has `help` and `cmd`, and uses typed `arguments` plus placeholders in `cmd` instead of extra argument lists.
 
 ## Command Forms
 
-Use argv arrays for exact execution:
+Use shell strings for recipe commands:
 
 ```toml
 [recipes.test]
-cmd = ["go", "test"]
-default_args = ["./..."]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 ```
 
-Use `@recipe` as the first argv item to invoke another Shadowtree recipe from
-`cmd`, `pre`, `post`, or argument `values`:
+Command strings run through the configured shell after placeholder expansion.
+A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
+other strings run in the shell. Put defaults in typed `arguments` and
+reference them from `cmd`.
+
+Use recipe references from `cmd`, `pre`, `post`, or argument `values`:
 
 ```toml
 [recipes.test]
-pre = [["@generate"]]
-cmd = ["go", "test"]
-default_args = ["./..."]
+pre = ["@generate"]
+cmd = "go test {pkg} {@}"
 
-[recipes.build.arguments.project]
-values = ["@list-build-targets"]
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 ```
 
-Use `["@build-api", "service=public"]` to pass args to the referenced recipe.
-Use `["@webui:gen-schema"]` to invoke `gen-schema` from
+Use bracket-style syntax to pass args to referenced recipes, e.g.
+`@build-api[service=public]`.
+Use `@webui:gen-schema` to invoke `gen-schema` from
 `webui/.shadowtree.toml`; relative paths are resolved from the referencing
 config directory and execution starts in `webui/`.
 Use `@{NAME}` only when the recipe name must come from a placeholder; static
 `@recipe` references are easier for LSP diagnostics and completion to validate.
-In `pre` and `post`, `["@recipe"]` and `"@recipe"` both invoke the referenced
-recipe; use the argv form when passing args. It also supports bracket-style arguments:
+Use bracket-style arguments when passing args:
 
 ```toml
 [recipes.test]
 pre = ["@build[component=godoxy, mode=dev]"]
-cmd = ["go", "test"]
+cmd = "go test"
 ```
 
 Use script strings for shell workflows:
@@ -204,7 +209,7 @@ install -m 0755 bin/tool "$HOME/.local/bin/tool"
 '''
 ```
 
-Script strings run as `<shell> -c <script> shadowtree`; `$0` is `shadowtree`. `shell_prelude` is joined before script bodies and before `sh -c` array commands. Empty commands and empty script bodies are invalid.
+Script strings run as `<shell> -c <script> shadowtree`; `$0` is `shadowtree`. `shell_prelude` is joined before script bodies. Empty commands and empty script bodies are invalid.
 In `sh` and `bash` script strings, including `shell_prelude`, a literal
 command-position `@recipe` invokes that recipe directly without a Shadowtree
 subprocess or nested sandbox:
@@ -218,17 +223,18 @@ fi
 '''
 ```
 
-Completion criterion: argv arrays are used unless shell syntax is actually needed.
+Completion criterion: command examples use scalar shell strings. Do not write
+TOML argv arrays for command fields; they are invalid in config.
 
 Editor support: Shadowtree LSP provides shell highlighting for script-valued
-`cmd`, `pre`, `post`, `shell_prelude`, and argument `values`, plus the same
-recipe-reference completion and diagnostics for literal command-position
-`@recipe` in those `sh`/`bash` script strings as it provides for `pre`,
-`post`, and `values` recipe references.
+`cmd`, `pre`, `post`, `shell_prelude`, and scalar argument `values`, plus the
+same recipe-reference completion and diagnostics for literal command-position
+`@recipe` in those `sh`/`bash` strings as it provides for scalar `values`
+recipe references.
 
 ## Placeholders And Vars
 
-`{NAME}` placeholders expand in `cmd`, `args`, `default_args`, `pre`, `post`, and `sync_out`.
+`{NAME}` placeholders expand in `cmd`, `pre`, `post`, and `sync_out`.
 
 Value sources:
 
@@ -253,11 +259,13 @@ Use fields under `[recipes.<name>.arguments.<arg>]`:
 - `position`: 1-based positional slot.
 - `required`: true when user must supply the argument.
 - `default`: string, integer, number, or boolean default; converted to string then type-validated.
-- `values`: command that prints completion/help candidates, one per line as `value` or `value<TAB>help`.
-  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `["@enum", "api=API service"]`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-main-packages`, `@recipes`, and `@vars`.
-  `@enum` attaches help for `value=help text` entries when the help side contains whitespace; quote the help side in script-valued `values`, for example `@enum all='all modules'`. Single-token values such as `GOOS=linux` remain literal values.
+- `values`: shell string command that prints completion/help candidates, one per line as `value` or `value<TAB>help`; TOML arrays are invalid here, including `values = []`.
+  Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@enum api='API service'`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-main-packages`, `@recipes`, and `@vars`.
+  `@enum` attaches help for `value=help text` entries when the help side contains whitespace; quote the help side, for example `@enum all='all modules'`. Single-token values such as `GOOS=linux` remain literal values.
   `@go-modules` returns directories containing `go.mod`, using `.` for the config-directory module and module paths as help. `@go-main-packages` returns directories containing non-test Go files with `package main`, using package comments as help when available. Both Go discovery builtins are filesystem-only and skip common generated/vendor directories.
-  Script-valued `values` can concatenate multiple simple builtin commands with semicolons, for example `values = "@go-modules; @enum all='all modules'"`.
+  A scalar value that is exactly `@recipe` or `@path:recipe` invokes that recipe directly. Pass args with bracket syntax, for example `values = "@targets[kind=go]"`.
+  Other scalar `values` commands run once through the configured recipe shell, for example `values = "printf 'api\tAPI service\n'"`.
+  Builtin `values` can concatenate multiple simple builtin commands with semicolons without running a shell, for example `values = "@go-modules; @enum all='all modules'"`.
 
 Call forms:
 
@@ -269,13 +277,13 @@ shadowtree 'build[project=./cmd/tool,binary=tool-dev]'
 
 Resolution rules:
 
-- With no typed `arguments`, CLI args replace `default_args`.
-- With typed `arguments`, defaults load first; `key=value` args set named values; positional tokens fill arguments by increasing `position`; `default_args` remain selected args and can contain placeholders.
+- With no typed `arguments`, recipe CLI args are accepted only when `cmd` includes `{@}`.
+- With typed `arguments`, defaults load first; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
 - Unknown named args, unexpected positional args, missing required args, and invalid typed values fail.
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
-- Command-backed `values` for help/completion run with top-level `env` overlaid by recipe `env`; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, and `@go-main-packages` for editor-safe completions.
+- Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, and `@go-main-packages` for editor-safe completions.
 
 Completion criterion: typed args are used when the recipe needs named, validated, defaulted, positional, or completable values.
 
@@ -295,7 +303,7 @@ Recipe-level:
 
 ```toml
 [recipes.generate]
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 sync_out = ["internal/generated"]
 ```
 

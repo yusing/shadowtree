@@ -16,7 +16,7 @@ func TestCompletionsIncludeTopLevelTablesAfterOpenBracket(t *testing.T) {
 
 func TestCompletionsIncludeRecipeSubtables(t *testing.T) {
 	text := `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 [recipes.build.
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len("[recipes.build.")})
@@ -31,7 +31,7 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	text := `[recipes.build]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
-	assertLabels(t, items, "cmd", "default_args", "sandboxed", "sync_out")
+	assertLabels(t, items, "cmd", "sandboxed", "sync_out")
 }
 
 func TestCompletionsIncludePlaceholderVariables(t *testing.T) {
@@ -65,11 +65,11 @@ cmd = '''go build {'''
 
 func TestCompletionsIncludeVariadicArgsPlaceholder(t *testing.T) {
 	text := `[recipes.test]
-cmd = ["go", "test", "{@`
-	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = ["go", "test", "{@`)})
+cmd = "echo {`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "echo {`)})
 	assertLabels(t, items, "@")
 
-	result := completionResult(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = ["go", "test", "{@`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "echo {`)})
 	edit := completionTextEdit(t, result, "@")
 	if edit["newText"] != "@}" {
 		t.Fatalf("newText = %#v, want variadic placeholder suffix", edit["newText"])
@@ -90,10 +90,10 @@ sync_out = ["{`
 func TestCompletionsIncludeRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.vet]
-cmd = ["go", "vet"]
+cmd = "go vet"
 
 [recipes.test]
 pre = ["echo 123", "@gen"]
@@ -109,12 +109,12 @@ pre = ["echo 123", "@gen"]
 func TestRecipeReferenceCompletionUsesRecipeHelpAndTextEdit(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.test]
-pre = [["@gen"]]
+pre = ["@gen"]
 `
-	result := completionResult(t.Context(), text, lspPosition{Line: 5, Character: len(`pre = [["@gen`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 5, Character: len(`pre = ["@gen`)})
 	item := completionItem(t, result, "@gen-swagger")
 	if item["detail"] != "Generate Swagger docs." {
 		t.Fatalf("detail = %#v, want recipe help", item["detail"])
@@ -130,7 +130,7 @@ pre = [["@gen"]]
 
 func TestCompletionsFilterRecipeReferencePrefix(t *testing.T) {
 	text := `[recipes.vet]
-cmd = ["go", "vet"]
+cmd = "go vet"
 
 [recipes.check]
 pre = ["@v"]
@@ -141,7 +141,7 @@ pre = ["@v"]
 
 func TestCompletionsIncludeStringRecipeReferences(t *testing.T) {
 	text := `[recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 
 [recipes.check]
 cmd = "@t"
@@ -155,7 +155,7 @@ func TestCompletionsIncludeEnumInArgumentValuesReferences(t *testing.T) {
 values = "@"
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
 	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@lines", "@recipes", "@test", "@vars")
@@ -169,7 +169,7 @@ values = '''
 '''
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`@e`)})
 	assertLabels(t, items, "@enum")
@@ -190,7 +190,7 @@ func TestCompletionsExcludeGoBuiltinsWhenConfigOmitsProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := `[recipes.assets]
-cmd = ["npm", "test"]
+cmd = "npm test"
 
 [recipes.check]
 cmd = "@f"
@@ -252,7 +252,7 @@ cmd = "@i"
 
 func TestCompletionsIncludeLocalRecipeReferencesWhenTOMLIsIncomplete(t *testing.T) {
 	text := `[recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.check]
 cmd = "@b"
@@ -271,7 +271,7 @@ type = "string"
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 pre = ["@build["]
@@ -285,7 +285,7 @@ func TestCompletionsIncludeRecipeReferenceArgumentValues(t *testing.T) {
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 pre = ["@build[mode="]
@@ -323,7 +323,7 @@ default = `
 func TestCompletionsIncludeEnumArgumentDefaultValueHelp(t *testing.T) {
 	text := `[recipes.build.arguments.component]
 type = "string"
-values = ["@enum", "all=all modules", "api=API service"]
+values = "@enum all='all modules' api='API service'"
 default = a`
 	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = a`)})
 	assertLabels(t, items, "all", "api")
@@ -404,7 +404,7 @@ values = ` + strconv.Quote("touch "+marker+"\nprintf api") + `
 default =
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = `)})
 	if len(items) != 0 {
@@ -444,10 +444,10 @@ default = `
 func TestCompletionsIncludeScriptRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.vet]
-cmd = ["go", "vet"]
+cmd = "go vet"
 
 [recipes.test]
 cmd = '''
@@ -468,10 +468,10 @@ func TestCompletionsIncludeShellPreludeRecipeReferences(t *testing.T) {
 
 [recipes.gen-swagger]
 help = "Generate Swagger docs."
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@g`)})
 	assertLabels(t, items, "@gen-swagger")
@@ -481,13 +481,13 @@ cmd = ["go", "test"]
 func TestCompletionsIncludeRecipeShellPreludeRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.test]
 shell_prelude = '''
 @g
 '''
-cmd = ["go", "test"]
+cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`@g`)})
 	assertLabels(t, items, "@gen-swagger")
@@ -502,7 +502,7 @@ type = "string"
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 cmd = '''
@@ -525,7 +525,7 @@ func TestCompletionsIncludeScriptRecipeReferenceArgumentValues(t *testing.T) {
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 cmd = '''
@@ -551,7 +551,7 @@ type = "string"
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 cmd = '''
@@ -567,7 +567,7 @@ func TestCompletionsIncludeScriptRecipeReferenceSpacedArgumentValues(t *testing.
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 cmd = '''
@@ -584,7 +584,7 @@ type = "string"
 values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
-cmd = ["true"]
+cmd = "true"
 
 [recipes.test.arguments.target]
 type = "string"
@@ -602,7 +602,7 @@ type = "string"
 values = "@enum godoxy agent socket-proxy cli"
 
 [recipes.minify]
-cmd = ["true"]
+cmd = "true"
 
 [recipes.test.arguments.target]
 type = "string"
@@ -626,7 +626,7 @@ type = "string"
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@build[`)})
 	assertLabels(t, items, "component=", "mode=")
@@ -641,7 +641,7 @@ func TestCompletionsIncludeShellPreludeRecipeReferenceArgumentValues(t *testing.
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`@build mode=`)})
 	assertLabels(t, items, "true", "false")
@@ -655,12 +655,12 @@ type = "string"
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 pre = ["@build["]
 post = ["@build mode="]
-cmd = ["true"]
+cmd = "true"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`pre = ["@build[`)})
 	assertLabels(t, items, "component=", "mode=")
@@ -671,7 +671,7 @@ cmd = ["true"]
 
 func TestCompletionsIgnoreScriptRecipeReferenceArguments(t *testing.T) {
 	text := `[recipes.gen]
-cmd = ["true"]
+cmd = "true"
 
 [recipes.test]
 cmd = '''
@@ -688,12 +688,12 @@ func TestCompletionsIncludeCrossConfigDirectories(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")
 	text := `[recipes.test]
-cmd = ["@web"]
+cmd = "@web"
 `
 	items := completionsAtWithOptions(
 		t.Context(),
 		text,
-		lspPosition{Line: 1, Character: len(`cmd = ["@web`)},
+		lspPosition{Line: 1, Character: len(`cmd = "@web`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "@webui:")
@@ -703,12 +703,12 @@ func TestCompletionsIncludeCrossConfigRecipeReferences(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")
 	text := `[recipes.test]
-cmd = ["@webui:g"]
+cmd = "@webui:g"
 `
 	items := completionsAtWithOptions(
 		t.Context(),
 		text,
-		lspPosition{Line: 1, Character: len(`cmd = ["@webui:g`)},
+		lspPosition{Line: 1, Character: len(`cmd = "@webui:g`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "@webui:gen-schema")
@@ -726,28 +726,28 @@ func TestCompletionsIncludeCrossConfigRecipeReferenceArguments(t *testing.T) {
 type = "bool"
 
 [recipes.gen-schema]
-cmd = ["true"]
+cmd = "true"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	text := `[recipes.test]
-cmd = ["@webui:gen-schema["]
+cmd = "@webui:gen-schema["
 `
 	items := completionsAtWithOptions(
 		t.Context(),
 		text,
-		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[`)},
+		lspPosition{Line: 1, Character: len(`cmd = "@webui:gen-schema[`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "mode=")
 
 	text = `[recipes.test]
-cmd = ["@webui:gen-schema[mode="]
+cmd = "@webui:gen-schema[mode="
 `
 	items = completionsAtWithOptions(
 		t.Context(),
 		text,
-		lspPosition{Line: 1, Character: len(`cmd = ["@webui:gen-schema[mode=`)},
+		lspPosition{Line: 1, Character: len(`cmd = "@webui:gen-schema[mode=`)},
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "true", "false")
@@ -776,7 +776,7 @@ func TestRecipeReferenceArgumentTextEditReplacesActiveFragment(t *testing.T) {
 type = "bool"
 
 [recipes.build]
-cmd = ["go", "build"]
+cmd = "go build"
 
 [recipes.test]
 pre = ["@build[m"]
@@ -791,7 +791,7 @@ pre = ["@build[m"]
 
 func TestCompletionsIgnoreRecipeReferencesOutsideRecipeTables(t *testing.T) {
 	text := `[recipes.test]
-cmd = ["go", "test"]
+cmd = "go test"
 
 [vars]
 cmd = "@t"
@@ -804,17 +804,17 @@ cmd = "@t"
 
 func TestRecipeReferenceTextEditReplacesNameAfterAt(t *testing.T) {
 	text := `[recipes.gen-swagger]
-cmd = ["go", "generate", "./..."]
+cmd = "go generate ./..."
 
 [recipes.test]
-pre = [["@gen"]]
+pre = ["@gen"]
 `
-	result := completionResult(t.Context(), text, lspPosition{Line: 4, Character: len(`pre = [["@gen`)})
+	result := completionResult(t.Context(), text, lspPosition{Line: 4, Character: len(`pre = ["@gen`)})
 	edit := completionTextEdit(t, result, "@gen-swagger")
 	if edit["newText"] != "gen-swagger" {
 		t.Fatalf("newText = %#v, want recipe name", edit["newText"])
 	}
-	assertEditRange(t, edit, len(`pre = [["@`), len(`pre = [["@gen`))
+	assertEditRange(t, edit, len(`pre = ["@`), len(`pre = ["@gen`))
 }
 
 func TestCompletionsIncludeSupportedShellValues(t *testing.T) {
@@ -898,10 +898,10 @@ cmd = '''go build {PROJECT}'''
 
 func TestSemanticTokensIncludeVariadicArgsPlaceholder(t *testing.T) {
 	text := `[recipes.test]
-cmd = ["go", "test", "{@}"]
+cmd = "{@}"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
-	if !hasSemanticToken(tokens, 1, len(`cmd = ["go", "test", "`), len("{@}"), semanticTokenVariable) {
+	if !hasSemanticToken(tokens, 1, len(`cmd = "`), len("{@}"), semanticTokenVariable) {
 		t.Fatalf("missing variadic placeholder token in %#v", tokens)
 	}
 }
@@ -920,12 +920,11 @@ pre = ["echo 123", "@{target}"]
 func TestSemanticTokensHighlightCheckRecipeReferences(t *testing.T) {
 	text := `[recipes.check]
 pre = ["@vet"]
-cmd = ["@test"]
-default_args = ["./..."]
+cmd = "@test"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
 	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("@vet"), semanticTokenFunction)
-	assertSemanticToken(t, tokens, 2, len(`cmd = ["`), len("@test"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 2, len(`cmd = "`), len("@test"), semanticTokenFunction)
 }
 
 func TestSemanticTokensHighlightScalarRecipeReferences(t *testing.T) {
@@ -1033,10 +1032,10 @@ echo "@also_missing"
 
 func TestSemanticTokensHighlightCrossConfigRecipeReferences(t *testing.T) {
 	text := `[recipes.test]
-cmd = ["@webui:gen-schema[mode=dev]"]
+cmd = "@webui:gen-schema[mode=dev]"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
-	linePrefix := len(`cmd = ["`)
+	linePrefix := len(`cmd = "`)
 	assertSemanticToken(t, tokens, 1, linePrefix, len("@webui:gen-schema"), semanticTokenFunction)
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@webui:gen-schema["), len("mode"), semanticTokenParameter)
 	assertSemanticToken(t, tokens, 1, linePrefix+len("@webui:gen-schema[mode="), len("dev"), semanticTokenString)
@@ -1045,7 +1044,7 @@ cmd = ["@webui:gen-schema[mode=dev]"]
 func TestSemanticTokensIgnoreShellStringStartingWithAt(t *testing.T) {
 	text := `[recipes.check]
 pre = ["@echo hi"]
-cmd = ["go", "test"]
+cmd = "go test"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
 	if hasSemanticToken(tokens, 1, len(`pre = ["`), len("@echo hi"), semanticTokenRecipeReference) {
@@ -1195,7 +1194,7 @@ echo pre
 post = ['''
 echo post
 ''']
-cmd = ["true"]
+cmd = "true"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
 	assertSemanticToken(t, tokens, 2, 0, len("echo"), semanticTokenFunction)
@@ -1206,7 +1205,7 @@ func TestSemanticTokensHighlightInlinePrePostScriptBodies(t *testing.T) {
 	text := `[recipes.install]
 pre = ["echo pre"]
 post = ["echo post"]
-cmd = ["true"]
+cmd = "true"
 `
 	tokens := decodeSemanticTokens(semanticTokens(text))
 	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("echo"), semanticTokenFunction)

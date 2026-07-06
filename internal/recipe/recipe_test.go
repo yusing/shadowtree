@@ -10,25 +10,17 @@ import (
 
 func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"./..."},
-		Sandboxed:   new(true),
+		Cmd:       Command{"go", "test", "{pkg}", "{@}"},
+		Sandboxed: new(true),
 	}
 	override := Recipe{
-		Args:      []string{"-count=1"},
 		Pre:       []Command{{"go", "generate", "./..."}},
 		Sandboxed: new(false),
 	}
 
 	got := MergeRecipe(base, override)
-	if !slices.Equal(got.Cmd, Command{"go", "test"}) {
+	if !slices.Equal(got.Cmd, Command{"go", "test", "{pkg}", "{@}"}) {
 		t.Fatalf("Cmd = %#v", got.Cmd)
-	}
-	if !slices.Equal(got.DefaultArgs, []string{"./..."}) {
-		t.Fatalf("DefaultArgs = %#v", got.DefaultArgs)
-	}
-	if !slices.Equal(got.Args, []string{"-count=1"}) {
-		t.Fatalf("Args = %#v", got.Args)
 	}
 	if len(got.Pre) != 1 || !slices.Equal(got.Pre[0], Command{"go", "generate", "./..."}) {
 		t.Fatalf("Pre = %#v", got.Pre)
@@ -38,19 +30,14 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	}
 }
 
-func TestResolveUsesCLIArgsInsteadOfDefaultArgs(t *testing.T) {
+func TestResolveUntypedRecipeRejectsUnexpectedCLIArgsWithoutVariadicPlaceholder(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		Args:        []string{"-race"},
-		DefaultArgs: []string{"./..."},
+		Cmd: Command{"go", "test"},
 	}
 
-	got, err := Resolve("test-race", rec, []string{"./internal/..."}, nil, nil, "", GoProfile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(got.Main, Command{"go", "test", "-race", "./internal/..."}) {
-		t.Fatalf("Main = %#v", got.Main)
+	_, err := Resolve("test", rec, []string{"./internal/..."}, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), `unexpected positional argument "./internal/..."`) {
+		t.Fatalf("Resolve error = %v", err)
 	}
 }
 
@@ -115,21 +102,8 @@ func TestBuiltinValuesParsesEnumScriptQuotedValues(t *testing.T) {
 	}
 }
 
-func TestBuiltinValuesParsesEnumArgvValues(t *testing.T) {
-	values, ok, err := BuiltinValues(Command{"@enum", "a", "c d"}, ValueBuiltinOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("BuiltinValues did not detect @enum")
-	}
-	if !slices.Equal(values, []ValueCandidate{{Value: "a"}, {Value: "c d"}}) {
-		t.Fatalf("values = %#v", values)
-	}
-}
-
 func TestBuiltinValuesParsesEnumValueHelp(t *testing.T) {
-	values, ok, err := BuiltinValues(Command{"@enum", "all=all modules", "api=API service"}, ValueBuiltinOptions{})
+	values, ok, err := BuiltinValues(ScriptCommand("@enum all='all modules' api='API service'"), ValueBuiltinOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +120,7 @@ func TestBuiltinValuesParsesEnumValueHelp(t *testing.T) {
 }
 
 func TestBuiltinValuesKeepsEnumLiteralEqualsValues(t *testing.T) {
-	values, ok, err := BuiltinValues(Command{"@enum", "GOOS=linux", "GOOS=darwin"}, ValueBuiltinOptions{})
+	values, ok, err := BuiltinValues(ScriptCommand("@enum GOOS=linux GOOS=darwin"), ValueBuiltinOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +248,7 @@ func TestBuiltinValuesDiscoversGoModules(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "vendor", "ignored", "go.mod"), "module example.com/ignored\n")
 
 	values, ok, err := BuiltinValues(
-		Command{"@go-modules"},
+		ScriptCommand("@go-modules"),
 		ValueBuiltinOptions{Dir: dir},
 	)
 	if err != nil {
@@ -299,7 +273,7 @@ func TestBuiltinValuesDiscoversGoModulesWithPrefix(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "services", "api", "go.mod"), "module example.com/api\n")
 
 	values, ok, err := BuiltinValues(
-		Command{"@go-modules"},
+		ScriptCommand("@go-modules"),
 		ValueBuiltinOptions{Dir: dir, ValuePrefix: "services/"},
 	)
 	if err != nil {
@@ -327,7 +301,7 @@ func TestBuiltinValuesDiscoversGoMainPackages(t *testing.T) {
 	mkdirAll(t, filepath.Join(dir, "node_modules", "ignored"))
 	writeFile(t, filepath.Join(dir, "node_modules", "ignored", "main.go"), "package main\n")
 
-	values, ok, err := BuiltinValues(Command{"@go-main-packages"}, ValueBuiltinOptions{Dir: dir})
+	values, ok, err := BuiltinValues(ScriptCommand("@go-main-packages"), ValueBuiltinOptions{Dir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +326,7 @@ func TestBuiltinValuesDiscoversGoMainPackagesWithPrefixAndBrokenFile(t *testing.
 	writeFile(t, filepath.Join(dir, "tools", "worker", "main.go"), "package main\n")
 
 	values, ok, err := BuiltinValues(
-		Command{"@go-main-packages"},
+		ScriptCommand("@go-main-packages"),
 		ValueBuiltinOptions{Dir: dir, ValuePrefix: "cmd/"},
 	)
 	if err != nil {
@@ -416,12 +390,12 @@ func TestValidateValueBuiltinRejectsInvalidForms(t *testing.T) {
 		name    string
 		command Command
 	}{
-		{name: "glob missing arg", command: Command{"@glob"}},
-		{name: "lines extra arg", command: Command{"@lines", "a", "b"}},
-		{name: "go modules extra arg", command: Command{"@go-modules", "x"}},
-		{name: "go main packages extra arg", command: Command{"@go-main-packages", "x"}},
-		{name: "recipes extra arg", command: Command{"@recipes", "x"}},
-		{name: "vars extra arg", command: Command{"@vars", "x"}},
+		{name: "glob missing arg", command: ScriptCommand("@glob")},
+		{name: "lines extra arg", command: ScriptCommand("@lines a b")},
+		{name: "go modules extra arg", command: ScriptCommand("@go-modules x")},
+		{name: "go main packages extra arg", command: ScriptCommand("@go-main-packages x")},
+		{name: "recipes extra arg", command: ScriptCommand("@recipes x")},
+		{name: "vars extra arg", command: ScriptCommand("@vars x")},
 		{name: "non literal word", command: ScriptCommand(`@enum "$x"`)},
 		{name: "multiple statements", command: ScriptCommand("@enum api; echo worker")},
 		{name: "pipeline", command: ScriptCommand("@enum api | cat")},
@@ -529,13 +503,14 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 	if RecipeSandboxed(builtins["fmt"]) {
 		t.Fatal("built-in fmt is sandboxed, want unsandboxed")
 	}
+	check := builtins["check"]
+	if body := ScriptBody(check.Cmd); body != "set -e; @vet {@}; @test {@}" {
+		t.Fatalf("check script = %q", body)
+	}
 
 	run := builtins["run"]
-	if !slices.Equal(run.Cmd, Command{"go", "run"}) {
+	if !slices.Equal(run.Cmd, Command{"go", "run", "{command}", "{@}"}) {
 		t.Fatalf("run Cmd = %#v", run.Cmd)
-	}
-	if !slices.Equal(run.DefaultArgs, []string{"{command}"}) {
-		t.Fatalf("run DefaultArgs = %#v", run.DefaultArgs)
 	}
 	command := run.Arguments["command"]
 	if command.Type != "rel_path" || command.Position != 1 || !command.Required {
@@ -580,11 +555,20 @@ func TestHelpSummarizesMultilineScript(t *testing.T) {
 	}
 }
 
+func TestHelpSummarizesSingleLineScript(t *testing.T) {
+	got := Help(Recipe{
+		Cmd: ScriptCommand("go test ./..."),
+	})
+
+	if got != "go test ./..." {
+		t.Fatalf("Help = %q", got)
+	}
+}
+
 func TestHelpUsesConfiguredHelp(t *testing.T) {
 	got := Help(Recipe{
-		Help:        "Run tests\ninside a shadow workspace.",
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"./..."},
+		Help: "Run tests\ninside a shadow workspace.",
+		Cmd:  Command{"go", "test", "{pkg}", "{@}"},
 	})
 
 	if got != "Run tests inside a shadow workspace." {
@@ -595,7 +579,7 @@ func TestHelpUsesConfiguredHelp(t *testing.T) {
 func TestMergeRecipeKeepsBaseHelpUnlessOverridden(t *testing.T) {
 	got := MergeRecipe(
 		Recipe{Help: "Run tests.", Cmd: Command{"go", "test"}},
-		Recipe{Args: []string{"-race"}},
+		Recipe{Pre: []Command{{"go", "generate", "./..."}}},
 	)
 	if got.Help != "Run tests." {
 		t.Fatalf("Help = %q", got.Help)
@@ -609,9 +593,7 @@ func TestMergeRecipeKeepsBaseHelpUnlessOverridden(t *testing.T) {
 
 func TestResolveTypedArgumentsByNameAndPosition(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "build"},
-		Args:        []string{"-o", "bin/{binary}"},
-		DefaultArgs: []string{"{project}"},
+		Cmd: Command{"go", "build", "-o", "bin/{binary}", "{project}", "{@}"},
 		Arguments: map[string]Argument{
 			"project": {Type: "string", Position: 1, Default: "./cmd/default"},
 			"binary":  {Type: "string", Default: "shadowtree"},
@@ -633,8 +615,7 @@ func TestResolveTypedArgumentsByNameAndPosition(t *testing.T) {
 
 func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "build"},
-		DefaultArgs: []string{"{project}"},
+		Cmd: Command{"go", "build", "{project}", "{@}"},
 		Arguments: map[string]Argument{
 			"project": {Type: "string", Default: "./cmd/shadowtree"},
 		},
@@ -651,8 +632,7 @@ func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 
 func TestResolveUntypedRecipeSplicesVariadicArgs(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"./...", "{@}"},
+		Cmd: Command{"go", "test", "./...", "{@}"},
 	}
 
 	got, err := Resolve("test", rec, []string{"-run=TestResolve", "-count=1"}, nil, nil, "", GoProfile)
@@ -666,8 +646,7 @@ func TestResolveUntypedRecipeSplicesVariadicArgs(t *testing.T) {
 
 func TestResolveTypedRecipeSplicesVariadicArgs(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"{pkg}", "{@}"},
+		Cmd: Command{"go", "test", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
 		},
@@ -684,8 +663,7 @@ func TestResolveTypedRecipeSplicesVariadicArgs(t *testing.T) {
 
 func TestResolveTypedRecipeKeepsKnownArgsAfterVariadicOptIn(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"{pkg}", "{@}"},
+		Cmd: Command{"go", "test", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
 		},
@@ -702,8 +680,7 @@ func TestResolveTypedRecipeKeepsKnownArgsAfterVariadicOptIn(t *testing.T) {
 
 func TestResolveTypedRecipeRejectsUnknownNamedArgWithVariadicArgs(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"{pkg}", "{@}"},
+		Cmd: Command{"go", "test", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
 		},
@@ -717,8 +694,7 @@ func TestResolveTypedRecipeRejectsUnknownNamedArgWithVariadicArgs(t *testing.T) 
 
 func TestResolveTypedRecipeSplicesFlagBeforePosition(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"{pkg}", "{@}"},
+		Cmd: Command{"go", "test", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": {Type: "rel_path", Position: 1, Default: "./..."},
 		},
@@ -735,30 +711,43 @@ func TestResolveTypedRecipeSplicesFlagBeforePosition(t *testing.T) {
 
 func TestResolveRejectsEmbeddedVariadicArgsPlaceholder(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"go", "test"},
-		DefaultArgs: []string{"./...", "-run={@}"},
+		Cmd: Command{"go", "test", "./...", "-run={@}"},
 	}
 
 	_, err := Resolve("test", rec, []string{"TestResolve"}, nil, nil, "", GoProfile)
-	if err == nil || !strings.Contains(err.Error(), "{@} must be a whole argv item") {
+	if err == nil || !strings.Contains(err.Error(), "{@} must be a whole argument item") {
 		t.Fatalf("Resolve error = %v", err)
 	}
 }
 
-func TestResolveRejectsVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
+func TestResolveExpandsVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
 	rec := Recipe{
 		Cmd: ScriptCommand(`printf '%s\n' {@}`),
 	}
 
+	got, err := Resolve("script", rec, []string{"value one", "two"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ScriptBody(got.Main) != "printf '%s\\n' 'value one' two" {
+		t.Fatalf("script body = %q", ScriptBody(got.Main))
+	}
+}
+
+func TestResolveRejectsEmbeddedVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf prefix{@}suffix`),
+	}
+
 	_, err := Resolve("script", rec, []string{"value"}, nil, nil, "", GoProfile)
-	if err == nil || !strings.Contains(err.Error(), "{@} is not supported in script commands") {
+	if err == nil || !strings.Contains(err.Error(), "{@} must be a whole shell word in cmd") {
 		t.Fatalf("Resolve error = %v", err)
 	}
 }
 
 func TestResolveRejectsVariadicArgsPlaceholderInSyncOut(t *testing.T) {
 	rec := Recipe{
-		Cmd:     Command{"go", "test"},
+		Cmd:     Command{"go", "test", "{@}"},
 		SyncOut: []string{"{@}"},
 	}
 
@@ -770,7 +759,7 @@ func TestResolveRejectsVariadicArgsPlaceholderInSyncOut(t *testing.T) {
 
 func TestResolveRejectsVariadicArgsPlaceholderInUnsandboxedSyncOut(t *testing.T) {
 	rec := Recipe{
-		Cmd:       Command{"go", "test"},
+		Cmd:       Command{"go", "test", "{@}"},
 		Sandboxed: new(false),
 		SyncOut:   []string{"{@}"},
 	}
@@ -783,7 +772,7 @@ func TestResolveRejectsVariadicArgsPlaceholderInUnsandboxedSyncOut(t *testing.T)
 
 func TestResolveRejectsVariadicArgsPlaceholderInGlobalSyncOut(t *testing.T) {
 	rec := Recipe{
-		Cmd: Command{"go", "test"},
+		Cmd: Command{"go", "test", "{@}"},
 	}
 
 	_, err := Resolve("test", rec, []string{"out.txt"}, []string{"{@}"}, nil, "", GoProfile)
@@ -795,9 +784,7 @@ func TestResolveRejectsVariadicArgsPlaceholderInGlobalSyncOut(t *testing.T) {
 func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
 	rec := ApplyGlobals(map[string]Recipe{
 		"build": {
-			Cmd:         Command{"go", "build"},
-			Args:        []string{"-ldflags={go_ldflags}"},
-			DefaultArgs: []string{"{project}"},
+			Cmd: Command{"go", "build", "-ldflags={go_ldflags}", "{project}", "{@}"},
 			Arguments: map[string]Argument{
 				"project": {Default: "./cmd/default"},
 			},
@@ -832,7 +819,7 @@ func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
 func TestResolveShellScriptUsesConfiguredShell(t *testing.T) {
 	rec := ApplyGlobals(map[string]Recipe{
 		"script": {
-			Cmd: ScriptCommand("printf ok"),
+			Cmd: ScriptCommand("[[ -n ${BASH_VERSION:-} ]] && printf ok"),
 		},
 	}, nil, "bash", "")["script"]
 
@@ -840,7 +827,35 @@ func TestResolveShellScriptUsesConfiguredShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Main, Command{scriptCommand, "bash", "printf ok", "shadowtree"}) {
+	if !slices.Equal(got.Main, Command{scriptCommand, "bash", "[[ -n ${BASH_VERSION:-} ]] && printf ok", "shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveMainKeepsShellBuiltinAsScript(t *testing.T) {
+	rec := Recipe{Cmd: ScriptCommand("cd /")}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{scriptCommand, "sh", "cd /", "shadowtree"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveMainKeepsConfiguredFishShellAsScript(t *testing.T) {
+	rec := ApplyGlobals(map[string]Recipe{
+		"script": {
+			Cmd: ScriptCommand("set -q PATH"),
+		},
+	}, nil, "fish", "")["script"]
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{scriptCommand, "fish", "set -q PATH", "shadowtree"}) {
 		t.Fatalf("Main = %#v", got.Main)
 	}
 }
@@ -906,8 +921,7 @@ func TestEvalVarCommandsUsesConfiguredShellAndPrelude(t *testing.T) {
 
 func TestResolveTypedArgumentsValidatesTypes(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"echo", "{count}"},
-		DefaultArgs: []string{"{enabled}"},
+		Cmd: Command{"echo", "{count}", "{enabled}", "{@}"},
 		Arguments: map[string]Argument{
 			"count":   {Type: "int", Required: true},
 			"enabled": {Type: "bool", Default: true},
@@ -928,8 +942,7 @@ func TestResolveTypedArgumentsValidatesTypes(t *testing.T) {
 
 func TestResolvePathArgumentsValidatesRelativePath(t *testing.T) {
 	rec := Recipe{
-		Cmd:         Command{"echo"},
-		DefaultArgs: []string{"{source}", "{target}"},
+		Cmd: Command{"echo", "{source}", "{target}", "{@}"},
 		Arguments: map[string]Argument{
 			"source": {Type: "path", Required: true},
 			"target": {Type: "rel_path", Required: true},
@@ -956,8 +969,7 @@ func TestResolvePathArgumentExpandsHome(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	rec := Recipe{
-		Cmd:         Command{"echo"},
-		DefaultArgs: []string{"{source}"},
+		Cmd: Command{"echo", "{source}", "{@}"},
 		Arguments: map[string]Argument{
 			"source": {Type: "path", Required: true},
 		},
@@ -987,6 +999,24 @@ func TestValidateArgumentsValidatesPathKind(t *testing.T) {
 		"target": {Type: "path", PathKind: "socket"},
 	}); err == nil {
 		t.Fatal("ValidateArguments succeeded with invalid path_kind")
+	}
+}
+
+func TestValidateArgumentsRejectsArgvValues(t *testing.T) {
+	err := ValidateArguments(map[string]Argument{
+		"target": {Values: Command{"@enum", "api"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "target values: values must be a shell string") {
+		t.Fatalf("ValidateArguments() error = %v, want shell string error", err)
+	}
+}
+
+func TestValidateArgumentsRejectsEmptyArgvValues(t *testing.T) {
+	err := ValidateArguments(map[string]Argument{
+		"target": {Values: Command{}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "target values: values must be a shell string") {
+		t.Fatalf("ValidateArguments() error = %v, want shell string error", err)
 	}
 }
 
@@ -1054,7 +1084,7 @@ func TestNodeBuiltinsDetectAncestorPackageManager(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: leaf})["test"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `pnpm run test -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `pnpm run test -- {@}`) {
 		t.Fatalf("test body = %q, want ancestor pnpm package manager", body)
 	}
 	if body := ScriptBody(rec.Cmd); !strings.HasPrefix(body, "cd "+shellQuote(leaf)+"\n") {
@@ -1073,7 +1103,7 @@ func TestNodeBuiltinsDetectAncestorLockfile(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: leaf})["test"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `yarn run test -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `yarn run test -- {@}`) {
 		t.Fatalf("test body = %q, want ancestor yarn lockfile", body)
 	}
 }
@@ -1129,7 +1159,7 @@ func TestNodeBuiltinsInferBunTest(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["test"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bun test "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bun test {@}`) {
 		t.Fatalf("test body = %q, want bun test", body)
 	}
 }
@@ -1140,7 +1170,7 @@ func TestNodeBuiltinsPreferBunVitestWhenInstalled(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["test"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bunx vitest "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `bunx vitest {@}`) {
 		t.Fatalf("test body = %q, want bunx vitest", body)
 	}
 }
@@ -1211,7 +1241,7 @@ func TestNodeBuiltinsTypecheckScriptWins(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["typecheck"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run type-check -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run type-check -- {@}`) {
 		t.Fatalf("typecheck body = %q, want type-check script", body)
 	}
 }
@@ -1225,17 +1255,17 @@ func TestNodeBuiltinsComposeTypecheckTools(t *testing.T) {
 
 	for _, want := range []string{
 		"set -e",
-		`npm exec -- vue-tsc --noEmit "$@"`,
-		`npm exec -- svelte-check "$@"`,
-		`npm exec -- tsc --noEmit "$@"`,
+		`npm exec -- vue-tsc --noEmit {@}`,
+		`npm exec -- svelte-check {@}`,
+		`npm exec -- tsc --noEmit {@}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("typecheck body = %q, missing %q", body, want)
 		}
 	}
-	vueIndex := strings.Index(body, `npm exec -- vue-tsc --noEmit "$@"`)
-	svelteIndex := strings.Index(body, `npm exec -- svelte-check "$@"`)
-	tscIndex := strings.Index(body, `npm exec -- tsc --noEmit "$@"`)
+	vueIndex := strings.Index(body, `npm exec -- vue-tsc --noEmit {@}`)
+	svelteIndex := strings.Index(body, `npm exec -- svelte-check {@}`)
+	tscIndex := strings.Index(body, `npm exec -- tsc --noEmit {@}`)
 	if vueIndex > svelteIndex || svelteIndex > tscIndex {
 		t.Fatalf("typecheck body order = %q", body)
 	}
@@ -1261,10 +1291,10 @@ func TestNodeBuiltinsPackageScriptsFillGaps(t *testing.T) {
 
 	recipes := Builtins(NodeProfile, BuiltinOptions{Dir: dir})
 
-	if body := ScriptBody(recipes["build"].Cmd); !strings.Contains(body, `npm run build -- "$@"`) {
+	if body := ScriptBody(recipes["build"].Cmd); !strings.Contains(body, `npm run build -- {@}`) {
 		t.Fatalf("build body = %q, want package script", body)
 	}
-	if body := ScriptBody(recipes["lint-fix"].Cmd); !strings.Contains(body, `npm run lint:fix -- "$@"`) {
+	if body := ScriptBody(recipes["lint-fix"].Cmd); !strings.Contains(body, `npm run lint:fix -- {@}`) {
 		t.Fatalf("lint-fix body = %q, want original script key", body)
 	}
 }
@@ -1275,7 +1305,7 @@ func TestNodeBuiltinsPackageScriptNormalizationCollision(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["lint-fix"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint-fix -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint-fix -- {@}`) {
 		t.Fatalf("lint-fix body = %q, want exact normalized script", body)
 	}
 }
@@ -1286,15 +1316,15 @@ func TestNodeBuiltinsPackageScriptNormalizationReplacesInvalidCharacters(t *test
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["pre-view"]
 
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run 'pre view' -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run 'pre view' -- {@}`) {
 		t.Fatalf("pre-view body = %q, want original script key quoted", body)
 	}
 	rec = Builtins(NodeProfile, BuiltinOptions{Dir: dir})["lint-fix"]
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint---fix -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run lint---fix -- {@}`) {
 		t.Fatalf("lint-fix body = %q, want original repeated-dash script key", body)
 	}
 	rec = Builtins(NodeProfile, BuiltinOptions{Dir: dir})["foo"]
-	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run '#foo' -- "$@"`) {
+	if body := ScriptBody(rec.Cmd); !strings.Contains(body, `npm run '#foo' -- {@}`) {
 		t.Fatalf("foo body = %q, want hash-prefixed script key quoted", body)
 	}
 }

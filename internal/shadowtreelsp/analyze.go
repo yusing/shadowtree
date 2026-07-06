@@ -69,9 +69,7 @@ var recipeKeys = []completion{
 	{Label: "shell", InsertText: `shell = "sh"`, Kind: completionKindKeyword, Detail: "Recipe shell"},
 	{Label: "shell_prelude", InsertText: "shell_prelude = '''\n\n'''", Kind: completionKindKeyword, Detail: "Recipe shell prelude"},
 	{Label: "sandboxed", InsertText: "sandboxed = true", Kind: completionKindKeyword, Detail: "Run in disposable workspace"},
-	{Label: "cmd", InsertText: `cmd = [""]`, Kind: completionKindKeyword, Detail: "Main command"},
-	{Label: "args", InsertText: "args = []", Kind: completionKindKeyword, Detail: "Fixed args"},
-	{Label: "default_args", InsertText: "default_args = []", Kind: completionKindKeyword, Detail: "Default CLI args"},
+	{Label: "cmd", InsertText: `cmd = ""`, Kind: completionKindKeyword, Detail: "Main command"},
 	{Label: "pre", InsertText: "pre = []", Kind: completionKindKeyword, Detail: "Commands before main"},
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
 	{Label: "sync_out", InsertText: "sync_out = []", Kind: completionKindKeyword, Detail: "Recipe sync-out paths"},
@@ -874,21 +872,14 @@ func placeholderCompletions(analysis documentAnalysis, recipe, prefix string, al
 }
 
 func variadicPlaceholderCompletionAllowed(analysis documentAnalysis, prefix string, pos lspPosition) bool {
-	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
-		return false
-	}
 	key, ok := keyBeforeValue(prefix)
 	if !ok {
 		return false
 	}
 	_, valuePrefix, _ := strings.Cut(prefix, "=")
 	switch key {
-	case "args", "default_args":
-		return strings.Contains(valuePrefix, "[")
 	case "cmd":
-		return strings.Contains(valuePrefix, "[")
-	case "pre", "post":
-		return strings.Contains(valuePrefix, "[[")
+		return strings.Contains(valuePrefix, "{")
 	default:
 		return false
 	}

@@ -13,7 +13,7 @@ import (
 
 func TestCandidatesIncludeRecipesForEmptyCurrentWord(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", ""}, map[string]recipe.Recipe{
-		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}, DefaultArgs: []string{"./..."}},
+		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test", "{pkg}", "{@}"}},
 	})
 
 	if !hasCandidate(candidates, "test") {
@@ -228,7 +228,7 @@ func TestCandidatesCompleteDynamicArgumentValues(t *testing.T) {
 			Arguments: map[string]recipe.Argument{
 				"project": {
 					Type:   "string",
-					Values: recipe.Command{"sh", "-c", "project_values"},
+					Values: recipe.ScriptCommand("project_values"),
 				},
 			},
 		},
@@ -264,7 +264,7 @@ func TestCandidatesCompleteEnumArgumentValuesWithHelp(t *testing.T) {
 			Arguments: map[string]recipe.Argument{
 				"project": {
 					Type:   "string",
-					Values: recipe.Command{"@enum", "all=all modules", "api=API service"},
+					Values: recipe.ScriptCommand("@enum all='all modules' api='API service'"),
 				},
 			},
 		},
@@ -293,7 +293,7 @@ func TestCandidatesCompleteGoModulesBuiltinArgumentValues(t *testing.T) {
 			Arguments: map[string]recipe.Argument{
 				"target": {
 					Type:   "string",
-					Values: recipe.Command{"@go-modules"},
+					Values: recipe.ScriptCommand("@go-modules"),
 				},
 			},
 		},
@@ -344,7 +344,7 @@ func TestCandidatesCompleteGoMainPackagesBuiltinArgumentValues(t *testing.T) {
 			Arguments: map[string]recipe.Argument{
 				"project": {
 					Type:   "string",
-					Values: recipe.Command{"@go-main-packages"},
+					Values: recipe.ScriptCommand("@go-main-packages"),
 				},
 			},
 		},
@@ -463,27 +463,6 @@ func TestCandidatesCompleteDynamicArgumentValuesFromRecipeReference(t *testing.T
 			Arguments: map[string]recipe.Argument{
 				"project": {
 					Type:   "string",
-					Values: recipe.Command{"@projects"},
-				},
-			},
-		},
-		"projects": {
-			Cmd: recipe.Command{"printf", "api\tAPI service\nweb\tWeb service\n"},
-		},
-	})
-
-	if len(candidates) != 1 || candidates[0].Value != "project=api" || candidates[0].Help != "API service" {
-		t.Fatalf("candidates = %#v, want api value from recipe reference", candidates)
-	}
-}
-
-func TestCandidatesCompleteDynamicArgumentValuesFromScriptRecipeReference(t *testing.T) {
-	candidates := complete(t, []string{"shadowtree", "build", "project=api"}, map[string]recipe.Recipe{
-		"build": {
-			Cmd: recipe.Command{"go", "build"},
-			Arguments: map[string]recipe.Argument{
-				"project": {
-					Type:   "string",
 					Values: recipe.ScriptCommand("@projects"),
 				},
 			},
@@ -494,7 +473,7 @@ func TestCandidatesCompleteDynamicArgumentValuesFromScriptRecipeReference(t *tes
 	})
 
 	if len(candidates) != 1 || candidates[0].Value != "project=api" || candidates[0].Help != "API service" {
-		t.Fatalf("candidates = %#v, want api value from script recipe reference", candidates)
+		t.Fatalf("candidates = %#v, want api value from recipe reference", candidates)
 	}
 }
 

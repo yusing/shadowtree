@@ -25,9 +25,12 @@ project_root = "pwd"
 [recipes.test]
 help = "Run tests."
 sandboxed = false
-cmd = "go test \"$@\""
-default_args = ["./..."]
-pre = [["go", "generate", "./..."]]
+cmd = "go test {pkg} {@}"
+pre = ["go generate ./..."]
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+default = "./..."
 
 [recipes.test.arguments.count]
 help = "Repeat count."
@@ -44,7 +47,7 @@ default = 1
 	if loaded.Config.Profile != "go" {
 		t.Fatalf("Profile = %q", loaded.Config.Profile)
 	}
-	if got := loaded.Config.Recipes["test"].Pre[0][1]; got != "generate" {
+	if got := recipe.ScriptBody(loaded.Config.Recipes["test"].Pre[0]); got != "go generate ./..." {
 		t.Fatalf("pre command = %#v", loaded.Config.Recipes["test"].Pre)
 	}
 	if got := loaded.Config.Shell; got != "bash" {
@@ -77,11 +80,11 @@ func TestLoadBareRecipeReferenceCommand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 [recipes.test]
-cmd = ["true"]
+cmd = "true"
 pre = ["echo 123", "@foo"]
 
 [recipes.foo]
-cmd = ["true"]
+cmd = "true"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +101,85 @@ cmd = ["true"]
 	if len(pre) != 2 {
 		t.Fatalf("pre = %#v, want two commands", pre)
 	}
-	if len(pre[0]) != 4 || pre[0][0] != "__shadowtree_script__" || pre[0][1] != "sh" || pre[0][2] != "echo 123" {
-		t.Fatalf("pre[0] = %#v, want shell-wrapped script command", pre[0])
+	output, err := recipe.CommandOutput(t.Context(), filepath.Dir(path), nil, pre[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "123\n" {
+		t.Fatalf("pre[0] output = %q, want echo output", output)
 	}
 	if len(pre[1]) != 1 || pre[1][0] != "@foo" {
 		t.Fatalf("pre[1] = %#v, want recipe reference", pre[1])
+	}
+}
+
+func TestLoadShellCommandUsesArgumentDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.test]
+cmd = 'printf "%s\n" {pkg}'
+
+[recipes.test.arguments.pkg]
+default = "./..."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("test", loaded.Config.Recipes["test"], nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := recipe.CommandOutput(t.Context(), dir, nil, resolved.Main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "./...\n" {
+		t.Fatalf("output = %q, want default argument forwarded", output)
+	}
+}
+
+func TestLoadRejectsArgvCommandForms(t *testing.T) {
+	for name, text := range map[string]string{
+		"cmd": `
+[recipes.test]
+cmd = ["go", "test"]
+`,
+		"pre": `
+[recipes.test]
+cmd = "go test"
+pre = [["go", "generate"]]
+`,
+		"post": `
+[recipes.test]
+cmd = "go test"
+post = [["go", "generate"]]
+`,
+		"values": `
+[recipes.test.arguments.target]
+values = ["@enum", "api"]
+
+[recipes.test]
+cmd = "go test"
+`,
+		"var_commands": `
+[var_commands]
+ROOT = ["pwd"]
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), "command arrays are no longer supported") {
+				t.Fatalf("Load() error = %v, want shell string error", err)
+			}
+		})
 	}
 }
 
@@ -126,7 +203,7 @@ func TestResolveRecipesDoesNotDetectProfileWhenConfigOmitsProfile(t *testing.T) 
 	path := filepath.Join(dir, ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 [recipes.assets]
-cmd = ["npm", "test"]
+cmd = "npm test"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +291,7 @@ func TestResolveRecipesUsesOptionsProfileWithConfig(t *testing.T) {
 	path := filepath.Join(dir, ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 [recipes.assets]
-cmd = ["npm", "test"]
+cmd = "npm test"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +323,7 @@ func TestResolveRecipesUsesOptionsNodeProfileWithConfig(t *testing.T) {
 	path := filepath.Join(dir, ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 [recipes.assets]
-cmd = ["npm", "test"]
+cmd = "npm test"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

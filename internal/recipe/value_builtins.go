@@ -166,11 +166,7 @@ func valueBuiltinInvocations(command Command) ([]valueBuiltinCall, bool, error) 
 		return nil, false, nil
 	}
 	if !IsScriptCommand(command) {
-		ref, ok := ParseRecipeReference(command)
-		if !ok || ref.Path != "" || !IsBuiltinReferenceName(ref.Name) {
-			return nil, false, nil
-		}
-		return []valueBuiltinCall{{name: ref.Name, args: slices.Clone(ref.Args)}}, true, nil
+		return nil, false, nil
 	}
 	return scriptValueBuiltinInvocations(ScriptBody(command))
 }

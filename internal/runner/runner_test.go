@@ -132,7 +132,7 @@ func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"cat", "out.txt"},
-			Pre:       []recipe.Command{{"@gen", "shadow"}},
+			Pre:       []recipe.Command{{"@gen", "value=shadow"}},
 			Sandboxed: new(false),
 		},
 		nil,
@@ -147,8 +147,15 @@ func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 
 	var stdout bytes.Buffer
 	err = Run(t.Context(), Options{
-		Resolved:  resolved,
-		Recipes:   map[string]recipe.Recipe{"gen": {Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"}}},
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"gen": {
+				Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree", "{value}"},
+				Arguments: map[string]recipe.Argument{
+					"value": {Required: true},
+				},
+			},
+		},
 		SourceDir: source,
 		Stdout:    &stdout,
 	})
@@ -184,8 +191,7 @@ func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
 		Resolved: resolved,
 		Recipes: map[string]recipe.Recipe{
 			"gen": {
-				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
-				DefaultArgs: []string{"{value}"},
+				Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree", "{value}"},
 				Arguments: map[string]recipe.Argument{
 					"value": {Required: true},
 				},
@@ -225,8 +231,7 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithArguments(t *testing.T) {
 		Resolved: resolved,
 		Recipes: map[string]recipe.Recipe{
 			"gen": {
-				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
-				DefaultArgs: []string{"{value}"},
+				Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree", "{value}"},
 				Arguments: map[string]recipe.Argument{
 					"value": {Required: true},
 				},
@@ -299,8 +304,7 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithBracketArguments(t *testing.T
 		Resolved: resolved,
 		Recipes: map[string]recipe.Recipe{
 			"gen": {
-				Cmd:         recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree"},
-				DefaultArgs: []string{"{value}"},
+				Cmd: recipe.Command{"sh", "-c", "printf %s \"$1\" > out.txt", "shadowtree", "{value}"},
 				Arguments: map[string]recipe.Argument{
 					"value": {Required: true},
 				},
@@ -322,9 +326,8 @@ func TestRunPreservesScriptArgsWithLiteralRecipeReference(t *testing.T) {
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
-			Cmd:         recipe.ScriptCommand("@noop\nprintf %s \"$1\""),
-			DefaultArgs: []string{"shadow"},
-			Sandboxed:   new(false),
+			Cmd:       recipe.ScriptCommand("@noop\nprintf %s 'shadow'"),
+			Sandboxed: new(false),
 		},
 		nil,
 		nil,
@@ -356,9 +359,8 @@ func TestRunPreservesDashPrefixedScriptArgsWithLiteralRecipeReference(t *testing
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
-			Cmd:         recipe.ScriptCommand("@noop\nprintf '%s:%s' \"$1\" \"$2\""),
-			DefaultArgs: []string{"-n", "shadow"},
-			Sandboxed:   new(false),
+			Cmd:       recipe.ScriptCommand("@noop\nprintf '%s:%s' '-n' 'shadow'"),
+			Sandboxed: new(false),
 		},
 		nil,
 		nil,
@@ -430,14 +432,17 @@ func TestRunInvokesCrossConfigRecipeReferenceFromTargetDir(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
 [recipes.gen-schema]
-cmd = ["sh", "-c", "printf '%s\n' \"$PWD\"; printf '%s' \"$1\" > out.txt", "shadowtree"]
+cmd = '''printf '%s\n' "$PWD"; printf '%s' "{value}" > out.txt'''
+
+[recipes.gen-schema.arguments.value]
+required = true
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
-			Cmd:       recipe.Command{"@webui:gen-schema", "shadow"},
+			Cmd:       recipe.Command{"@webui:gen-schema", "value=shadow"},
 			Sandboxed: new(false),
 		},
 		nil,
@@ -453,7 +458,7 @@ cmd = ["sh", "-c", "printf '%s\n' \"$PWD\"; printf '%s' \"$1\" > out.txt", "shad
 	var stdout bytes.Buffer
 	err = Run(t.Context(), Options{
 		Resolved:  resolved,
-		Recipes:   map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"@webui:gen-schema", "shadow"}}},
+		Recipes:   map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"@webui:gen-schema", "value=shadow"}}},
 		SourceDir: source,
 		Stdout:    &stdout,
 	})
@@ -480,7 +485,7 @@ func TestRunCrossConfigRecipeReferenceUsesTopLevelSyncOut(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
 [recipes.gen-schema]
-cmd = ["sh", "-c", "printf shadow > out.txt"]
+cmd = "printf shadow > out.txt"
 sync_out = ["out.txt"]
 `), 0o644); err != nil {
 		t.Fatal(err)
