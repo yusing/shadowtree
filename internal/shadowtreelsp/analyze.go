@@ -197,6 +197,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos))
 	}
 	if key, ok := keyBeforeValue(prefix); ok {
+		if items, ok := argumentDefaultValueCompletions(ctx, text, analysis.CurrentTable, key, prefix, pos, opts); ok {
+			return items
+		}
 		return valueCompletions(key)
 	}
 	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
@@ -708,6 +711,76 @@ func keyCompletions(table string) []completion {
 	return nil
 }
 
+func argumentDefaultValueCompletions(ctx context.Context, text, table, key, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
+	if key != "default" {
+		return nil, false
+	}
+	recipeName, argName, ok := recipeArgumentTableParts(table)
+	if !ok {
+		return nil, false
+	}
+	recipes, ok := completionRecipesIgnoringLine(ctx, text, pos.Line, opts)
+	if !ok {
+		return nil, true
+	}
+	rec, ok := recipes[recipeName]
+	if !ok {
+		return nil, true
+	}
+	arg, ok := rec.Arguments[argName]
+	if !ok || len(arg.Values) == 0 && arg.Type != "bool" {
+		return nil, true
+	}
+	_, valuePrefix, _ := strings.Cut(prefix, "=")
+	valuePrefix = strings.TrimLeft(valuePrefix, " \t")
+	candidates := recipecompletion.GroupedArgumentCandidates(
+		ctx,
+		"",
+		argName+"="+valuePrefix,
+		rec,
+		recipes,
+		recipecompletion.Options{Dir: opts.Dir, ConfigPath: opts.ConfigPath},
+	)
+	return argumentDefaultValueCompletionItems(candidates, argName, defaultValueNeedsQuote(arg)), true
+}
+
+func completionRecipesIgnoringLine(ctx context.Context, text string, line int, opts completionOptions) (map[string]recipe.Recipe, bool) {
+	lines := strings.Split(text, "\n")
+	if line < 0 || line >= len(lines) {
+		return nil, false
+	}
+	lines[line] = ""
+	return completionRecipes(ctx, strings.Join(lines, "\n"), opts)
+}
+
+func argumentDefaultValueCompletionItems(candidates []recipecompletion.Candidate, argName string, quote bool) []completion {
+	items := make([]completion, 0, len(candidates))
+	prefix := argName + "="
+	for _, candidate := range candidates {
+		if !strings.HasPrefix(candidate.Value, prefix) {
+			continue
+		}
+		value := recipeArgumentCompletionLabel(candidate.Value)
+		items = append(items, completion{
+			Label:      value,
+			InsertText: value,
+			Kind:       completionKindValue,
+			Detail:     candidate.Help,
+			Quote:      quote,
+		})
+	}
+	return items
+}
+
+func defaultValueNeedsQuote(arg recipe.Argument) bool {
+	switch arg.Type {
+	case "bool", "int", "float":
+		return false
+	default:
+		return true
+	}
+}
+
 func valueCompletions(key string) []completion {
 	switch key {
 	case "profile":
@@ -726,6 +799,18 @@ func valueCompletions(key string) []completion {
 	default:
 		return nil
 	}
+}
+
+func recipeArgumentTableParts(table string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(table, "recipes.")
+	if !ok {
+		return "", "", false
+	}
+	recipeName, argName, ok := strings.Cut(rest, ".arguments.")
+	if !ok || recipeName == "" || argName == "" || strings.Contains(argName, ".") {
+		return "", "", false
+	}
+	return recipeName, argName, true
 }
 
 func placeholderCompletions(analysis documentAnalysis, recipe, prefix string, allowVariadic bool) []completion {
@@ -1990,12 +2075,8 @@ func recipeTable(table string) bool {
 }
 
 func recipeArgumentTable(table string) bool {
-	rest, ok := strings.CutPrefix(table, "recipes.")
-	if !ok {
-		return false
-	}
-	recipeName, argName, ok := strings.Cut(rest, ".arguments.")
-	return ok && recipeName != "" && argName != "" && !strings.Contains(argName, ".")
+	_, _, ok := recipeArgumentTableParts(table)
+	return ok
 }
 
 func isRecipeReferenceNameByte(ch byte) bool {

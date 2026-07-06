@@ -293,6 +293,58 @@ pre = ["@build[mode="]
 	assertLabels(t, items, "true", "false")
 }
 
+func TestCompletionsIncludeArgumentDefaultValues(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+values = "@enum api worker"
+default = `
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = `)})
+	assertLabels(t, items, "api", "worker")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 3, Character: len(`default = `)})
+	edit := completionTextEdit(t, result, "api")
+	if edit["newText"] != `"api"` {
+		t.Fatalf("newText = %#v, want quoted default value", edit["newText"])
+	}
+
+	text = strings.Replace(text, "default = ", "default = a", 1)
+	items = completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`default = a`)})
+	assertLabels(t, items, "api")
+
+	text = strings.Replace(text, "default = a", `default = "a`, 1)
+	result = completionResult(t.Context(), text, lspPosition{Line: 3, Character: len(`default = "a`)})
+	edit = completionTextEdit(t, result, "api")
+	if edit["newText"] != `api"` {
+		t.Fatalf("newText = %#v, want replacement plus closing quote", edit["newText"])
+	}
+}
+
+func TestCompletionsEscapeArgumentDefaultStringValues(t *testing.T) {
+	text := `[recipes.build.arguments.component]
+type = "string"
+values = "@enum 'api\"v2' 'path\\to'"
+default = `
+	result := completionResult(t.Context(), text, lspPosition{Line: 3, Character: len(`default = `)})
+
+	edit := completionTextEdit(t, result, `api"v2`)
+	if edit["newText"] != `"api\"v2"` {
+		t.Fatalf("newText = %#v, want TOML-escaped quote", edit["newText"])
+	}
+
+	edit = completionTextEdit(t, result, `path\to`)
+	if edit["newText"] != `"path\\to"` {
+		t.Fatalf("newText = %#v, want TOML-escaped backslash", edit["newText"])
+	}
+}
+
+func TestCompletionsIncludeBoolArgumentDefaultValues(t *testing.T) {
+	text := `[recipes.test.arguments.race]
+type = "bool"
+default = `
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`default = `)})
+	assertLabels(t, items, "true", "false")
+}
+
 func TestCompletionsIncludeScriptRecipeReferences(t *testing.T) {
 	text := `[recipes.gen-swagger]
 help = "Generate Swagger docs."
@@ -685,6 +737,13 @@ func TestQuotedValueTextEditReplacesInsideExistingQuotes(t *testing.T) {
 	edit := quotedValueTextEdit(`shell = ""`, lspPosition{Line: 0, Character: len(`shell = "`)}, "sh")
 	if edit["newText"] != "sh" {
 		t.Fatalf("newText = %#v, want bare shell inside quotes", edit["newText"])
+	}
+}
+
+func TestQuotedValueTextEditClosesUnclosedQuotes(t *testing.T) {
+	edit := quotedValueTextEdit(`shell = "`, lspPosition{Line: 0, Character: len(`shell = "`)}, "sh")
+	if edit["newText"] != `sh"` {
+		t.Fatalf("newText = %#v, want value and closing quote", edit["newText"])
 	}
 }
 
