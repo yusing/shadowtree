@@ -158,7 +158,7 @@ go_ldflags = "-buildvcs=false"
 [recipes.test]
 help = "Run tests after regenerating code."
 pre = ["@generate"]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -168,7 +168,7 @@ values = "@go-packages"
 
 [recipes.build]
 help = "Build a Go package."
-cmd = "go build {go_ldflags} {project} {@}"
+cmd = 'go build {go_ldflags:raw} "{project}" {@}'
 
 [recipes.build.arguments.project]
 help = "Go main package to build."
@@ -205,7 +205,7 @@ Use shell strings for process execution:
 
 ```toml
 [recipes.test]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -217,16 +217,27 @@ Command strings run through the configured shell after placeholder expansion.
 A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
 other strings run in the shell. Put defaults directly in `cmd` through typed
 `arguments`.
-Placeholders inside single or double quotes are escaped for that quote context,
-so `"{name}"` and `'{name}'` stay one shell word even when values contain quote
-characters.
-Environment values under `[env]` and `[recipes.<name>.env]` use the same
-placeholder expansion. `shell_prelude` also uses placeholder expansion before
-it is prepended to script commands. Shadowtree also provides a built-in
-`{run_id}` placeholder: one lowercase hex ID is generated for each top-level
-run and stays the same through `pre`, `cmd`, `post`, `for_each`, and nested
-recipe references. `run_id` is reserved and cannot be declared in `vars`,
-`var_commands`, recipe `vars`, or recipe `arguments`.
+Default `{name}` expansion is raw when unquoted. Inside single or double
+quotes, `{name}` is escaped for that quote context, so `"{name}"`, `'{name}'`,
+and `"https://{host}"` stay one shell word even when values contain quote
+characters. Escaping is context-aware, not type-aware.
+Normally, put free string or path placeholders in shell quotes, such as
+`foo "{bar}"`. Use `{name:shell}` only when the value must be embedded in an
+unquoted shell word, such as `foo -xxx{name:shell}`. Use `{name:dq}` only
+inside double quotes for content that must be combined with literal quoted
+text. Use `{name:raw}` as the explicit unsafe escape hatch when raw shell text
+or word splitting is intended.
+`{@}` is special: in `cmd`, it splices leftover recipe CLI args as separate
+shell-quoted words and must be a whole shell word.
+Environment values under `[env]` and `[recipes.<name>.env]`, along with
+`vars`, `workdir`, `sync_out`, and `log`, use raw string placeholder expansion;
+only `{name}` and `{name:raw}` are valid there. `shell_prelude` uses shell
+placeholder expansion before it is prepended to script commands. Shadowtree
+also provides a built-in `{run_id}` placeholder: one lowercase hex ID is
+generated for each top-level run and stays the same through `pre`, `cmd`,
+`post`, `for_each`, and nested recipe references. `run_id` is reserved and
+cannot be declared in `vars`, `var_commands`, recipe `vars`, or recipe
+`arguments`.
 
 Use a recipe reference from `cmd`, `pre`, or `post`:
 
@@ -238,7 +249,7 @@ cmd = "go generate ./internal/api"
 [recipes.test]
 help = "Regenerate API files, then test."
 pre = ["@gen-swagger"]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -328,7 +339,7 @@ Use `{@}` in `cmd` to splice leftover recipe CLI args:
 
 ```toml
 [recipes.test]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"

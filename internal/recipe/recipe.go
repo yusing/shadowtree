@@ -155,6 +155,25 @@ type RecipeReferenceTarget struct {
 	Args []string
 }
 
+// PlaceholderMode controls how a Shadowtree placeholder is expanded.
+type PlaceholderMode string
+
+const (
+	PlaceholderModeDefault PlaceholderMode = ""
+	PlaceholderModeShell   PlaceholderMode = "shell"
+	PlaceholderModeRaw     PlaceholderMode = "raw"
+	PlaceholderModeDQ      PlaceholderMode = "dq"
+)
+
+// Placeholder is a parsed {name} or {name:mode} reference.
+type Placeholder struct {
+	Name  string
+	Mode  PlaceholderMode
+	Start int
+	End   int
+	Match string
+}
+
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var (
 	supportedProfiles = []string{GoProfile, NodeProfile}
@@ -534,7 +553,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	shellPrelude := rec.ShellPrelude
-	if containsPlaceholderName(shellPrelude) && commandsUseShellPrelude(cmd, pre, post, forEach, rec.Shell, shellPrelude) {
+	if containsScriptPlaceholder(shellPrelude) && commandsUseShellPrelude(cmd, pre, post, forEach, rec.Shell, shellPrelude) {
 		shellPrelude, err = expandScriptPlaceholders(shellPrelude, values, rec.Shell)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q shell_prelude: %w", name, err)
@@ -649,7 +668,7 @@ func commandUsesShellPrelude(command Command, shell, shellPrelude string) bool {
 // only when command will consume the prelude, then applies recipe-reference and
 // shell wrapping.
 func CommandWithRecipeReferenceExpandedPrelude(command Command, shell, shellPrelude string, values map[string]string) (Command, error) {
-	if containsPlaceholderName(shellPrelude) && commandUsesShellPrelude(command, shell, shellPrelude) {
+	if containsScriptPlaceholder(shellPrelude) && commandUsesShellPrelude(command, shell, shellPrelude) {
 		expanded, err := expandScriptPlaceholders(shellPrelude, values, shell)
 		if err != nil {
 			return nil, err
@@ -1111,7 +1130,7 @@ func ArgumentHelp(arg Argument) string {
 	if arg.Help != "" {
 		return SingleLine(arg.Help)
 	}
-	if typ := argumentType(arg); typ != "" {
+	if typ := ArgumentType(arg); typ != "" {
 		return typ
 	}
 	return "string"
@@ -1416,11 +1435,20 @@ func expandRuntimePlaceholdersInMap(items map[string]string, runtimeValues map[s
 		if !strings.Contains(value, "{") {
 			continue
 		}
-		expanded, err := expandPlaceholderNames(value, func(name, match string) (string, error) {
-			if value, ok := runtimeValues[name]; ok {
+		expanded, err := expandPlaceholderNames(value, func(placeholder Placeholder) (string, error) {
+			if placeholder.Name == "@" {
+				if placeholder.Mode == PlaceholderModeDefault {
+					return placeholder.Match, nil
+				}
+				return "", fmt.Errorf("%s does not support placeholder modes", placeholder.Match)
+			}
+			if err := validateStringPlaceholderMode(placeholder); err != nil {
+				return "", err
+			}
+			if value, ok := runtimeValues[placeholder.Name]; ok {
 				return value, nil
 			}
-			return match, nil
+			return placeholder.Match, nil
 		})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
@@ -1481,22 +1509,30 @@ func mapContainsPlaceholder(values map[string]string) bool {
 	return false
 }
 
-func containsPlaceholderName(text string) bool {
+func containsScriptPlaceholder(text string) bool {
 	found := false
-	_, _ = expandPlaceholderNames(text, func(_, match string) (string, error) {
-		found = true
-		return match, nil
+	_, _ = expandPlaceholderNames(text, func(placeholder Placeholder) (string, error) {
+		if placeholder.Name != "@" || placeholder.Mode != PlaceholderModeDefault {
+			found = true
+		}
+		return placeholder.Match, nil
 	})
 	return found
 }
 
 func expandVarValue(text string, value func(string) (string, error)) (string, error) {
-	return expandPlaceholderNames(text, func(name, _ string) (string, error) {
-		return value(name)
+	return expandPlaceholderNames(text, func(placeholder Placeholder) (string, error) {
+		if err := validateStringPlaceholderMode(placeholder); err != nil {
+			return "", err
+		}
+		if placeholder.Name == "@" {
+			return placeholder.Match, nil
+		}
+		return value(placeholder.Name)
 	})
 }
 
-func expandPlaceholderNames(text string, replace func(name, match string) (string, error)) (string, error) {
+func expandPlaceholderNames(text string, replace func(Placeholder) (string, error)) (string, error) {
 	if !strings.Contains(text, "{") {
 		return text, nil
 	}
@@ -1508,40 +1544,111 @@ func expandPlaceholderNames(text string, replace func(name, match string) (strin
 			i++
 			continue
 		}
-		end := strings.IndexByte(text[i:], '}')
-		if end < 0 {
+		placeholder, ok := ParsePlaceholderAt(text, i)
+		if !ok {
 			b.WriteByte(text[i])
 			i++
 			continue
 		}
-		end += i
-		match := text[i : end+1]
-		name := text[i+1 : end]
-		if !validPlaceholderName(name) {
-			b.WriteByte(text[i])
-			i++
-			continue
-		}
-		replacement, err := replace(name, match)
+		replacement, err := replace(placeholder)
 		if err != nil {
 			return "", err
 		}
 		b.WriteString(replacement)
-		i = end + 1
+		i = placeholder.End
 	}
 	return b.String(), nil
 }
 
-func validPlaceholderName(name string) bool {
-	if name == "" || !identifierStart(name[0]) {
+// ParsePlaceholderAt parses a Shadowtree placeholder starting at start.
+func ParsePlaceholderAt(text string, start int) (Placeholder, bool) {
+	if start < 0 || start >= len(text) || text[start] != '{' {
+		return Placeholder{}, false
+	}
+	cursor := start + 1
+	if cursor >= len(text) {
+		return Placeholder{}, false
+	}
+	name := ""
+	if text[cursor] == '@' {
+		name = "@"
+		cursor++
+	} else {
+		if !identifierStart(text[cursor]) {
+			return Placeholder{}, false
+		}
+		nameStart := cursor
+		cursor++
+		for cursor < len(text) && identifierPart(text[cursor]) {
+			cursor++
+		}
+		name = text[nameStart:cursor]
+	}
+	mode := PlaceholderModeDefault
+	if cursor < len(text) && text[cursor] == ':' {
+		modeStart := cursor + 1
+		cursor = modeStart
+		if cursor >= len(text) || !identifierStart(text[cursor]) {
+			return Placeholder{}, false
+		}
+		cursor++
+		for cursor < len(text) && identifierPart(text[cursor]) {
+			cursor++
+		}
+		mode = PlaceholderMode(text[modeStart:cursor])
+	}
+	if cursor >= len(text) || text[cursor] != '}' {
+		return Placeholder{}, false
+	}
+	end := cursor + 1
+	return Placeholder{
+		Name:  name,
+		Mode:  mode,
+		Start: start,
+		End:   end,
+		Match: text[start:end],
+	}, true
+}
+
+// ValidPlaceholderMode reports whether mode is supported.
+func ValidPlaceholderMode(mode PlaceholderMode) bool {
+	switch mode {
+	case PlaceholderModeDefault, PlaceholderModeShell, PlaceholderModeRaw, PlaceholderModeDQ:
+		return true
+	default:
 		return false
 	}
-	for i := 1; i < len(name); i++ {
-		if !identifierPart(name[i]) {
-			return false
+}
+
+// ValidatePlaceholderMode reports whether placeholder may be used in the given context.
+func ValidatePlaceholderMode(placeholder Placeholder, shell bool, quote byte) error {
+	if placeholder.Name == "@" && placeholder.Mode != PlaceholderModeDefault {
+		return fmt.Errorf("%s does not support placeholder modes", placeholder.Match)
+	}
+	if !ValidPlaceholderMode(placeholder.Mode) {
+		return fmt.Errorf("%s uses unsupported placeholder mode %q", placeholder.Match, placeholder.Mode)
+	}
+	if placeholder.Mode == PlaceholderModeDefault || placeholder.Mode == PlaceholderModeRaw {
+		return nil
+	}
+	if !shell {
+		return fmt.Errorf("%s mode is supported only in shell commands", placeholder.Match)
+	}
+	switch placeholder.Mode {
+	case PlaceholderModeShell:
+		if quote != 0 {
+			return fmt.Errorf("%s must not be inside quotes", placeholder.Match)
+		}
+	case PlaceholderModeDQ:
+		if quote != '"' {
+			return fmt.Errorf("%s must be inside double quotes", placeholder.Match)
 		}
 	}
-	return true
+	return nil
+}
+
+func validateStringPlaceholderMode(placeholder Placeholder) error {
+	return ValidatePlaceholderMode(placeholder, false, 0)
 }
 
 func identifierStart(ch byte) bool {
@@ -1565,11 +1672,17 @@ func containsVariadicArgsPlaceholder(items []string) bool {
 
 func expandPlaceholders(text string, values map[string]string) (string, error) {
 	var missing string
-	out, err := expandPlaceholderNames(text, func(name, match string) (string, error) {
-		value, ok := values[name]
+	out, err := expandPlaceholderNames(text, func(placeholder Placeholder) (string, error) {
+		if err := validateStringPlaceholderMode(placeholder); err != nil {
+			return "", err
+		}
+		if placeholder.Name == "@" {
+			return placeholder.Match, nil
+		}
+		value, ok := values[placeholder.Name]
 		if !ok {
-			missing = name
-			return match, nil
+			missing = placeholder.Name
+			return placeholder.Match, nil
 		}
 		return value, nil
 	})
@@ -1631,26 +1744,32 @@ func expandScriptPlaceholders(text string, values map[string]string, shell strin
 	out.Grow(len(text))
 	for i := 0; i < len(text); {
 		if text[i] == '{' && (i == 0 || text[i-1] != '$') {
-			end := strings.IndexByte(text[i:], '}')
-			if end >= 0 {
-				end += i
-				match := text[i : end+1]
-				name := text[i+1 : end]
-				if validPlaceholderName(name) {
-					value, ok := values[name]
-					if !ok {
-						missing = name
-						out.WriteString(match)
-					} else {
-						quote := contexts[i]
-						if quote == 0 {
-							quote = placeholderSurroundingQuote(text, i, end)
-						}
-						out.WriteString(scriptPlaceholderReplacement(value, quote))
+			if placeholder, ok := ParsePlaceholderAt(text, i); ok {
+				if placeholder.Name == "@" {
+					if placeholder.Mode != PlaceholderModeDefault {
+						return "", fmt.Errorf("%s does not support placeholder modes", placeholder.Match)
 					}
-					i = end + 1
+					out.WriteString(placeholder.Match)
+					i = placeholder.End
 					continue
 				}
+				value, ok := values[placeholder.Name]
+				if !ok {
+					missing = placeholder.Name
+					out.WriteString(placeholder.Match)
+				} else {
+					quote := contexts[i]
+					if quote == 0 {
+						quote = PlaceholderSurroundingQuote(text, i, placeholder.End-1)
+					}
+					replacement, err := scriptPlaceholderReplacement(placeholder, value, quote)
+					if err != nil {
+						return "", err
+					}
+					out.WriteString(replacement)
+				}
+				i = placeholder.End
+				continue
 			}
 		}
 		out.WriteByte(text[i])
@@ -1680,7 +1799,13 @@ func scriptPlaceholderQuoteContexts(text, shell string) (map[int]byte, error) {
 	return contexts, nil
 }
 
-func placeholderSurroundingQuote(text string, start, end int) byte {
+// ScriptPlaceholderQuoteContexts reports quote context for script placeholders.
+func ScriptPlaceholderQuoteContexts(text, shell string) (map[int]byte, error) {
+	return scriptPlaceholderQuoteContexts(text, shell)
+}
+
+// PlaceholderSurroundingQuote reports a quote that directly wraps one placeholder.
+func PlaceholderSurroundingQuote(text string, start, end int) byte {
 	if start == 0 || end+1 >= len(text) {
 		return 0
 	}
@@ -1753,21 +1878,35 @@ func recordPlaceholderContexts(text string, start, end int, quote byte, contexts
 			continue
 		}
 		close += i
-		if validPlaceholderName(text[i+1 : close]) {
+		if _, ok := ParsePlaceholderAt(text, i); ok {
 			contexts[i] = quote
 		}
 		i = close
 	}
 }
 
-func scriptPlaceholderReplacement(value string, quote byte) string {
-	switch quote {
-	case '\'':
-		return shellSingleQuoteEscaped(value)
-	case '"':
-		return shellDoubleQuoteEscaped(value)
+func scriptPlaceholderReplacement(placeholder Placeholder, value string, quote byte) (string, error) {
+	if err := ValidatePlaceholderMode(placeholder, true, quote); err != nil {
+		return "", err
+	}
+	switch placeholder.Mode {
+	case PlaceholderModeDefault:
+		switch quote {
+		case '\'':
+			return shellSingleQuoteEscaped(value), nil
+		case '"':
+			return shellDoubleQuoteEscaped(value), nil
+		default:
+			return value, nil
+		}
+	case PlaceholderModeRaw:
+		return value, nil
+	case PlaceholderModeShell:
+		return shellQuote(value), nil
+	case PlaceholderModeDQ:
+		return shellDoubleQuoteEscaped(value), nil
 	default:
-		return value
+		return "", fmt.Errorf("%s uses unsupported placeholder mode %q", placeholder.Match, placeholder.Mode)
 	}
 }
 
@@ -2007,7 +2146,7 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 }
 
 func validateArgumentType(value string) error {
-	switch argumentType(Argument{Type: value}) {
+	switch ArgumentType(Argument{Type: value}) {
 	case "string", "int", "float", "bool", "path", "rel_path":
 		return nil
 	default:
@@ -2019,7 +2158,7 @@ func validateArgumentPathKind(name string, arg Argument) error {
 	if arg.PathKind == "" {
 		return nil
 	}
-	switch argumentType(arg) {
+	switch ArgumentType(arg) {
 	case "path", "rel_path":
 	default:
 		return fmt.Errorf("%s: path_kind requires type path or rel_path", name)
@@ -2033,7 +2172,7 @@ func validateArgumentPathKind(name string, arg Argument) error {
 }
 
 func validateArgumentValue(name string, arg Argument, value string) error {
-	switch argumentType(arg) {
+	switch ArgumentType(arg) {
 	case "string", "path":
 		return nil
 	case "rel_path":
@@ -2080,7 +2219,7 @@ func resolvedArgumentValueString(name string, arg Argument, raw any) (string, er
 }
 
 func expandPathArgumentValue(arg Argument, value string) (string, error) {
-	if argumentType(arg) != "path" || value != "~" && !strings.HasPrefix(value, "~/") {
+	if ArgumentType(arg) != "path" || value != "~" && !strings.HasPrefix(value, "~/") {
 		return value, nil
 	}
 	home, err := os.UserHomeDir()
@@ -2093,7 +2232,8 @@ func expandPathArgumentValue(arg Argument, value string) (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(value, "~/")), nil
 }
 
-func argumentType(arg Argument) string {
+// ArgumentType reports arg.Type with Shadowtree's default type applied.
+func ArgumentType(arg Argument) string {
 	if arg.Type == "" {
 		return "string"
 	}

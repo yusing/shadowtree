@@ -130,6 +130,18 @@ var logStageValues = []completion{
 	{Label: recipe.LogStagePost, InsertText: recipe.LogStagePost, Kind: completionKindValue, Detail: "Post commands", Quote: true},
 }
 
+type placeholderModeCompletion struct {
+	mode   recipe.PlaceholderMode
+	detail string
+	shell  bool
+}
+
+var placeholderModeCompletions = []placeholderModeCompletion{
+	{mode: recipe.PlaceholderModeShell, detail: "Shell-escaped single word", shell: true},
+	{mode: recipe.PlaceholderModeRaw, detail: "Raw placeholder text"},
+	{mode: recipe.PlaceholderModeDQ, detail: "Double-quote escaped content", shell: true},
+}
+
 func analyzeDocument(text string, line int) documentAnalysis {
 	lines := strings.Split(text, "\n")
 	analysis := documentAnalysis{
@@ -332,7 +344,8 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		key, _ := keyBeforeValue(prefix)
 		enrichAnalysisWithResolvedConfig(ctx, text, &analysis, -1, opts)
-		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key), opts)
+		shellModes := scriptKey(key) || inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos)
+		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, shellModes, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key), opts)
 	}
 	if items, ok := includePathCompletions(analysis.Lines, pos, opts); ok {
 		return items
@@ -1523,7 +1536,7 @@ func recipeProfileArgumentsTableParts(table string) (string, string, bool) {
 	return recipeName, profileName, true
 }
 
-func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, allowVariadic, allowForEach bool, opts completionOptions) []completion {
+func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, shellModes, allowVariadic, allowForEach bool, opts completionOptions) []completion {
 	var names []string
 	names = append(names, analysis.GlobalVars...)
 	names = append(names, analysis.RecipeVars[recipeName]...)
@@ -1552,6 +1565,26 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 		detail[recipe.ForEachItemIndexPlaceholder] = "Current for_each index"
 	}
 	detail[recipe.RunIDPlaceholder] = "Current run identifier"
+	if name, modePrefix, ok := strings.Cut(prefix, ":"); ok {
+		if name == "" || name == "@" || !slices.Contains(names, name) {
+			return nil
+		}
+		var items []completion
+		for _, mode := range placeholderModeCompletions {
+			modeName := string(mode.mode)
+			if mode.shell && !shellModes || !strings.HasPrefix(modeName, modePrefix) {
+				continue
+			}
+			items = append(items, completion{
+				Label:       "{" + name + ":" + modeName + "}",
+				InsertText:  name + ":" + modeName + "}",
+				Kind:        completionKindVariable,
+				Detail:      mode.detail,
+				Placeholder: true,
+			})
+		}
+		return items
+	}
 	var items []completion
 	if allowVariadic && strings.HasPrefix("@", prefix) {
 		insertText := "@"
@@ -2349,25 +2382,32 @@ func placeholderSpans(line string) []span {
 		if line[i] != '{' {
 			continue
 		}
-		if strings.HasPrefix(line[i:], "{@}") {
-			spans = append(spans, span{Start: i, Length: len("{@}")})
-			i += len("{@}") - 1
+		placeholder, ok := recipe.ParsePlaceholderAt(line, i)
+		if !ok {
 			continue
 		}
-		end := i + 1
-		if end >= len(line) || !isIdentStart(line[end]) {
-			continue
-		}
-		end++
-		for end < len(line) && isIdentPart(line[end]) {
-			end++
-		}
-		if end < len(line) && line[end] == '}' {
-			spans = append(spans, span{Start: i, Length: end - i + 1})
-			i = end
-		}
+		spans = append(spans, span{Start: i, Length: placeholder.End - placeholder.Start})
+		i = placeholder.End - 1
 	}
 	return spans
+}
+
+func placeholdersInRange(line string, start, end int) []recipe.Placeholder {
+	var placeholders []recipe.Placeholder
+	for i := start; i < end; {
+		placeholder, ok := recipe.ParsePlaceholderAt(line, i)
+		if !ok || placeholder.End > end {
+			i++
+			continue
+		}
+		if placeholder.Start > 0 && line[placeholder.Start-1] == '$' {
+			i = placeholder.End
+			continue
+		}
+		placeholders = append(placeholders, placeholder)
+		i = placeholder.End
+	}
+	return placeholders
 }
 
 func commandReferenceOverlapIndex(references []commandReferenceSpan) map[int][]span {
@@ -2653,18 +2693,27 @@ func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []comma
 }
 
 func scriptRegionText(lines []string, region scriptRegion) string {
+	text, _ := scriptRegionTextAndLineStarts(lines, region)
+	return text
+}
+
+func scriptRegionTextAndLineStarts(lines []string, region scriptRegion) (string, []int) {
 	if region.StartLine == region.EndLine {
-		return lineAt(lines, region.StartLine)[region.StartCol:region.EndCol]
+		return lineAt(lines, region.StartLine)[region.StartCol:region.EndCol], []int{0}
 	}
 	var b strings.Builder
+	lineStarts := make([]int, 0, region.EndLine-region.StartLine+1)
+	lineStarts = append(lineStarts, 0)
 	b.WriteString(lineAt(lines, region.StartLine)[region.StartCol:])
 	for lineNo := region.StartLine + 1; lineNo < region.EndLine; lineNo++ {
 		b.WriteByte('\n')
+		lineStarts = append(lineStarts, b.Len())
 		b.WriteString(lineAt(lines, lineNo))
 	}
 	b.WriteByte('\n')
+	lineStarts = append(lineStarts, b.Len())
 	b.WriteString(lineAt(lines, region.EndLine)[:region.EndCol])
-	return b.String()
+	return b.String(), lineStarts
 }
 
 func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion, ref scriptref.Reference) commandReferenceSpan {
@@ -3074,12 +3123,22 @@ func placeholderPrefix(prefix string) (string, bool) {
 	if prefix[open+1:] == "@" {
 		return "@", true
 	}
-	for _, ch := range prefix[open+1:] {
+	fragment := prefix[open+1:]
+	if strings.Count(fragment, ":") > 1 {
+		return "", false
+	}
+	for i, ch := range fragment {
+		if ch == ':' {
+			if i == 0 {
+				return "", false
+			}
+			continue
+		}
 		if !(ch == '_' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z') {
 			return "", false
 		}
 	}
-	return prefix[open+1:], true
+	return fragment, true
 }
 
 func currentRecipe(table string) string {

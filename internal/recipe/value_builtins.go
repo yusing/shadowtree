@@ -97,6 +97,12 @@ func ValidateValueBuiltin(command Command) (string, bool, error) {
 	return calls[0].name, true, nil
 }
 
+// ArgumentHasEnumValues reports whether arg is constrained by a static @enum.
+func ArgumentHasEnumValues(arg Argument) bool {
+	name, ok, err := ValidateValueBuiltin(arg.Values)
+	return ok && err == nil && name == enumValuesName
+}
+
 // ValueBuiltinUsesFilesystem reports whether command is a filesystem-backed value builtin.
 func ValueBuiltinUsesFilesystem(command Command) (bool, bool, error) {
 	calls, ok, err := validatedValueBuiltinInvocations(command)

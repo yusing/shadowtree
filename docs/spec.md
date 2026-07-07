@@ -216,6 +216,27 @@ A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
 other strings run in the shell. Defaults belong in typed `arguments`,
 referenced from `cmd`.
 
+Default `{name}` expansion is raw text when unquoted, before the shell parses
+the script. In single-quoted or double-quoted shell context, `{name}` is escaped
+for that quote context, so `"{name}"`, `'{name}'`, and `"https://{host}"`
+remain one shell word. Escaping is context-aware, not type-aware.
+
+Explicit placeholder modes are available in shell script strings. Prefer normal
+shell quotes for free string or path values, for example `foo "{bar}"`.
+
+- `{name:shell}` expands as one shell-escaped word and is valid only outside
+  shell quotes. Use it when the value must be embedded in an unquoted shell
+  word, for example `foo -xxx{name:shell}`.
+- `{name:dq}` expands as double-quote-safe content and is valid only inside
+  double quotes.
+- `{name:raw}` expands raw text and documents intentional unsafe shell text or
+  word splitting.
+
+In non-shell fields such as `env`, `vars`, `workdir`, `sync_out`, and `log`,
+`{name}` and `{name:raw}` use raw string substitution; shell-specific modes are
+invalid. `{@}` is only special in `cmd`, where it splices leftover recipe CLI
+args as separate shell-quoted words and must occupy a whole shell word.
+
 Example:
 
 ```toml
@@ -224,7 +245,7 @@ cmd = "go generate ./internal/api"
 
 [recipes.test]
 pre = ["@gen-swagger"]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -470,7 +491,7 @@ Example:
 [recipes.build]
 help = "Build a Go package."
 cmd = "go build"
-cmd = "go build -o bin/{binary} {project} {@}"
+cmd = 'go build -o "bin/{binary}" "{project}" {@}'
 sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.project]
@@ -581,7 +602,7 @@ literally to `{@}`, including option values that contain `=`:
 
 ```toml
 [recipes.test]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -651,8 +672,8 @@ Example:
 [recipes.test]
 help = "Run generated-code tests."
 workdir = "."
-pre = ["go generate {pkg}"]
-cmd = "go test {pkg} {@}"
+pre = ['go generate "{pkg}"']
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"

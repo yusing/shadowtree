@@ -3,7 +3,7 @@ shell = "sh"
 
 [recipes.build]
 help = "Build the shadowtree binary into bin/."
-cmd = "go build -ldflags='-s -w' -buildvcs=false -o bin/{binary} {pkg} {@}"
+cmd = "go build -ldflags='-s -w' -buildvcs=false -o \"bin/{binary}\" \"{pkg}\" {@}"
 sync_out = ["bin/{binary}"]
 
 [recipes.build.arguments.binary]

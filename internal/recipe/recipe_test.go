@@ -793,7 +793,7 @@ func TestGoBuiltinFixRequiresGoAfter126(t *testing.T) {
 		t.Fatal("built-in fix is missing for go 1.26.4")
 	}
 	if !slices.Equal(fix.Cmd, Command{"go", "fix", "{pkg}", "{@}"}) {
-		t.Fatalf("fix Cmd = %#v", fix.Cmd)
+		t.Fatalf("fix command = %#v", fix.Cmd)
 	}
 }
 
@@ -826,7 +826,7 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 		t.Fatal("built-in fmt is sandboxed, want unsandboxed")
 	}
 	if !slices.Equal(builtins["fmt"].Cmd, Command{"go", "fmt", "{target}", "{@}"}) {
-		t.Fatalf("fmt Cmd = %#v", builtins["fmt"].Cmd)
+		t.Fatalf("fmt command = %#v", builtins["fmt"].Cmd)
 	}
 	target := builtins["fmt"].Arguments["target"]
 	if target.Type != "rel_path" || target.Position != 1 || target.Default != "./..." {
@@ -842,7 +842,7 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 
 	run := builtins["run"]
 	if !slices.Equal(run.Cmd, Command{"go", "-C", "{cwd}", "run", "{command}", "{@}"}) {
-		t.Fatalf("run Cmd = %#v", run.Cmd)
+		t.Fatalf("run command = %#v", run.Cmd)
 	}
 	cwd := run.Arguments["cwd"]
 	if cwd.Type != "rel_path" || cwd.Default != "." {
@@ -868,7 +868,7 @@ func TestGoBuiltinRunPassesCwdToGoC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(got.Main, Command{"go", "-C", "services/api", "run", "./cmd/api", "-tags=integration"}) {
-		t.Fatalf("Main = %#v", got.Main)
+		t.Fatalf("main = %#v", got.Main)
 	}
 }
 
@@ -1258,6 +1258,117 @@ func TestResolveEscapesQuotedPlaceholdersInCommandSubstitution(t *testing.T) {
 	}
 }
 
+func TestResolveExpandsExplicitPlaceholderModesInScriptCommand(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf '%s\n' {word:shell} "https://{host:dq}" "{raw:raw}"`),
+		Arguments: map[string]Argument{
+			"word": {Default: `alpha beta; $HOME`},
+			"host": {Default: `api"$(uname)\tail`},
+			"raw":  {Default: `raw"value`},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `printf '%s\n' ` + shellQuote(`alpha beta; $HOME`) + ` "https://api\"\$(uname)\\tail" "raw"value"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+}
+
+func TestResolveRejectsInvalidExplicitPlaceholderModesInScriptCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  Command
+		want string
+	}{
+		{name: "shell in double quotes", cmd: ScriptCommand(`printf "%s\n" "{value:shell}"`), want: "{value:shell} must not be inside quotes"},
+		{name: "dq outside quotes", cmd: ScriptCommand(`printf '%s\n' {value:dq}`), want: "{value:dq} must be inside double quotes"},
+		{name: "dq in single quotes", cmd: ScriptCommand(`printf '%s\n' '{value:dq}'`), want: "{value:dq} must be inside double quotes"},
+		{name: "unsupported", cmd: ScriptCommand(`printf '%s\n' {value:json}`), want: `{value:json} uses unsupported placeholder mode "json"`},
+		{name: "variadic mode", cmd: ScriptCommand(`printf '%s\n' {@:shell}`), want: "{@:shell} does not support placeholder modes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := Recipe{
+				Cmd: tt.cmd,
+				Arguments: map[string]Argument{
+					"value": {Default: "alpha"},
+				},
+			}
+			_, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Resolve error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveExpandsRawModeInNonShellStrings(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"printf", "%s", "{value:raw}"},
+		Env: map[string]string{
+			"VALUE": "{value:raw}",
+		},
+		Arguments: map[string]Argument{
+			"value": {Default: "alpha beta"},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"printf", "%s", "alpha beta"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+	if got.Recipe.Env["VALUE"] != "alpha beta" {
+		t.Fatalf("env VALUE = %q", got.Recipe.Env["VALUE"])
+	}
+}
+
+func TestResolveRejectsShellModesInNonShellStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  Recipe
+		want string
+	}{
+		{
+			name: "argv shell",
+			rec: Recipe{
+				Cmd: Command{"printf", "%s", "{value:shell}"},
+				Arguments: map[string]Argument{
+					"value": {Default: "alpha"},
+				},
+			},
+			want: "{value:shell} mode is supported only in shell commands",
+		},
+		{
+			name: "env dq",
+			rec: Recipe{
+				Cmd: Command{"true"},
+				Env: map[string]string{
+					"VALUE": "{value:dq}",
+				},
+				Arguments: map[string]Argument{
+					"value": {Default: "alpha"},
+				},
+			},
+			want: "{value:dq} mode is supported only in shell commands",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Resolve("script", tt.rec, nil, nil, nil, "", GoProfile)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Resolve error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveExpandsShellPreludePlaceholders(t *testing.T) {
 	rec := applyGlobals(t, map[string]Recipe{
 		"script": {
@@ -1302,6 +1413,18 @@ func TestResolveRejectsMissingShellPreludePlaceholder(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsInvalidShellPreludeVariadicMode(t *testing.T) {
+	rec := Recipe{
+		ShellPrelude: "set -- {@:shell}",
+		Cmd:          ScriptCommand("true"),
+	}
+
+	_, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "recipe \"script\" shell_prelude: {@:shell} does not support placeholder modes") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
 func TestResolveLeavesUnusedShellPreludePlaceholders(t *testing.T) {
 	rec := Recipe{
 		ShellPrelude: "VALUE={missing}",
@@ -1322,8 +1445,8 @@ func TestResolveLeavesUnusedShellPreludePlaceholders(t *testing.T) {
 
 func TestCommandWithRecipeReferenceExpandedPrelude(t *testing.T) {
 	prelude := `project_values() { printf '%s\n' "{project}"; }`
-	if !containsPlaceholderName(prelude) {
-		t.Fatal("containsPlaceholderName = false, want true")
+	if !containsScriptPlaceholder(prelude) {
+		t.Fatal("containsScriptPlaceholder = false, want true")
 	}
 	expanded, err := expandScriptPlaceholders(prelude, map[string]string{"project": "cmd/api"}, "")
 	if err != nil {

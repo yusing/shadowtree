@@ -128,6 +128,50 @@ cmd = '''go build {'''
 	}
 }
 
+func TestCompletionsIncludePlaceholderModes(t *testing.T) {
+	text := `[recipes.build.arguments.pkg]
+help = "Package to build."
+type = "string"
+
+[recipes.build]
+cmd = '''go build {pkg:'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 5, Character: len("cmd = '''go build {pkg:")})
+	assertLabels(t, items, "{pkg:shell}", "{pkg:raw}", "{pkg:dq}")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 5, Character: len("cmd = '''go build {pkg:")})
+	edit := completionTextEdit(t, result, "{pkg:shell}")
+	if edit["newText"] != "pkg:shell}" {
+		t.Fatalf("newText = %#v, want placeholder mode suffix", edit["newText"])
+	}
+}
+
+func TestCompletionsFilterPlaceholderModesOutsideShellFields(t *testing.T) {
+	text := `[recipes.build.arguments.pkg]
+type = "rel_path"
+
+[recipes.build]
+workdir = "{pkg:"
+cmd = "true"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`workdir = "{pkg:`)})
+	assertLabels(t, items, "{pkg:raw}")
+	assertNoLabels(t, items, "{pkg:shell}", "{pkg:dq}")
+}
+
+func TestCompletionsIncludePlaceholderModesInMultilineScriptBody(t *testing.T) {
+	text := `[recipes.build.arguments.pkg]
+type = "rel_path"
+
+[recipes.build]
+cmd = '''
+go build {pkg:
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 5, Character: len("go build {pkg:")})
+	assertLabels(t, items, "{pkg:shell}", "{pkg:raw}", "{pkg:dq}")
+}
+
 func TestCompletionsIncludeIncludedPlaceholdersWithSourceHints(t *testing.T) {
 	root := t.TempDir()
 	includedPath := filepath.Join(root, "common.shadowtree.toml")

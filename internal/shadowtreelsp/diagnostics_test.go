@@ -526,10 +526,10 @@ type = "rel_path"
 values = '@go-main-packages; @glob "*.go"'
 
 [recipes.test]
-cmd = "go test {pkg}"
+cmd = 'go test "{pkg}"'
 
 [recipes.run]
-cmd = "go run {command}"
+cmd = 'go run "{command}"'
 
 [recipes.check]
 cmd = '''
@@ -787,7 +787,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -806,7 +806,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -827,7 +827,7 @@ bench=BenchmarkRun
 '''
 
 [recipes.test]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -876,7 +876,7 @@ cmd = '''
 '''
 
 [recipes.build]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.build.arguments.pkg]
 type = "rel_path"
@@ -1050,12 +1050,12 @@ TARGET = "{target}/{pkg}"
 default = "."
 
 [recipes.test]
-shell_prelude = "echo {PROJECT} {GENERATED} {local} {pkg}"
+shell_prelude = 'echo {PROJECT} {GENERATED} {local} "{pkg}"'
 for_each = "@enum one two"
 workdir = "{item}"
-pre = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
-cmd = "go test {PROJECT} {GENERATED} {local} {pkg} {item} {item_help} {item_index} {@}"
-post = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
+pre = ['echo {PROJECT} {GENERATED} {local} "{pkg}"']
+cmd = 'go test {PROJECT} {GENERATED} {local} "{pkg}" {item} {item_help} {item_index} {@}'
+post = ['echo {PROJECT} {GENERATED} {local} "{pkg}"']
 sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
 log = "logs/{run_id}.log"
 `)
@@ -1086,7 +1086,7 @@ func TestDocumentDiagnosticsAcceptMergedBuiltinArgumentPlaceholders(t *testing.T
 PKG = "{pkg}"
 
 [recipes.build]
-cmd = "go build {pkg}"
+cmd = 'go build "{pkg}"'
 `, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -1099,6 +1099,118 @@ cmd = "echo ${HOME}"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsPlaceholderModes(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "unknown with mode",
+			text: `[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+cmd = "echo {missing:shell}"
+`,
+			want: "unknown variable {missing}",
+		},
+		{
+			name: "unsupported mode",
+			text: `[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+cmd = "echo {pkg:json}"
+`,
+			want: `{pkg:json} uses unsupported placeholder mode "json"`,
+		},
+		{
+			name: "shell mode outside shell field",
+			text: `[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+workdir = "{pkg:shell}"
+cmd = "true"
+`,
+			want: "{pkg:shell} mode is supported only in shell commands",
+		},
+		{
+			name: "shell mode inside quotes",
+			text: `[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+cmd = '''echo "{pkg:shell}"'''
+`,
+			want: "{pkg:shell} must not be inside quotes",
+		},
+		{
+			name: "dq mode outside double quotes",
+			text: `[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+cmd = "echo {pkg:dq}"
+`,
+			want: "{pkg:dq} must be inside double quotes",
+		},
+		{
+			name: "variadic mode",
+			text: `[recipes.test]
+cmd = "echo {@:shell}"
+`,
+			want: "{@:shell} does not support placeholder modes",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			assertOneDiagnostic(t, diagnostics, tc.want)
+			if diagnostics[0].Severity != diagnosticSeverityError {
+				t.Fatalf("severity = %d, want error", diagnostics[0].Severity)
+			}
+		})
+	}
+}
+
+func TestDocumentDiagnosticsWarnUnsafeFreeArgumentPlaceholders(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.deploy.arguments.host]
+type = "string"
+
+[recipes.deploy.arguments.config]
+type = "rel_path"
+
+[recipes.deploy.arguments.count]
+type = "int"
+
+[recipes.deploy.arguments.enabled]
+type = "bool"
+
+[recipes.deploy.arguments.ratio]
+type = "float"
+
+[recipes.deploy.arguments.mode]
+type = "string"
+values = "@enum dev prod"
+
+[recipes.deploy]
+cmd = '''deploy {host} {config} {count} {enabled} {ratio} {mode} "{host}" -H{host:shell} "{host:dq}" {host:raw}'''
+`)
+	if len(diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want two warnings", diagnostics)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != diagnosticSeverityWarning {
+			t.Fatalf("diagnostic = %#v, want warning severity", diagnostic)
+		}
+		if !strings.Contains(diagnostic.Message, "expands raw in shell") {
+			t.Fatalf("message = %q, want unsafe placeholder warning", diagnostic.Message)
+		}
 	}
 }
 

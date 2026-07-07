@@ -171,7 +171,7 @@ Use shell strings for recipe commands:
 
 ```toml
 [recipes.test]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -182,13 +182,18 @@ Command strings run through the configured shell after placeholder expansion.
 A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
 other strings run in the shell. Put typed `arguments` in placeholders when a
 recipe needs validated inputs.
+Unquoted `{arg}` is raw shell text. In normal cases, put free string/path
+arguments in shell quotes, such as `foo "{bar}"`. Use `{arg:shell}` only when
+the value must be embedded in an unquoted shell word, such as
+`foo -xxx{bar:shell}`, and use `{arg:raw}` only for intentional raw shell
+syntax or word splitting.
 
 Use recipe references from `cmd`, `pre`, `post`, or argument `values`:
 
 ```toml
 [recipes.test]
 pre = ["@generate"]
-cmd = "go test {pkg} {@}"
+cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"

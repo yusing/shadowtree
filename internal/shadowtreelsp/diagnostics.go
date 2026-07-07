@@ -15,7 +15,10 @@ import (
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
-const diagnosticSeverityError = 1
+const (
+	diagnosticSeverityError   = 1
+	diagnosticSeverityWarning = 2
+)
 
 type lspDiagnostic struct {
 	Range    map[string]any `json:"range"`
@@ -41,6 +44,11 @@ func (server *server) publishDiagnostics(ctx context.Context, uri, text string, 
 
 type diagnosticOptions struct {
 	URI string
+}
+
+type placeholderQuoteContextCache struct {
+	quotes     map[int]byte
+	lineStarts []int
 }
 
 func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagnosticOptions) []lspDiagnostic {
@@ -308,7 +316,9 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 		recipes = resolvedRecipes
 	}
 	var referenceOverlaps map[int][]span
+	quoteContexts := map[scriptRegion]placeholderQuoteContextCache{}
 	knownVars := map[string]map[string]bool{}
+	unsafeArgs := map[string]map[string]bool{}
 	var diagnostics []lspDiagnostic
 	for _, region := range regions {
 		if (recipeTable(region.Table) || recipeSubtable(region.Table, "env")) && recipes == nil {
@@ -327,28 +337,138 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 			if lineNo == region.EndLine {
 				end = region.EndCol
 			}
-			for _, item := range placeholderSpansInRange(line, start, end) {
-				name := line[item.Start+1 : item.Start+item.Length-1]
-				if known[name] {
-					continue
-				}
+			for _, placeholder := range placeholdersInRange(line, start, end) {
+				item := span{Start: placeholder.Start, Length: placeholder.End - placeholder.Start}
 				if referenceOverlaps == nil {
 					referenceOverlaps = dynamicCommandReferenceOverlapIndex(commandReferenceSpansWithScriptRegions(lines, scriptRegionList))
 				}
 				if overlapsCommandReference(referenceOverlaps, lineNo, item) {
 					continue
 				}
+				if diagnostic, ok := placeholderModeDiagnostic(lines, region, lineNo, placeholder, quoteContexts); ok {
+					diagnostics = append(diagnostics, diagnostic)
+					continue
+				}
+				if known[placeholder.Name] {
+					if diagnostic, ok := unsafeShellPlaceholderDiagnostic(lines, effectiveCfg, recipes, region, lineNo, placeholder, quoteContexts, unsafeArgs); ok {
+						diagnostics = append(diagnostics, diagnostic)
+					}
+					continue
+				}
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(line, lineNo, item.Start, item.Start+item.Length),
 					Severity: diagnosticSeverityError,
 					Source:   "shadowtree",
-					Message:  "unknown variable {" + name + "}",
+					Message:  "unknown variable {" + placeholder.Name + "}",
 				})
 			}
 		}
 	}
 	diagnostics = append(diagnostics, recursiveVarDiagnostics(lines, cfg, regions)...)
 	return diagnostics
+}
+
+func placeholderModeDiagnostic(lines []string, region scriptRegion, lineNo int, placeholder recipe.Placeholder, quoteContexts map[scriptRegion]placeholderQuoteContextCache) (lspDiagnostic, bool) {
+	line := lineAt(lines, lineNo)
+	quote := byte(0)
+	if scriptKey(region.Key) && (placeholder.Mode == recipe.PlaceholderModeShell || placeholder.Mode == recipe.PlaceholderModeDQ) {
+		var ok bool
+		quote, ok = placeholderQuoteContext(lines, region, lineNo, placeholder, quoteContexts)
+		if !ok {
+			return lspDiagnostic{}, false
+		}
+	}
+	if err := recipe.ValidatePlaceholderMode(placeholder, scriptKey(region.Key), quote); err != nil {
+		return placeholderDiagnostic(line, lineNo, placeholder, err.Error(), diagnosticSeverityError), true
+	}
+	return lspDiagnostic{}, false
+}
+
+func unsafeShellPlaceholderDiagnostic(lines []string, cfg recipe.Config, recipes map[string]recipe.Recipe, region scriptRegion, lineNo int, placeholder recipe.Placeholder, quoteContexts map[scriptRegion]placeholderQuoteContextCache, unsafeArgs map[string]map[string]bool) (lspDiagnostic, bool) {
+	if !scriptKey(region.Key) || placeholder.Mode != recipe.PlaceholderModeDefault || placeholder.Name == "@" {
+		return lspDiagnostic{}, false
+	}
+	quote, ok := placeholderQuoteContext(lines, region, lineNo, placeholder, quoteContexts)
+	if !ok || quote != 0 {
+		return lspDiagnostic{}, false
+	}
+	if !unsafeShellArgumentNames(cfg, recipes, region.Table, unsafeArgs)[placeholder.Name] {
+		return lspDiagnostic{}, false
+	}
+	line := lineAt(lines, lineNo)
+	return placeholderDiagnostic(line, lineNo, placeholder, placeholder.Match+" expands raw in shell; use "+placeholderSafeModeSuggestion(placeholder.Name), diagnosticSeverityWarning), true
+}
+
+func unsafeShellArgumentNames(cfg recipe.Config, recipes map[string]recipe.Recipe, table string, cache map[string]map[string]bool) map[string]bool {
+	if cached, ok := cache[table]; ok {
+		return cached
+	}
+	names := map[string]bool{}
+	rec, ok := recipeForDiagnosticTable(cfg, recipes, table)
+	if ok {
+		for name, arg := range rec.Arguments {
+			if unsafeDirectShellArgument(arg) {
+				names[name] = true
+			}
+		}
+	}
+	cache[table] = names
+	return names
+}
+
+func unsafeDirectShellArgument(arg recipe.Argument) bool {
+	switch recipe.ArgumentType(arg) {
+	case "path", "rel_path":
+		return true
+	case "string":
+		return !recipe.ArgumentHasEnumValues(arg)
+	default:
+		return false
+	}
+}
+
+func placeholderSafeModeSuggestion(name string) string {
+	return `"` + "{" + name + "}" + `" or {` + name + ":" + string(recipe.PlaceholderModeRaw) + "}; use {" + name + ":" + string(recipe.PlaceholderModeShell) + "} only inside an unquoted shell word"
+}
+
+func placeholderDiagnostic(line string, lineNo int, placeholder recipe.Placeholder, message string, severity int) lspDiagnostic {
+	return lspDiagnostic{
+		Range:    lspRange(line, lineNo, placeholder.Start, placeholder.End),
+		Severity: severity,
+		Source:   "shadowtree",
+		Message:  message,
+	}
+}
+
+func placeholderQuoteContext(lines []string, region scriptRegion, lineNo int, placeholder recipe.Placeholder, quoteContexts map[scriptRegion]placeholderQuoteContextCache) (byte, bool) {
+	cache, ok := quoteContexts[region]
+	if !ok {
+		text, lineStarts := scriptRegionTextAndLineStarts(lines, region)
+		quotes, err := recipe.ScriptPlaceholderQuoteContexts(text, region.Shell)
+		if err != nil {
+			return 0, false
+		}
+		cache = placeholderQuoteContextCache{quotes: quotes, lineStarts: lineStarts}
+		quoteContexts[region] = cache
+	}
+	offset := scriptRegionOffset(region, lineNo, placeholder.Start, cache.lineStarts)
+	quote := cache.quotes[offset]
+	if quote == 0 {
+		quote = recipe.PlaceholderSurroundingQuote(lineAt(lines, lineNo), placeholder.Start, placeholder.End-1)
+	}
+	return quote, true
+}
+
+func scriptRegionOffset(region scriptRegion, lineNo, col int, lineStarts []int) int {
+	relativeLine := lineNo - region.StartLine
+	if relativeLine < 0 || relativeLine >= len(lineStarts) {
+		return 0
+	}
+	offset := lineStarts[relativeLine] + col
+	if lineNo == region.StartLine {
+		offset -= region.StartCol
+	}
+	return offset
 }
 
 func dynamicCommandReferenceOverlapIndex(references []commandReferenceSpan) map[int][]span {
@@ -595,21 +715,11 @@ func recursiveVarNames(vars map[string]string) map[string]bool {
 func placeholderNames(value string) []string {
 	var names []string
 	for _, item := range placeholderSpans(value) {
-		names = append(names, value[item.Start+1:item.Start+item.Length-1])
+		if placeholder, ok := recipe.ParsePlaceholderAt(value, item.Start); ok && placeholder.Name != "@" {
+			names = append(names, placeholder.Name)
+		}
 	}
 	return names
-}
-
-func placeholderSpansInRange(line string, start, end int) []span {
-	var out []span
-	for _, item := range placeholderSpans(line[start:end]) {
-		item.Start += start
-		if item.Start > 0 && line[item.Start-1] == '$' {
-			continue
-		}
-		out = append(out, item)
-	}
-	return out
 }
 
 func validateRecipeReferenceArgumentValue(name string, arg recipe.Argument, value string) error {
