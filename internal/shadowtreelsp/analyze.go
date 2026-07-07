@@ -82,7 +82,7 @@ var recipeKeys = []completion{
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
 	{Label: "sync_out", InsertText: "sync_out = []", Kind: completionKindKeyword, Detail: "Recipe sync-out paths"},
 	{Label: "log", InsertText: `log = ""`, Kind: completionKindKeyword, Detail: "Recipe log file"},
-	{Label: "log_stages", InsertText: `log_stages = ["pre", "cmd", "post"]`, Kind: completionKindKeyword, Detail: "Recipe stages written to log"},
+	{Label: "log_stages", InsertText: `log_stages = ["pre", "cmd", "post"]`, Kind: completionKindKeyword, Detail: "Recipe stages written to log with boundaries"},
 	{Label: "log_tee", InsertText: "log_tee = true", Kind: completionKindKeyword, Detail: "Also write logged output to the terminal"},
 }
 

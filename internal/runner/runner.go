@@ -56,6 +56,8 @@ const (
 	phaseForEach = "for_each"
 )
 
+const stageBoundaryCommandMax = 120
+
 type stageLogger struct {
 	file   io.Writer
 	stages map[string]bool
@@ -124,14 +126,25 @@ func newStageLogger(w io.Writer, resolved recipe.Resolved) *stageLogger {
 	return &stageLogger{file: w, stages: stages, tee: resolved.LogTee}
 }
 
+func (logger *stageLogger) logs(phase string) bool {
+	return logger != nil && logger.stages[logStageForPhase(phase)]
+}
+
 func (logger *stageLogger) writers(phase string, stdout, stderr io.Writer) (io.Writer, io.Writer) {
-	if logger == nil || !logger.stages[logStageForPhase(phase)] {
+	if !logger.logs(phase) {
 		return stdout, stderr
 	}
 	if !logger.tee {
 		return logger.file, logger.file
 	}
 	return io.MultiWriter(stdout, logger.file), io.MultiWriter(stderr, logger.file)
+}
+
+func (logger *stageLogger) writeBoundary(boundary string) error {
+	if _, err := fmt.Fprintln(logger.file, boundary); err != nil {
+		return fmt.Errorf("write log boundary: %w", err)
+	}
+	return nil
 }
 
 func logStageForPhase(phase string) string {
@@ -449,12 +462,17 @@ func recipeWorkdir(root, value string) (string, error) {
 }
 
 func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
-	if options.Verbose {
-		label := phase
-		if phase != phaseMain || len(options.Resolved.Recipe.ForEach) > 0 {
-			label = fmt.Sprintf("%s[%d]", phase, index)
+	logBoundary := options.stageLog.logs(phase)
+	if options.Verbose || logBoundary {
+		boundary := stageBoundary(phase, index, len(options.Resolved.Recipe.ForEach) > 0, command)
+		if options.Verbose {
+			fmt.Fprintln(stderr, boundary)
 		}
-		fmt.Fprintf(stderr, "shadowtree: %s: %s\n", label, strings.Join(command, " "))
+		if logBoundary {
+			if err := options.stageLog.writeBoundary(boundary); err != nil {
+				return err
+			}
+		}
 	}
 	stdout, stderr = options.stageLog.writers(phase, stdout, stderr)
 	if _, ok := recipe.ParseRecipeReference(command); ok && options.Recipes != nil {
@@ -470,6 +488,42 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 		return sandbox.runNamespaceCommand(ctx, env, sandbox.namespaceDir(dir), command, stdin, stdout, stderr)
 	}
 	return runExternalCommand(ctx, dir, env, command, stdin, stdout, stderr)
+}
+
+func stageBoundary(phase string, index int, hasForEach bool, command recipe.Command) string {
+	return fmt.Sprintf("== %s: %s ==", stageBoundaryLabel(phase, index, hasForEach), stageBoundaryCommand(command))
+}
+
+func stageBoundaryLabel(phase string, index int, hasForEach bool) string {
+	stage := logStageForPhase(phase)
+	if phase != phaseMain || hasForEach {
+		return fmt.Sprintf("%s[%d]", stage, index)
+	}
+	return stage
+}
+
+func stageBoundaryCommand(command recipe.Command) string {
+	return truncateStageBoundaryCommand(recipe.CommandHelpText(command))
+}
+
+func truncateStageBoundaryCommand(text string) string {
+	if len(text) <= stageBoundaryCommandMax {
+		return text
+	}
+
+	cutoffRunes := stageBoundaryCommandMax - len("...")
+	cutoffByte := len(text)
+	count := 0
+	for i := range text {
+		if count == cutoffRunes {
+			cutoffByte = i
+		}
+		count++
+		if count > stageBoundaryCommandMax {
+			return text[:cutoffByte] + "..."
+		}
+	}
+	return text
 }
 
 func runExternalCommand(ctx context.Context, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer) error {

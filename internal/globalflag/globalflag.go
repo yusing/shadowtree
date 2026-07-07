@@ -38,7 +38,7 @@ var specs = []Spec{
 	{Name: SyncOut, ValueName: "PATH", Help: "Copy path back after success", UsageHelp: "copy path back after success; repeatable or comma-separated", FishOptions: "-r"},
 	{Name: SyncOutAll, Help: "Copy entire workspace back after success", UsageHelp: "copy entire workspace back after success"},
 	{Name: Print, Help: "Print resolved plan without running", UsageHelp: "print resolved plan without running"},
-	{Name: Verbose, Help: "Show commands and workspace paths", UsageHelp: "show commands and workspace paths"},
+	{Name: Verbose, Help: "Show workspace paths and command boundaries", UsageHelp: "show workspace paths and command boundaries"},
 	{Name: Help, Help: "Show help"},
 	{Name: Version, Help: "Show version"},
 }

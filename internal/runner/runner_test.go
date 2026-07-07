@@ -312,6 +312,99 @@ func TestRunUnsandboxedMutatesSourceWithoutSyncOut(t *testing.T) {
 	}
 }
 
+func TestStageBoundarySummarizesCommands(t *testing.T) {
+	longArg := strings.Repeat("a", stageBoundaryCommandMax+1)
+	tests := []struct {
+		name       string
+		phase      string
+		index      int
+		hasForEach bool
+		command    recipe.Command
+		want       string
+	}{
+		{
+			name:    "multiline pre script",
+			phase:   phasePre,
+			command: recipe.ScriptCommand("setup\nrun"),
+			want:    "== pre[0]: <script> ==",
+		},
+		{
+			name:    "exact recipe ref",
+			phase:   phaseMain,
+			command: recipe.Command{"@build"},
+			want:    "== cmd: @build ==",
+		},
+		{
+			name:       "for_each cmd item",
+			phase:      phaseMain,
+			index:      2,
+			hasForEach: true,
+			command:    recipe.Command{"go", "test"},
+			want:       "== cmd[2]: go test ==",
+		},
+		{
+			name:    "long command",
+			phase:   phaseMain,
+			command: recipe.Command{longArg},
+			want:    "== cmd: " + strings.Repeat("a", stageBoundaryCommandMax-3) + "... ==",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stageBoundary(tt.phase, tt.index, tt.hasForEach, tt.command); got != tt.want {
+				t.Fatalf("stageBoundary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunVerbosePrintsStageBoundaries(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'\nprintf 'again\n'")},
+			Cmd:       recipe.Command{"@child"},
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"child": {Cmd: recipe.Command{"true"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+		Stderr:    &stderr,
+		Verbose:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := stderr.String()
+	for _, want := range []string{
+		"== pre[0]: <script> ==\n",
+		"== cmd: @child ==\n",
+		"== post[0]: <script> ==\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stderr = %q, want boundary %q", got, want)
+		}
+	}
+	if strings.Contains(got, "printf 'again") {
+		t.Fatalf("stderr leaked multiline script body:\n%s", got)
+	}
+}
+
 func TestRunLogsAllStagesByDefault(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.ResolveWithOptions(
@@ -341,7 +434,13 @@ func TestRunLogsAllStagesByDefault(t *testing.T) {
 	if stdout.String() != "pre\ncmd\npost\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	assertFileContent(t, filepath.Join(source, "logs", "abcdef0123456789abcdef0123456789.log"), "pre\ncmd\npost\n")
+	assertFileContent(t, filepath.Join(source, "logs", "abcdef0123456789abcdef0123456789.log"), `== pre[0]: <script> ==
+pre
+== cmd: <script> ==
+cmd
+== post[0]: <script> ==
+post
+`)
 }
 
 func TestRunLogsStdoutAndStderr(t *testing.T) {
@@ -375,7 +474,9 @@ func TestRunLogsStdoutAndStderr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "out\n") || !strings.Contains(string(data), "err\n") {
+	if !strings.Contains(string(data), "== cmd: <script> ==\n") ||
+		!strings.Contains(string(data), "out\n") ||
+		!strings.Contains(string(data), "err\n") {
 		t.Fatalf("log = %q, want stdout and stderr", data)
 	}
 }
@@ -404,7 +505,11 @@ func TestRunLogsCmdStageForEachItemsOnly(t *testing.T) {
 	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard}); err != nil {
 		t.Fatal(err)
 	}
-	assertFileContent(t, filepath.Join(source, "run.log"), "cmd:one\ncmd:two\n")
+	assertFileContent(t, filepath.Join(source, "run.log"), `== cmd[0]: <script> ==
+cmd:one
+== cmd[1]: <script> ==
+cmd:two
+`)
 }
 
 func TestRunLogTeeFalseSuppressesSelectedTerminalOutput(t *testing.T) {
@@ -437,7 +542,9 @@ func TestRunLogTeeFalseSuppressesSelectedTerminalOutput(t *testing.T) {
 	if stdout.String() != "pre\npost\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	assertFileContent(t, filepath.Join(source, "run.log"), "cmd\n")
+	assertFileContent(t, filepath.Join(source, "run.log"), `== cmd: <script> ==
+cmd
+`)
 }
 
 func TestRunRejectsEscapingLogPath(t *testing.T) {
@@ -506,7 +613,9 @@ func TestRunCopiedWorkspaceSyncPreservesHostLog(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			assertFileContent(t, filepath.Join(source, "logs", "run.log"), "logged\n")
+			assertFileContent(t, filepath.Join(source, "logs", "run.log"), `== cmd: <script> ==
+logged
+`)
 		})
 	}
 }
@@ -535,7 +644,11 @@ func TestRunLogsPostAfterMainFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("Run succeeded, want command failure")
 	}
-	assertFileContent(t, filepath.Join(source, "run.log"), "cmd\npost\n")
+	assertFileContent(t, filepath.Join(source, "run.log"), `== cmd: <script> ==
+cmd
+== post[0]: <script> ==
+post
+`)
 }
 
 func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
@@ -572,7 +685,11 @@ func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertFileContent(t, filepath.Join(source, "parent.log"), "child-pre\nchild-cmd\nchild-post\n")
+	assertFileContent(t, filepath.Join(source, "parent.log"), `== cmd: @child ==
+child-pre
+child-cmd
+child-post
+`)
 	if _, err := os.Stat(filepath.Join(source, "ignored.log")); !os.IsNotExist(err) {
 		t.Fatalf("nested log stat error = %v, want not exist", err)
 	}

@@ -93,7 +93,7 @@ shadowtree __complete zsh <words...>
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
 --print             print the resolved plan without running
---verbose           show workspace and command details
+--verbose           show workspace and compact command boundaries
 --help              show basic CLI help
 --version           print the version
 ```
@@ -385,6 +385,12 @@ not `cmd` stage output.
 : Optional boolean. Defaults to `true`, which preserves terminal stdout/stderr
 while also writing selected stage output to the log. When `false`, selected
 stage stdout/stderr are written only to the log.
+
+Each selected logged command is preceded by a boundary line of the form
+`== stage: command ==`, for example `== pre[0]: <script> ==`,
+`== cmd: @build ==`, or `== post[0]: <script> ==`. Long one-line commands are
+truncated in the boundary. Multiline scripts are shown as `<script>`; full
+multiline script bodies are never dumped into boundary lines.
 
 ## Recipe Arguments
 
@@ -883,8 +889,8 @@ It prints these fields when present or applicable:
 - argument section with `name - help`, `info:`, and configured `values:`
 - sync-out section for sandboxed recipes
 
-Multi-line command arguments are summarized as `<script>` in help and completion
-output.
+Multi-line command arguments are summarized as `<script>` in help, completion,
+verbose boundary, and log boundary output.
 
 ## Recipe Listing
 

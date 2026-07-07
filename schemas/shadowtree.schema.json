@@ -261,7 +261,7 @@
     },
     "logStages": {
       "type": "array",
-      "description": "Recipe stages written to log. Defaults to pre, cmd, and post when omitted. The cmd stage includes every for_each main command item.",
+      "description": "Recipe stages written to log. Defaults to pre, cmd, and post when omitted. The cmd stage includes every for_each main command item. Logged commands are preceded by compact boundary lines.",
       "items": {
         "type": "string",
         "enum": ["pre", "cmd", "post"]

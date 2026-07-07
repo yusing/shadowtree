@@ -73,6 +73,10 @@ shadowtree --print test
 shadowtree --verbose build
 ```
 
+`--verbose` prints compact stage boundaries such as `== cmd: @build ==` before
+commands run. Multiline scripts are shown as `<script>`, so verbose headers do
+not dump script bodies.
+
 Built-in Go workflow recipes run once per discovered Go module:
 
 ```sh
@@ -295,9 +299,12 @@ checkout when no config path exists. If `log_stages` is omitted, Shadowtree logs
 `pre`, `cmd`, and `post`; `cmd` includes every `for_each` item but not the
 value-provider command used to collect items. `log_tee` defaults to `true`,
 preserving terminal output while writing to the log. Set `log_tee = false` to
-send selected stages only to the log. A selected parent stage also captures
-output from nested `@recipe` calls; nested recipe `log` settings do not open a
-second log during that reference.
+send selected stages only to the log. Each selected command is preceded by a
+compact boundary such as `== pre[0]: <script> ==`, `== cmd: @build ==`, or
+`== post[0]: <script> ==`; long one-line commands are truncated, and multiline
+script bodies are not written into boundaries. A selected parent stage also
+captures output from nested `@recipe` calls; nested recipe `log` settings do not
+open a second log during that reference.
 
 ## Typed Arguments
 

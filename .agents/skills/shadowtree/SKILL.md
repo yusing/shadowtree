@@ -152,7 +152,7 @@ Use these fields under `[recipes.<name>]`:
 - `sandboxed`: boolean; defaults to `true`.
 - `sync_out`: sandboxed paths copied back after successful recipe completion.
 - `log`: optional recipe log file path; supports placeholders including `{run_id}`.
-- `log_stages`: optional stages logged to `log`; values are `pre`, `cmd`, `post`; omitted means all three.
+- `log_stages`: optional stages logged to `log`; values are `pre`, `cmd`, `post`; omitted means all three; selected commands get compact `== stage: command ==` boundaries.
 - `log_tee`: boolean; defaults to `true`; when `false`, selected stage output goes only to the log.
 - `env`: recipe environment overrides.
 - `vars`: recipe placeholder values overriding top-level `vars`.
