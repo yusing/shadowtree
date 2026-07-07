@@ -282,6 +282,13 @@ race = ` + "\n"
 	assertLabels(t, items, "true", "false")
 }
 
+func TestCompletionsIncludeDurationArgumentTypes(t *testing.T) {
+	text := `[recipes.benchmark.arguments.timeout]
+type = "`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`type = "`)})
+	assertLabels(t, items, "string", "int", "float", "bool", "path", "rel_path", "duration", "duration:seconds")
+}
+
 func TestCompletionsIncludeForEachItemPlaceholders(t *testing.T) {
 	text := `[recipes.lint]
 for_each = "@enum a b"

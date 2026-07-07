@@ -110,6 +110,8 @@ var argumentTypeValues = []completion{
 	{Label: "bool", InsertText: "bool", Kind: completionKindValue, Detail: "Boolean argument", Quote: true},
 	{Label: "path", InsertText: "path", Kind: completionKindValue, Detail: "Absolute or relative path argument", Quote: true},
 	{Label: "rel_path", InsertText: "rel_path", Kind: completionKindValue, Detail: "Relative path argument", Quote: true},
+	{Label: "duration", InsertText: "duration", Kind: completionKindValue, Detail: "Go duration argument", Quote: true},
+	{Label: "duration:seconds", InsertText: "duration:seconds", Kind: completionKindValue, Detail: "Whole-second Go duration as integer seconds", Quote: true},
 }
 
 var pathKindValues = []completion{

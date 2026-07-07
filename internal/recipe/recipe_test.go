@@ -1886,6 +1886,83 @@ func TestResolveTypedArgumentsValidatesTypes(t *testing.T) {
 	}
 }
 
+func TestResolveDurationArguments(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"bench", "-duration", "{duration}", "-timeout", "{timeout}", "{@}"},
+		Arguments: map[string]Argument{
+			"duration": {Type: "duration", Default: "10s"},
+			"timeout":  {Type: "duration:seconds", Default: "1m30s"},
+		},
+	}
+
+	got, err := Resolve("bench", rec, []string{"duration=1500ms", "timeout=2h"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"bench", "-duration", "1500ms", "-timeout", "7200"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+
+	got, err = Resolve("bench", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"bench", "-duration", "10s", "-timeout", "90"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveDurationProfileArguments(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"bench", "{duration}", "{timeout}"},
+		Arguments: map[string]Argument{
+			"duration": {Type: "duration", Default: "10s"},
+			"timeout":  {Type: "duration:seconds", Default: "30s"},
+		},
+		Profiles: map[string]RecipeProfile{
+			"stable": {
+				Arguments: map[string]any{
+					"duration": "1m",
+					"timeout":  "2m",
+				},
+			},
+		},
+	}
+
+	got, err := Resolve("bench", rec, []string{"profile=stable"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"bench", "1m", "120"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveDurationArgumentsRejectInvalidValues(t *testing.T) {
+	cases := []struct {
+		name string
+		arg  Argument
+		raw  string
+		want string
+	}{
+		{name: "missing unit", arg: Argument{Type: "duration"}, raw: "10", want: `want duration, got "10"`},
+		{name: "invalid text", arg: Argument{Type: "duration"}, raw: "soon", want: `want duration, got "soon"`},
+		{name: "fractional seconds", arg: Argument{Type: "duration:seconds"}, raw: "1500ms", want: `want whole-second duration, got "1500ms"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := Recipe{
+				Cmd:       Command{"bench", "{timeout}"},
+				Arguments: map[string]Argument{"timeout": tc.arg},
+			}
+			_, err := Resolve("bench", rec, []string{"timeout=" + tc.raw}, nil, nil, "", "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Resolve() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolvePathArgumentsValidatesRelativePath(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"echo", "{source}", "{target}", "{@}"},

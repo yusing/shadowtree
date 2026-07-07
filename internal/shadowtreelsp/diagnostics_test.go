@@ -42,6 +42,30 @@ cmd = "true"
 	assertOneDiagnostic(t, diagnostics, `shell must be sh or bash, got "fish"`)
 }
 
+func TestDocumentDiagnosticsRejectInvalidDurationDefault(t *testing.T) {
+	cases := []struct {
+		name    string
+		typ     string
+		value   string
+		message string
+	}{
+		{name: "missing unit", typ: "duration", value: "10", message: `recipe "benchmark" arguments: duration default: duration: want duration, got "10"`},
+		{name: "fractional seconds", typ: "duration:seconds", value: "1500ms", message: `recipe "benchmark" arguments: duration default: duration: want whole-second duration, got "1500ms"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.duration]
+type = "`+tc.typ+`"
+default = "`+tc.value+`"
+
+[recipes.benchmark]
+cmd = "bench {duration}"
+`)
+			assertOneDiagnostic(t, diagnostics, tc.message)
+		})
+	}
+}
+
 func TestServerPublishesDiagnosticsOnOpen(t *testing.T) {
 	text := `[recipes.build]
 cmd = "go build"
@@ -1194,12 +1218,18 @@ type = "bool"
 [recipes.deploy.arguments.ratio]
 type = "float"
 
+[recipes.deploy.arguments.duration]
+type = "duration"
+
+[recipes.deploy.arguments.timeout]
+type = "duration:seconds"
+
 [recipes.deploy.arguments.mode]
 type = "string"
 values = "@enum dev prod"
 
 [recipes.deploy]
-cmd = '''deploy {host} {config} {count} {enabled} {ratio} {mode} "{host}" -H{host:shell} "{host:dq}" {host:raw}'''
+cmd = '''deploy {host} {config} {count} {enabled} {ratio} {duration} {timeout} {mode} "{host}" -H{host:shell} "{host:dq}" {host:raw}'''
 `)
 	if len(diagnostics) != 2 {
 		t.Fatalf("diagnostics = %#v, want two warnings", diagnostics)

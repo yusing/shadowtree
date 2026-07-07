@@ -216,7 +216,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["string", "int", "float", "bool", "path", "rel_path"],
+          "enum": ["string", "int", "float", "bool", "path", "rel_path", "duration", "duration:seconds"],
           "description": "Argument type. Defaults to string.",
           "default": "string",
           "x-taplo": {
@@ -227,7 +227,9 @@
                 "Floating-point number parsed by Go strconv.ParseFloat.",
                 "Boolean parsed by Go strconv.ParseBool, such as true or false.",
                 "Path string with absolute, relative, and ~/ fish completion.",
-                "Relative path string with relative fish completion."
+                "Relative path string with relative fish completion.",
+                "Duration string parsed by Go time.ParseDuration and expanded as the original text.",
+                "Exact whole-second duration parsed by Go time.ParseDuration and expanded as base-10 integer seconds."
               ]
             }
           }

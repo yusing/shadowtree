@@ -299,7 +299,7 @@ Completion criterion: placeholders have a value at resolve time, or `--print`/ru
 Use fields under `[recipes.<name>.arguments.<arg>]`:
 
 - `help`: shown by `help <recipe>` and completion.
-- `type`: `string`, `int`, `float`, `bool`, `path`, or `rel_path`; default is `string`.
+- `type`: `string`, `int`, `float`, `bool`, `path`, `rel_path`, `duration`, or `duration:seconds`; default is `string`.
 - `path_kind`: optional completion filter for `path` and `rel_path`; `any`, `file`, `dir`, or `executable`; default is `any`.
 - `position`: 1-based positional slot.
 - `required`: true when user must supply the argument.
@@ -329,6 +329,7 @@ Resolution rules:
 - Use `--` after typed recipe arguments to pass following argv literally to `{@}`, especially option values that contain `=` such as `-- --cookie NAME=value`.
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
+- `duration` accepts Go duration strings such as `10s`, `1500ms`, and `1m30s`; `duration:seconds` accepts exact whole-second Go durations and expands them as base-10 integer seconds.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
 - Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, `@go-packages`, and `@go-main-packages` for editor-safe completions.
 

@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/scriptref"
 	"mvdan.cc/sh/v3/syntax"
@@ -874,12 +875,9 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 				}
 				return nil, nil, fmt.Errorf("unknown argument %q", key)
 			}
-			if err := validateArgumentValue(key, arg, value); err != nil {
-				return nil, nil, err
-			}
-			expanded, err := expandPathArgumentValue(arg, value)
+			expanded, err := resolvedArgumentValueString(key, arg, value)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", key, err)
+				return nil, nil, err
 			}
 			values[key] = expanded
 			continue
@@ -898,12 +896,9 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 		name := positionals[nextPositional]
 		nextPositional++
 		arg := rec.Arguments[name]
-		if err := validateArgumentValue(name, arg, token); err != nil {
-			return nil, nil, err
-		}
-		expanded, err := expandPathArgumentValue(arg, token)
+		expanded, err := resolvedArgumentValueString(name, arg, token)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, err
 		}
 		values[name] = expanded
 	}
@@ -2147,7 +2142,7 @@ func mergeStringMaps(base, override map[string]string) map[string]string {
 
 func validateArgumentType(value string) error {
 	switch ArgumentType(Argument{Type: value}) {
-	case "string", "int", "float", "bool", "path", "rel_path":
+	case "string", "int", "float", "bool", "path", "rel_path", "duration", "duration:seconds":
 		return nil
 	default:
 		return fmt.Errorf("unsupported type %q", value)
@@ -2191,6 +2186,10 @@ func validateArgumentValue(name string, arg Argument, value string) error {
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("%s: want bool, got %q", name, value)
 		}
+	case "duration", "duration:seconds":
+		if _, err := parseArgumentDuration(name, arg, value); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2207,8 +2206,18 @@ func argumentValueString(name string, arg Argument, raw any) (string, error) {
 }
 
 func resolvedArgumentValueString(name string, arg Argument, raw any) (string, error) {
-	value, err := argumentValueString(name, arg, raw)
+	value, err := ScalarValueString(raw)
 	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	if ArgumentType(arg) == "duration:seconds" {
+		duration, err := parseArgumentDuration(name, arg, value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(int64(duration/time.Second), 10), nil
+	}
+	if err := validateArgumentValue(name, arg, value); err != nil {
 		return "", err
 	}
 	value, err = expandPathArgumentValue(arg, value)
@@ -2216,6 +2225,17 @@ func resolvedArgumentValueString(name string, arg Argument, raw any) (string, er
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	return value, nil
+}
+
+func parseArgumentDuration(name string, arg Argument, value string) (time.Duration, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: want duration, got %q", name, value)
+	}
+	if ArgumentType(arg) == "duration:seconds" && duration%time.Second != 0 {
+		return 0, fmt.Errorf("%s: want whole-second duration, got %q", name, value)
+	}
+	return duration, nil
 }
 
 func expandPathArgumentValue(arg Argument, value string) (string, error) {

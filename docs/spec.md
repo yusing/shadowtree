@@ -428,9 +428,13 @@ Argument fields:
 
 `type`
 : Optional type. Supported values are `string`, `int`, `float`, `bool`, `path`,
-and `rel_path`. The default is `string`. `path` accepts absolute and relative
-paths. `rel_path` accepts relative paths only and rejects absolute paths and
-`~` home paths.
+`rel_path`, `duration`, and `duration:seconds`. The default is `string`. `path`
+accepts absolute and relative paths. `rel_path` accepts relative paths only and
+rejects absolute paths and `~` home paths. `duration` accepts Go duration
+strings parsed by `time.ParseDuration`, such as `10s`, `1500ms`, and `1m30s`,
+and preserves the configured or CLI text when expanded. `duration:seconds`
+accepts the same duration format only when it is an exact whole number of
+seconds, and expands as base-10 integer seconds.
 
 `path_kind`
 : Optional completion filter for `path` and `rel_path` arguments. Supported

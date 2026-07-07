@@ -33,8 +33,8 @@ Use this skill to turn script-shaped automation into Shadowtree configuration wh
 ## Recipe Design Rules
 
 - Prefer `.shadowtree/<domain>.toml` for substantial migrations and include it from root Shadowtree config when that is the local convention.
-- Use typed arguments for user-controlled values. Pick the narrowest type that matches behavior: `bool`, `int`, `float`, `string`, `path`, or `rel_path`; use `default` and allowed `values` when appropriate.
-- Use placeholders directly in commands: `"{arg}"` for free string/path shell words, direct `{arg}` for type-safe numeric/bool/enum values, `{arg:shell}` only when embedding in an unquoted shell word such as `-Dname={arg:shell}`, `{@}` for leftover args, and recipe references such as `@recipe` or `@path:recipe`.
+- Use typed arguments for user-controlled values. Pick the narrowest type that matches behavior: `bool`, `int`, `float`, `string`, `path`, `rel_path`, `duration`, or `duration:seconds`; use `default` and allowed `values` when appropriate.
+- Use placeholders directly in commands: `"{arg}"` for free string/path shell words, direct `{arg}` for type-safe numeric/bool/duration/enum values, `{arg:shell}` only when embedding in an unquoted shell word such as `-Dname={arg:shell}`, `{@}` for leftover args, and recipe references such as `@recipe` or `@path:recipe`.
 - Avoid placeholder-to-variable boilerplate. Do not write `host="{host}"`, `runs="{runs}"`, or similar unless the shell variable holds computed state after additional logic.
 - Keep shell variables only for values that are actually computed at runtime: selected tools, derived paths, arrays, parsed output, process ids, temporary files, or profile-dependent defaults.
 - Use `shell_prelude` for reusable functions, traps, validators, or helper commands used by multiple stages.

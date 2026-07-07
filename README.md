@@ -328,12 +328,15 @@ shadowtree build project=./cmd/shadowtree
 shadowtree 'build[project=./cmd/shadowtree]'
 ```
 
-Supported argument types are `string`, `int`, `float`, `bool`, `path`, and
-`rel_path`. `path` accepts absolute and relative paths and provides fish-style
-path completion for relative paths, absolute paths, and `~/`. `rel_path`
-accepts relative paths only and completes relative checkout paths. Path
-arguments can set `path_kind` to `any`, `file`, `dir`, or `executable` to
-filter completion candidates.
+Supported argument types are `string`, `int`, `float`, `bool`, `path`,
+`rel_path`, `duration`, and `duration:seconds`. `path` accepts absolute and
+relative paths and provides fish-style path completion for relative paths,
+absolute paths, and `~/`. `rel_path` accepts relative paths only and completes
+relative checkout paths. `duration` accepts Go duration strings such as `10s`,
+`1500ms`, and `1m30s`. `duration:seconds` accepts Go duration strings that are
+exact whole seconds and expands them as base-10 integer seconds. Path arguments
+can set `path_kind` to `any`, `file`, `dir`, or `executable` to filter
+completion candidates.
 
 Use `{@}` in `cmd` to splice leftover recipe CLI args:
 
