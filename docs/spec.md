@@ -231,10 +231,13 @@ fi
 '''
 ```
 
-Only literal command-position references dispatch recipes. Assignments,
-expanded variables, quoted text, and ordinary command arguments do not:
+Only literal command-position references dispatch recipes. Leading assignment
+prefixes apply to that recipe command's environment. Assignment values,
+expanded variables, quoted text, and ordinary command arguments do not dispatch
+recipes:
 
 ```sh
+FOO=bar @generate mode=dev  # recipe dispatch with FOO in @generate's environment
 FOO="@generate"   # assignment only
 $FOO              # normal shell command lookup, not a recipe dispatch
 echo @generate    # normal argument text

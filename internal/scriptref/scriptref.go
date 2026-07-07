@@ -76,7 +76,7 @@ func References(file *syntax.File) []Reference {
 			return true
 		}
 		ref := Reference{
-			CommandPos: call.Pos(),
+			CommandPos: target.Pos(),
 			Start:      position(target.Pos()),
 			End:        position(call.End()),
 			TargetEnd:  position(target.End()),
