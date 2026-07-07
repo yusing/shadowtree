@@ -1777,6 +1777,8 @@ func scriptKey(key string) bool {
 
 func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
 	var tokens []semanticToken
+	file := parseShellRegion(lines, region)
+	heredocs := shellHeredocSpans(lines, region, file)
 	for lineNo := region.StartLine; lineNo <= region.EndLine && lineNo < len(lines); lineNo++ {
 		line := lines[lineNo]
 		start, end := 0, len(line)
@@ -1786,18 +1788,28 @@ func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
 		if lineNo == region.EndLine {
 			end = region.EndCol
 		}
-		tokens = append(tokens, shellLineTokens(line, lineNo, start, end)...)
+		for _, lineSpan := range nonExcludedSpans(start, end, heredocs.Body[lineNo]) {
+			tokens = append(tokens, shellLineTokens(line, lineNo, lineSpan.Start, lineSpan.Start+lineSpan.Length)...)
+		}
 	}
-	return mergeParsedShellTokens(tokens, parsedShellSemanticTokens(lines, region))
+	tokens = append(tokens, heredocs.Markers...)
+	return mergeParsedShellTokens(tokens, filterSemanticTokens(parsedShellSemanticTokens(region, file), heredocs.Body))
 }
 
-func parsedShellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
+func parseShellRegion(lines []string, region scriptRegion) *syntax.File {
 	parser, err := scriptref.Parser(region.Shell)
 	if err != nil {
 		return nil
 	}
 	file, err := parser.Parse(strings.NewReader(scriptRegionText(lines, region)), "shadowtree")
 	if err != nil {
+		return nil
+	}
+	return file
+}
+
+func parsedShellSemanticTokens(region scriptRegion, file *syntax.File) []semanticToken {
+	if file == nil {
 		return nil
 	}
 	var tokens []semanticToken
@@ -1849,25 +1861,139 @@ func parsedShellSemanticTokens(lines []string, region scriptRegion) []semanticTo
 	return tokens
 }
 
+type shellHeredocInfo struct {
+	Body    map[int][]span
+	Markers []semanticToken
+}
+
+func shellHeredocSpans(lines []string, region scriptRegion, file *syntax.File) shellHeredocInfo {
+	if file == nil {
+		return shellHeredocInfo{}
+	}
+	info := shellHeredocInfo{Body: map[int][]span{}}
+	syntax.Walk(file, func(node syntax.Node) bool {
+		redirect, ok := node.(*syntax.Redirect)
+		if !ok || redirect.Hdoc == nil {
+			return true
+		}
+		startLine, startCol := shellSyntaxPosition(region, redirect.Hdoc.Pos())
+		endLine, endCol := shellSyntaxPosition(region, redirect.Hdoc.End())
+		marker, hasMarker := shellHeredocMarkerToken(lines, region, redirect)
+		if hasMarker {
+			info.Markers = append(info.Markers, marker)
+		}
+		for lineNo := startLine; lineNo <= endLine && lineNo < len(lines); lineNo++ {
+			start, end := 0, len(lines[lineNo])
+			if lineNo == startLine {
+				start = startCol
+			}
+			if lineNo == endLine {
+				end = min(endCol, end)
+			}
+			if hasMarker && lineNo == marker.Line {
+				end = min(end, marker.Start)
+			}
+			if end > start {
+				info.Body[lineNo] = append(info.Body[lineNo], span{Start: start, Length: end - start})
+			}
+		}
+		return true
+	})
+	return info
+}
+
+func shellHeredocMarkerToken(lines []string, region scriptRegion, redirect *syntax.Redirect) (semanticToken, bool) {
+	startLine, _ := shellSyntaxPosition(region, redirect.Hdoc.Pos())
+	endLine, _ := shellSyntaxPosition(region, redirect.Hdoc.End())
+	delimiter := redirect.Word.Lit()
+	if delimiter == "" {
+		return semanticToken{}, false
+	}
+	for _, lineNo := range []int{endLine, endLine - 1} {
+		if lineNo < startLine || lineNo < 0 || lineNo >= len(lines) {
+			continue
+		}
+		line := lines[lineNo]
+		start := 0
+		for start < len(line) && line[start] == '\t' {
+			start++
+		}
+		end := start
+		for end < len(line) && isShellWordPart(line[end]) {
+			end++
+		}
+		if end == start {
+			continue
+		}
+		if line[start:end] != delimiter {
+			continue
+		}
+		return semanticToken{Line: lineNo, Start: start, Length: end - start, Type: semanticTokenFunction}, true
+	}
+	return semanticToken{}, false
+}
+
+func nonExcludedSpans(start, end int, excluded []span) []span {
+	if len(excluded) == 0 {
+		return []span{{Start: start, Length: end - start}}
+	}
+	excluded = slices.Clone(excluded)
+	slices.SortFunc(excluded, func(a, b span) int {
+		return a.Start - b.Start
+	})
+	var out []span
+	col := start
+	for _, item := range excluded {
+		itemStart := max(item.Start, start)
+		itemEnd := min(item.Start+item.Length, end)
+		if itemEnd <= col {
+			continue
+		}
+		if itemStart > col {
+			out = append(out, span{Start: col, Length: itemStart - col})
+		}
+		col = itemEnd
+	}
+	if col < end {
+		out = append(out, span{Start: col, Length: end - col})
+	}
+	return out
+}
+
+func filterSemanticTokens(tokens []semanticToken, excluded map[int][]span) []semanticToken {
+	if len(excluded) == 0 {
+		return tokens
+	}
+	filtered := tokens[:0]
+	for _, token := range tokens {
+		if semanticTokenOverlapsAny(token, excluded[token.Line]) {
+			continue
+		}
+		filtered = append(filtered, token)
+	}
+	return filtered
+}
+
 func mergeParsedShellTokens(tokens, parsedTokens []semanticToken) []semanticToken {
 	if len(parsedTokens) == 0 {
 		return tokens
 	}
-	merged := tokens[:0]
-	for _, token := range tokens {
-		if semanticTokenOverlapsAny(token, parsedTokens) {
-			continue
-		}
-		merged = append(merged, token)
-	}
-	return append(merged, parsedTokens...)
+	return append(filterSemanticTokens(tokens, semanticTokenSpanIndex(parsedTokens)), parsedTokens...)
 }
 
-func semanticTokenOverlapsAny(token semanticToken, others []semanticToken) bool {
+func semanticTokenSpanIndex(tokens []semanticToken) map[int][]span {
+	index := map[int][]span{}
+	for _, token := range tokens {
+		index[token.Line] = append(index[token.Line], span{Start: token.Start, Length: token.Length})
+	}
+	return index
+}
+
+func semanticTokenOverlapsAny(token semanticToken, others []span) bool {
 	for _, other := range others {
-		if token.Line == other.Line && spansOverlap(
+		if spansOverlap(
 			span{Start: token.Start, Length: token.Length},
-			span{Start: other.Start, Length: other.Length},
+			other,
 		) {
 			return true
 		}

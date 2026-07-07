@@ -1697,6 +1697,52 @@ fi
 	assertSemanticToken(t, tokens, 9, 0, len("fi"), semanticTokenKeyword)
 }
 
+func TestSemanticTokensDoNotHighlightHeredocBodyAsShell(t *testing.T) {
+	text := `shell = "sh"
+
+[recipes.install]
+cmd = '''
+cat <<EOF
+echo literal $HOME $(id -u) # not a comment
+EOF
+echo after
+'''
+	`
+	tokens := decodeSemanticTokens(semanticTokens(text))
+	startMarker := textLine(text, 4)
+	body := textLine(text, 5)
+	endMarker := textLine(text, 6)
+	after := textLine(text, 7)
+	index := func(line, value string) int {
+		t.Helper()
+		col := strings.Index(line, value)
+		if col < 0 {
+			t.Fatalf("missing %q in %q", value, line)
+		}
+		return col
+	}
+	assertNoOverlappingSemanticTokens(t, tokens)
+	assertSemanticToken(t, tokens, 4, 0, len("cat"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 4, index(startMarker, "EOF"), len("EOF"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 6, index(endMarker, "EOF"), len("EOF"), semanticTokenFunction)
+	assertSemanticToken(t, tokens, 7, 0, len("echo"), semanticTokenFunction)
+	if hasSemanticToken(tokens, 5, index(body, "echo"), len("echo"), semanticTokenFunction) {
+		t.Fatalf("heredoc body command was highlighted as shell in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 5, index(body, "$HOME"), len("$HOME"), semanticTokenVariable) {
+		t.Fatalf("heredoc body variable was highlighted as shell in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 5, index(body, "id"), len("id"), semanticTokenFunction) {
+		t.Fatalf("heredoc body command substitution was highlighted as shell in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 5, index(body, "#"), len("# not a comment"), semanticTokenComment) {
+		t.Fatalf("heredoc body comment was highlighted as shell in %#v", tokens)
+	}
+	if hasSemanticToken(tokens, 7, index(after, "after"), len("after"), semanticTokenFunction) {
+		t.Fatalf("post-heredoc argument was highlighted as command in %#v", tokens)
+	}
+}
+
 func TestSemanticTokensHighlightShellTestCommandSubstitution(t *testing.T) {
 	text := `shell = "sh"
 

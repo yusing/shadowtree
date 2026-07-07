@@ -420,6 +420,39 @@ go install github.com/yusing/shadowtree/cmd/shadowtree-lsp@latest
 See `docs/spec.md` and the editor integration READMEs for implementation
 details.
 
+## VSCode config
+
+```json
+"files.associations": {
+  ".shadowtree.toml": "toml",
+  "**/.shadowtree.toml": "toml",
+  ".shadowtree/*.toml": "toml",
+  "**/.shadowtree/*.toml": "toml"
+},
+"evenBetterToml.schema.associations": {
+  "^file://.*/\\.shadowtree\\.toml$": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json",
+  "^file://.*/\\.shadowtree/.*\\.toml$": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json"
+}
+```
+
+### Zed config
+
+```json
+ "file_types": {
+    "Shadowtree TOML": [
+      ".shadowtree.toml",
+      "**/.shadowtree.toml",
+      ".shadowtree/*.toml",
+      "**/.shadowtree/*.toml"
+    ]
+  },
+  "languages": {
+    "TOML": {
+      "language_servers": ["shadowtree-lsp", "..."]
+    }
+  }
+```
+
 ## Development
 
 This project uses Shadowtree for its own development tasks. Before installing a
