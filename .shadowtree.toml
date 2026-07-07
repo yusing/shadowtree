@@ -3,20 +3,17 @@ shell = "sh"
 
 [recipes.build]
 help = "Build the shadowtree binary into bin/."
-cmd = "go build -ldflags='-s -w' -buildvcs=false -o bin/{binary} {project} {@}"
+cmd = "go build -ldflags='-s -w' -buildvcs=false -o bin/{binary} {pkg} {@}"
 sync_out = ["bin/{binary}"]
-
-[recipes.build.arguments.project]
-help = "Go package to build."
-type = "rel_path"
-path_kind = "dir"
-position = 1
-default = "./cmd/shadowtree"
 
 [recipes.build.arguments.binary]
 help = "Output binary name under bin/."
 type = "string"
 default = "shadowtree"
+
+[recipes.build.arguments.pkg]
+help = "Go package to build."
+default = "./cmd/shadowtree"
 
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
@@ -85,42 +82,3 @@ if [ "$installed" -eq 0 ]; then
 	exit 1
 fi
 '''
-
-# Below are same as defaults
-
-# [recipes.test]
-# help = "Run the test suite."
-# cmd = "go test {pkg} {@}"
-#
-# [recipes.test.arguments.pkg]
-# type = "rel_path"
-# default = "./..."
-
-# [recipes.vet]
-# help = "Run go vet."
-# cmd = "go vet {pkg} {@}"
-#
-# [recipes.vet.arguments.pkg]
-# type = "rel_path"
-# default = "./..."
-
-# [recipes.check]
-# help = "Run vet and tests."
-# cmd = '''
-# @vet {@}
-# @test {@}
-# '''
-
-# [recipes.fmt]
-# help = "Format Go source files."
-# sandboxed = false
-# cmd = "gofmt -w {target} {@}"
-#
-# [recipes.fmt.arguments.target]
-# type = "rel_path"
-# default = "."
-
-# [recipes.tidy]
-# help = "Tidy module dependencies."
-# sandboxed = false
-# cmd = "go mod tidy"

@@ -319,91 +319,22 @@ shadowtree test pkg=./internal/recipe -- --flag NAME=value
 ## Built-In Profiles
 
 Supported profiles are `go` and `node`. A profile is selected by explicit
-`--profile`, then by config `profile`, then by marker detection only when no
-config file is loaded. Detection walks upward from the current directory:
+`--profile`, then config `profile`, then marker detection only when no config
+file is loaded. Detection walks upward from the current directory:
 `package.json` selects `node`, and `go.mod` or `go.work` selects `go`. The
 nearest marker wins; if Go and Node markers are in the same directory, Go wins.
 
 Configs that omit `profile` do not receive detected built-ins. This keeps local
 config recipes exact unless the config opts into a profile.
 
-## Built-In Go Recipes
-
-When `--profile go` is set, config has `profile = "go"`, or Shadowtree runs in a
-detected Go project without a config file, it adds these recipes:
-
-```text
-build      for each @go-modules: go build ./...
-check      @vet && @test
-fix        for each @go-modules when go > 1.26: go fix ./...
-fmt        for each @go-modules: go fmt ./...
-generate   for each @go-modules: go generate ./...
-lint       for each @go-modules: golangci-lint run ./... or go vet ./...
-run        go -C {cwd} run {command}
-test       for each @go-modules: go test ./...
-test-race  for each @go-modules: go test -race ./...
-tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
-vet        for each @go-modules: go vet ./...
-```
-
-`fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`, `go fmt`,
-`go mod tidy`, and `go work sync` write directly to the host checkout. Other built-in Go
-recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
-`for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
-is evaluated inside each module directory, not at the repo root. Built-in
-`build` exposes an optional positional `pkg` argument with shell completion from
-`@go-main-packages`; other package-style Go built-ins expose `pkg` completion
-from `@go-packages`; `fix` is available when the most common
-`go.mod` directive is greater than `1.26`. `fmt` exposes an optional positional `target`
-from `@go-packages` plus `@glob "*.go"`. Built-in `run` takes a named `cwd`
-argument defaulting to `.` and a required positional `command` argument with
-`rel_path` type. `cwd` completes from `@go-modules`; `command` completes from
-`@go-main-packages` plus `@glob "*.go"`. `command` is interpreted by `go run`
-after `go -C {cwd}`, so use a path relative to `cwd` when overriding it.
-
-Project config can override any built-in recipe field. Built-in `for_each` and
-`workdir` are not inherited by an override; set them explicitly when the custom
-recipe should fan out across the same items. Use `shadowtree --print <recipe>`
-to inspect the final command.
-
-## Built-In Node Recipes
-
-When `--profile node` is set, config has `profile = "node"`, or Shadowtree runs
-in a detected Node project without a config file, it loads the nearest
-`package.json` and runs built-ins from that package directory. Node built-ins are
-unsandboxed by default because package-manager and framework commands commonly
-update lockfiles, dependency state, caches, and generated outputs.
-
-Package manager detection uses `packageManager` first (`pnpm`, `yarn`, `bun`,
-or `npm`), then lockfiles in this order: `pnpm-lock.yaml`, `yarn.lock`,
-`bun.lockb`, `bun.lock`, `package-lock.json`, `npm-shrinkwrap.json`. The default
-is `npm`.
-
-Default Node recipes:
-
-```text
-install    <pm> install
-dev        package script dev, or inferred framework dev command
-build      package script build, or inferred framework build command
-start      package script start, or inferred framework preview/start command
-test       package script test, or vitest/jest/playwright/bun test fallback
-lint       package script lint, or ESLint/Oxlint/Biome
-fmt        package script fmt/format, or Prettier/Oxfmt/Biome
-typecheck  package script typecheck/type-check, or vue-tsc/svelte-check/tsc
-check      available lint, typecheck, and test recipes in that order
-```
-
-Framework inference recognizes `next`, `vite`, `nuxt`, `astro`, and
-`@sveltejs/kit`. Package scripts also fill recipe gaps. Script names are
-normalized before becoming recipe names: `:` and characters outside
-`[A-Za-z0-9._-]` become `-`, repeated dashes collapse, and edge dashes are
-trimmed. For example, `lint:fix` becomes recipe `lint-fix`, but the generated
-recipe still runs the original `lint:fix` script.
+Use `shadowtree recipes` or `shadowtree --print <recipe>` to inspect exact
+built-in behavior for the current checkout. See `docs/spec.md` for the full Go
+and Node built-in recipe lists, inference rules, and override semantics.
 
 ## Editor Support
 
-Shadowtree includes a shared JSON Schema for `.shadowtree.toml` plus editor
-integration files for Zed and VS Code under `editors/`.
+Shadowtree includes a shared JSON Schema for Shadowtree TOML config files plus
+editor integration files for Zed and VS Code under `editors/`.
 
 The Zed extension provides a dedicated `Shadowtree TOML` language, syntax
 highlighting, Shadowtree-specific highlighting, shell semantic highlighting for
@@ -421,28 +352,32 @@ go install github.com/yusing/shadowtree/cmd/shadowtree-lsp@latest
 See `docs/spec.md` and the editor integration READMEs for implementation
 details.
 
-## VSCode config
+## VS Code Config
 
 ```json
 "files.associations": {
   ".shadowtree.toml": "toml",
   "**/.shadowtree.toml": "toml",
+  "*.shadowtree.toml": "toml",
+  "**/*.shadowtree.toml": "toml",
   ".shadowtree/*.toml": "toml",
   "**/.shadowtree/*.toml": "toml"
 },
 "evenBetterToml.schema.associations": {
-  "^file://.*/\\.shadowtree\\.toml$": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json",
+  "^file://.*/[^/]*\\.shadowtree\\.toml$": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json",
   "^file://.*/\\.shadowtree/.*\\.toml$": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json"
 }
 ```
 
-### Zed config
+### Zed Config
 
 ```json
  "file_types": {
     "Shadowtree TOML": [
       ".shadowtree.toml",
       "**/.shadowtree.toml",
+      "*.shadowtree.toml",
+      "**/*.shadowtree.toml",
       ".shadowtree/*.toml",
       "**/.shadowtree/*.toml"
     ]

@@ -978,9 +978,10 @@ VS Code support:
 editors/vscode-shadowtree/
 ```
 
-The VS Code companion manifest contributes a `tomlValidation` rule for
-`.shadowtree.toml` and `shadowtree.toml`. Even Better TOML consumes that rule
-and provides schema-backed validation, hover, and completion.
+The VS Code companion manifest contributes `tomlValidation` rules for
+`*.shadowtree.toml` files and TOML files under `.shadowtree/`. Even Better TOML
+consumes those rules and provides schema-backed validation, hover, and
+completion.
 
 ## Install Recipe Convention
 
@@ -1002,7 +1003,7 @@ It:
 Shadowtree currently uses itself for development through `.shadowtree.toml`.
 
 ```text
-build          Build the shadowtree binary into bin/shadowtree.
+build          Build the shadowtree binary into bin/.
 check          Run vet and tests.
 fix            Update Go source with go fix.
 fmt            Format Go source files.
@@ -1011,9 +1012,9 @@ install        Install the Shadowtree CLI and language server.
 install-skill  Install local agent skills.
 lint           Run Go lint checks.
 run            Run a Go command.
-test           Run the test suite.
+test           Run Go tests.
 test-race      Run Go tests with the race detector.
-tidy           Tidy module dependencies.
+tidy           Tidy Go module files.
 vet            Run go vet.
 ```
 

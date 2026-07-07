@@ -28,7 +28,11 @@
   "contributes": {
     "tomlValidation": [
       {
-        "regexMatch": "^file://.*/\\.shadowtree\\.toml$",
+        "regexMatch": "^file://.*/[^/]*\\.shadowtree\\.toml$",
+        "url": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json"
+      },
+      {
+        "regexMatch": "^file://.*/\\.shadowtree/.*\\.toml$",
         "url": "https://raw.githubusercontent.com/yusing/shadowtree/main/schemas/shadowtree.schema.json"
       }
     ]

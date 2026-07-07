@@ -1,15 +1,16 @@
 # Shadowtree Zed Extension
 
-This extension adds a dedicated `Shadowtree TOML` language for `.shadowtree.toml`
-files.
+This extension adds a dedicated `Shadowtree TOML` language for Shadowtree TOML
+config files.
 
 It provides:
 
 - TOML syntax highlighting based on `tree-sitter-toml`.
 - Extra Shadowtree highlighting for recipe sections, `vars`, `var_commands`,
   and argument tables.
-- Shell semantic highlighting for script-valued `cmd`, `shell_prelude`, and
-  `values` strings with `shell = "sh"` or `shell = "bash"`.
+- Shell semantic highlighting for script-valued `cmd`, `pre`, `post`,
+  `for_each`, `shell_prelude`, and `values` strings with `shell = "sh"` or
+  `shell = "bash"`.
 - Completion, diagnostics, and semantic tokens through `shadowtree-lsp`.
 
 For installed usage, `shadowtree-lsp` must be available on Zed's `PATH`. If the
@@ -49,7 +50,14 @@ when Zed classifies an already-open Shadowtree config as plain `TOML`:
     }
   },
   "file_types": {
-    "Shadowtree TOML": [".shadowtree.toml", "**/.shadowtree.toml"]
+    "Shadowtree TOML": [
+      ".shadowtree.toml",
+      "**/.shadowtree.toml",
+      "*.shadowtree.toml",
+      "**/*.shadowtree.toml",
+      ".shadowtree/*.toml",
+      "**/.shadowtree/*.toml"
+    ]
   }
 }
 ```
@@ -66,7 +74,6 @@ go run ./cmd/shadowtree-lsp
 ```
 
 The LSP can also be enabled for generic `TOML` through user settings as a
-fallback for Zed startup ordering. The server ignores documents whose URI does
-not end in
-`.shadowtree.toml`, so ordinary TOML files do not receive Shadowtree diagnostics
-or completions.
+fallback for Zed startup ordering, but that attaches Shadowtree diagnostics to
+generic TOML buffers. Prefer explicit `Shadowtree TOML` file associations when
+ordinary TOML files are open in the same workspace.
