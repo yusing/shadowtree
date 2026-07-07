@@ -57,12 +57,12 @@
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, shell_prelude, workdir, and sync_out.",
+      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, shell_prelude, workdir, sync_out, and log.",
       "additionalProperties": false,
       "patternProperties": {
-        "^[A-Za-z_][A-Za-z0-9_]*$": {
+        "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
           "type": "string",
-          "description": "Placeholder value available as {NAME}."
+          "description": "Placeholder value available as {NAME}. The built-in run_id name is reserved."
         }
       }
     },
@@ -71,7 +71,7 @@
       "description": "Commands evaluated to produce shared placeholder values.",
       "additionalProperties": false,
       "patternProperties": {
-        "^[A-Za-z_][A-Za-z0-9_]*$": {
+        "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
           "$ref": "#/definitions/command"
         }
       }
@@ -139,7 +139,23 @@
         },
         "sync_out": {
           "$ref": "#/definitions/syncOut"
+        },
+        "log": {
+          "type": "string",
+          "description": "Recipe log file path. Values may use placeholders, including the built-in {run_id}. Paths must be relative and stay under the active config file directory."
+        },
+        "log_stages": {
+          "$ref": "#/definitions/logStages"
+        },
+        "log_tee": {
+          "type": "boolean",
+          "description": "Whether logged stage output is also written to the terminal. Defaults to true when log is set.",
+          "default": true
         }
+      },
+      "dependencies": {
+        "log_stages": ["log"],
+        "log_tee": ["log"]
       },
       "x-taplo": {
         "initKeys": ["help", "cmd", "arguments"]
@@ -150,7 +166,7 @@
       "description": "Typed recipe arguments available as placeholders in commands. Positional values and known key=value values are consumed by typed arguments and excluded from the {@} leftover-args placeholder.",
       "additionalProperties": false,
       "patternProperties": {
-        "^[^=()\\[\\], \\t\\r\\n]+$": {
+        "^(?!run_id$)[^=()\\[\\], \\t\\r\\n]+$": {
           "$ref": "#/definitions/argument"
         }
       }
@@ -241,6 +257,25 @@
       "description": "Paths mirrored back to the host checkout after a successful sandboxed run. Missing paths are mirrored as deletions.",
       "items": {
         "type": "string"
+      }
+    },
+    "logStages": {
+      "type": "array",
+      "description": "Recipe stages written to log. Defaults to pre, cmd, and post when omitted. The cmd stage includes every for_each main command item.",
+      "items": {
+        "type": "string",
+        "enum": ["pre", "cmd", "post"]
+      },
+      "minItems": 1,
+      "default": ["pre", "cmd", "post"],
+      "x-taplo": {
+        "docs": {
+          "enumValues": [
+            "Pre commands.",
+            "Main command, including each for_each item.",
+            "Post commands."
+          ]
+        }
       }
     },
     "scalar": {

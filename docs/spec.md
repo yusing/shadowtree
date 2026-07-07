@@ -154,6 +154,9 @@ pre = ["cmd arg"]
 cmd = "cmd {placeholders}"
 post = ["cmd arg"]
 sync_out = ["path/from/project/root"]
+log = "logs/{run_id}.log"
+log_stages = ["pre", "cmd", "post"]
+log_tee = true
 
 [recipes.<name>.vars]
 NAME = "recipe override"
@@ -365,6 +368,24 @@ command. With `for_each`, it is expanded per item and can use `{item}`,
 If a selected path is deleted in the sandbox, it is deleted from the host
 checkout. Ignored when `sandboxed = false`.
 
+`log`
+: Optional recipe log file path. The path is expanded with recipe placeholders,
+including `{run_id}`. It must be a relative local path under the active config
+file directory, or under the source checkout when no config path exists. Parent
+directories are created with mode `0755`, and the log file is opened/truncated
+with mode `0644` before recipe commands start.
+
+`log_stages`
+: Optional list of stages to write to `log`. Valid values are `pre`, `cmd`, and
+`post`; omitting the field logs all three. The `cmd` stage includes every
+`for_each` main command item. The `for_each` value-provider command itself is
+not `cmd` stage output.
+
+`log_tee`
+: Optional boolean. Defaults to `true`, which preserves terminal stdout/stderr
+while also writing selected stage output to the log. When `false`, selected
+stage stdout/stderr are written only to the log.
+
 ## Recipe Arguments
 
 Recipes can define typed arguments under:
@@ -482,12 +503,18 @@ Bracket-style syntax is preferred for shell completion, especially in fish.
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
 expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `shell_prelude`,
-`workdir`, and `sync_out`.
+`workdir`, `sync_out`, and `log`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 In shell command strings, placeholders inside single or double quotes are
 escaped for that quote context, so `"{name}"` and `'{name}'` stay one shell word
 even when the value contains quote characters.
+
+`{run_id}` is built in. Shadowtree generates one filesystem-safe lowercase hex
+run ID for each top-level invocation and reuses it for `pre`, `cmd`, `post`,
+`for_each` expansion, and nested `@recipe` calls. The name `run_id` is reserved
+and cannot be declared in top-level `vars`, top-level `var_commands`, recipe
+`vars`, or recipe `arguments`.
 
 `{@}` is a variadic placeholder for leftover recipe CLI args. It must be a
 whole argument item in argv-style `cmd` values, or a whole shell word in script
@@ -619,11 +646,12 @@ For a sandboxed recipe:
 
 1. Create a temporary workspace with namespace overlayfs, or copy the source
    tree if namespace overlayfs is unavailable.
-2. Run `pre` commands in order.
-3. Run the resolved main command, or once per `for_each` candidate when set.
-4. Run `post` commands in order.
-5. If all phases succeeded, sync configured/requested paths back.
-6. Remove the temporary workspace.
+2. Open/truncate the configured log file, when `log` is set.
+3. Run `pre` commands in order.
+4. Run the resolved main command, or once per `for_each` candidate when set.
+5. Run `post` commands in order.
+6. If all phases succeeded, sync configured/requested paths back.
+7. Remove the temporary workspace.
 
 When a command is an `@recipe` or `@path:recipe` reference, Shadowtree runs the
 referenced recipe's `pre`, main command, and `post` directly in the current
@@ -632,6 +660,9 @@ sandbox, or perform the referenced recipe's sync-out. Cross-config references
 load `path/.shadowtree.toml` relative to the referencing config and run from the
 target path inside the current host checkout or current sandbox. Sync-out is
 performed only for the top-level invoked recipe after all phases succeed.
+When a selected parent log stage invokes a nested recipe, all nested output is
+written through the parent stage writers. Nested recipe `log` settings do not
+open another file during a recipe reference.
 Recursive recipe references fail with a cycle error.
 
 Failure behavior:

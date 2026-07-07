@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,17 @@ import (
 
 	"github.com/yusing/shadowtree/internal/recipe"
 )
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("%s = %q, want %q", path, data, want)
+	}
+}
 
 func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	if os.Getenv("SHELL") == "" {
@@ -297,6 +309,272 @@ func TestRunUnsandboxedMutatesSourceWithoutSyncOut(t *testing.T) {
 	}
 	if string(data) != "shadow" {
 		t.Fatalf("source data = %q", data)
+	}
+}
+
+func TestRunLogsAllStagesByDefault(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.ResolveWithOptions(
+		"test",
+		recipe.Recipe{
+			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'")},
+			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Log:       "logs/{run_id}.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+		recipe.ResolveOptions{RunID: "abcdef0123456789abcdef0123456789"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "pre\ncmd\npost\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	assertFileContent(t, filepath.Join(source, "logs", "abcdef0123456789abcdef0123456789.log"), "pre\ncmd\npost\n")
+}
+
+func TestRunLogsStdoutAndStderr(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'out\n'; printf 'err\n' >&2"),
+			Log:       "run.log",
+			LogTee:    new(false),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("stdout = %q, stderr = %q, want selected output suppressed", stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(source, "run.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "out\n") || !strings.Contains(string(data), "err\n") {
+		t.Fatalf("log = %q, want stdout and stderr", data)
+	}
+}
+
+func TestRunLogsCmdStageForEachItemsOnly(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			ForEach:   recipe.ScriptCommand("printf 'one\ntwo\n'"),
+			Cmd:       recipe.ScriptCommand("printf 'cmd:%s\n' '{item}'"),
+			Log:       "run.log",
+			LogStages: []string{recipe.LogStageCmd},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "run.log"), "cmd:one\ncmd:two\n")
+}
+
+func TestRunLogTeeFalseSuppressesSelectedTerminalOutput(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'")},
+			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Log:       "run.log",
+			LogStages: []string{recipe.LogStageCmd},
+			LogTee:    new(false),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "pre\npost\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	assertFileContent(t, filepath.Join(source, "run.log"), "cmd\n")
+}
+
+func TestRunRejectsEscapingLogPath(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"true"},
+			Log:       "../outside.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil || !strings.Contains(err.Error(), "log path must be relative to config directory") {
+		t.Fatalf("Run() error = %v, want log path error", err)
+	}
+}
+
+func TestRunCopiedWorkspaceSyncPreservesHostLog(t *testing.T) {
+	original := newOverlayWorkspace
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		return nil, errors.New("forced overlay failure")
+	}
+	t.Cleanup(func() {
+		newOverlayWorkspace = original
+	})
+	for _, syncOutAll := range []bool{false, true} {
+		name := "sync_out"
+		if syncOutAll {
+			name = "sync_out_all"
+		}
+		t.Run(name, func(t *testing.T) {
+			source := t.TempDir()
+			resolved, err := recipe.Resolve(
+				"test",
+				recipe.Recipe{
+					Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
+					Log:       "logs/run.log",
+					SyncOut:   []string{"logs"},
+					Sandboxed: new(true),
+				},
+				nil,
+				nil,
+				nil,
+				filepath.Join(source, ".shadowtree.toml"),
+				"",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Run(t.Context(), Options{
+				Resolved:   resolved,
+				SourceDir:  source,
+				Stdout:     io.Discard,
+				Stderr:     io.Discard,
+				SyncOutAll: syncOutAll,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			assertFileContent(t, filepath.Join(source, "logs", "run.log"), "logged\n")
+		})
+	}
+}
+
+func TestRunLogsPostAfterMainFailure(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'cmd\n'; exit 7"),
+			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Log:       "run.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard})
+	if err == nil {
+		t.Fatal("Run succeeded, want command failure")
+	}
+	assertFileContent(t, filepath.Join(source, "run.log"), "cmd\npost\n")
+}
+
+func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
+	source := t.TempDir()
+	child := recipe.Recipe{
+		Pre:  []recipe.Command{recipe.ScriptCommand("printf 'child-pre\n'")},
+		Cmd:  recipe.ScriptCommand("printf 'child-cmd\n'"),
+		Post: []recipe.Command{recipe.ScriptCommand("printf 'child-post\n'")},
+		Log:  "ignored.log",
+	}
+	resolved, err := recipe.Resolve(
+		"parent",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"@child"},
+			Log:       "parent.log",
+			LogStages: []string{recipe.LogStageCmd},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"child": child},
+		SourceDir: source,
+		Stdout:    io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "parent.log"), "child-pre\nchild-cmd\nchild-post\n")
+	if _, err := os.Stat(filepath.Join(source, "ignored.log")); !os.IsNotExist(err) {
+		t.Fatalf("nested log stat error = %v, want not exist", err)
 	}
 }
 

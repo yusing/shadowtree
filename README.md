@@ -218,7 +218,11 @@ so `"{name}"` and `'{name}'` stay one shell word even when values contain quote
 characters.
 Environment values under `[env]` and `[recipes.<name>.env]` use the same
 placeholder expansion. `shell_prelude` also uses placeholder expansion before
-it is prepended to script commands.
+it is prepended to script commands. Shadowtree also provides a built-in
+`{run_id}` placeholder: one lowercase hex ID is generated for each top-level
+run and stays the same through `pre`, `cmd`, `post`, `for_each`, and nested
+recipe references. `run_id` is reserved and cannot be declared in `vars`,
+`var_commands`, recipe `vars`, or recipe `arguments`.
 
 Use a recipe reference from `cmd`, `pre`, or `post`:
 
@@ -274,6 +278,26 @@ cmd = "golangci-lint run ./..."
 relative workspace path. With `for_each`, `workdir` is expanded per item:
 `{item}` is the candidate value, `{item_help}` is its help text when present,
 and `{item_index}` is the zero-based index.
+
+Use recipe logging when a run should keep a copy of selected stage output:
+
+```toml
+[recipes.test]
+cmd = "go test ./..."
+log = "logs/test-{run_id}.log"
+log_stages = ["pre", "cmd", "post"]
+log_tee = true
+```
+
+`log` is expanded with normal recipe placeholders plus `{run_id}`. Log paths
+must be relative and stay under the active config file directory, or the source
+checkout when no config path exists. If `log_stages` is omitted, Shadowtree logs
+`pre`, `cmd`, and `post`; `cmd` includes every `for_each` item but not the
+value-provider command used to collect items. `log_tee` defaults to `true`,
+preserving terminal output while writing to the log. Set `log_tee = false` to
+send selected stages only to the log. A selected parent stage also captures
+output from nested `@recipe` calls; nested recipe `log` settings do not open a
+second log during that reference.
 
 ## Typed Arguments
 

@@ -31,6 +31,7 @@ type Options struct {
 	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
+	stageLog   *stageLogger
 }
 
 type ExitError struct {
@@ -48,8 +49,96 @@ var errReflinkUnsupported = errors.New("reflink unsupported")
 
 const OverlayHelperCommand = "__shadowtree_overlay_helper"
 
+const (
+	phasePre     = recipe.LogStagePre
+	phaseMain    = "main"
+	phasePost    = recipe.LogStagePost
+	phaseForEach = "for_each"
+)
+
+type stageLogger struct {
+	file   io.Writer
+	stages map[string]bool
+	tee    bool
+}
+
 func (err ExitError) Error() string {
 	return fmt.Sprintf("command exited with status %d", err.Code)
+}
+
+func openRecipeLog(resolved recipe.Resolved, sourceDir string) (*os.File, string, error) {
+	if resolved.LogPath == "" {
+		return nil, "", nil
+	}
+	path, err := recipeLogPath(resolved, sourceDir)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, "", fmt.Errorf("create log directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, "", fmt.Errorf("open log: %w", err)
+	}
+	return file, path, nil
+}
+
+func recipeLogPath(resolved recipe.Resolved, sourceDir string) (string, error) {
+	path := filepath.Clean(filepath.FromSlash(resolved.LogPath))
+	if path == "." || filepath.IsAbs(path) || !filepath.IsLocal(path) {
+		return "", fmt.Errorf("log path must be relative to config directory: %s", resolved.LogPath)
+	}
+	base := sourceDir
+	if resolved.ConfigPath != "" {
+		base = filepath.Dir(resolved.ConfigPath)
+	}
+	return filepath.Join(base, path), nil
+}
+
+func runWithRecipeLog(options Options, sourceDir string, run func(Options) error) (string, error) {
+	logFile, logPath, err := openRecipeLog(options.Resolved, sourceDir)
+	if err != nil {
+		return "", err
+	}
+	if logFile == nil {
+		return "", run(options)
+	}
+	options.stageLog = newStageLogger(logFile, options.Resolved)
+	runErr := run(options)
+	closeErr := logFile.Close()
+	if runErr != nil {
+		return logPath, runErr
+	}
+	if closeErr != nil {
+		return logPath, fmt.Errorf("close log: %w", closeErr)
+	}
+	return logPath, nil
+}
+
+func newStageLogger(w io.Writer, resolved recipe.Resolved) *stageLogger {
+	stages := map[string]bool{}
+	for _, stage := range resolved.LogStages {
+		stages[stage] = true
+	}
+	return &stageLogger{file: w, stages: stages, tee: resolved.LogTee}
+}
+
+func (logger *stageLogger) writers(phase string, stdout, stderr io.Writer) (io.Writer, io.Writer) {
+	if logger == nil || !logger.stages[logStageForPhase(phase)] {
+		return stdout, stderr
+	}
+	if !logger.tee {
+		return logger.file, logger.file
+	}
+	return io.MultiWriter(stdout, logger.file), io.MultiWriter(stderr, logger.file)
+}
+
+func logStageForPhase(phase string) string {
+	if phase == phaseMain {
+		return recipe.LogStageCmd
+	}
+	return phase
 }
 
 func Run(ctx context.Context, options Options) (runErr error) {
@@ -70,7 +159,10 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		if options.Verbose {
 			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
 		}
-		return runResolvedCommands(ctx, nil, source, env, options, stdin, stdout, stderr, []string{recipeReferenceStackKey(options.Resolved.ConfigPath, options.Resolved.Name)})
+		_, err := runWithRecipeLog(options, source, func(logged Options) error {
+			return runResolvedCommands(ctx, nil, source, env, logged, stdin, stdout, stderr, []string{recipeReferenceStackKey(logged.Resolved.ConfigPath, logged.Resolved.Name)})
+		})
+		return err
 	}
 	workDir, err := os.MkdirTemp("", "shadowtree-*")
 	if err != nil {
@@ -87,7 +179,13 @@ func Run(ctx context.Context, options Options) (runErr error) {
 			runErr = err
 		}
 	}()
-	if err := runResolvedCommands(ctx, sandbox, sandbox.root, env, options, stdin, stdout, stderr, []string{recipeReferenceStackKey(options.Resolved.ConfigPath, options.Resolved.Name)}); err != nil {
+	logPath, err := runWithRecipeLog(options, source, func(logged Options) error {
+		return runResolvedCommands(ctx, sandbox, sandbox.root, env, logged, stdin, stdout, stderr, []string{recipeReferenceStackKey(logged.Resolved.ConfigPath, logged.Resolved.Name)})
+	})
+	if err != nil {
+		return err
+	}
+	if err := mirrorRecipeLogToSandbox(logPath, source, sandbox); err != nil {
 		return err
 	}
 	if options.SyncOutAll {
@@ -237,7 +335,7 @@ func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) er
 func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
 	var firstErr error
 	for i, command := range options.Resolved.Recipe.Pre {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, "pre", i, stack); err != nil {
+		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePre, i, stack); err != nil {
 			firstErr = err
 			break
 		}
@@ -246,7 +344,7 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 		firstErr = runMainCommands(ctx, sandbox, dir, env, options, stdin, stdout, stderr, stack)
 	}
 	for i, command := range options.Resolved.Recipe.Post {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, "post", i, stack); err != nil && firstErr == nil {
+		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -259,7 +357,7 @@ func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string,
 		if err != nil {
 			return fmt.Errorf("workdir: %w", err)
 		}
-		return runCommand(ctx, sandbox, workdir, env, options.Resolved.Main, stdin, stdout, stderr, options, "main", 0, stack)
+		return runCommand(ctx, sandbox, workdir, env, options.Resolved.Main, stdin, stdout, stderr, options, phaseMain, 0, stack)
 	}
 	items, err := forEachItems(ctx, sandbox, dir, env, options, stderr, stack)
 	if err != nil {
@@ -281,7 +379,7 @@ func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string,
 				return fmt.Errorf("for_each[%d] workdir: %w", index, err)
 			}
 		}
-		if err := runCommand(ctx, sandbox, workdir, env, command, stdin, stdout, stderr, options, "main", index, stack); err != nil {
+		if err := runCommand(ctx, sandbox, workdir, env, command, stdin, stdout, stderr, options, phaseMain, index, stack); err != nil {
 			return err
 		}
 	}
@@ -312,7 +410,7 @@ func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, en
 	}
 	command = recipe.CommandWithRecipeReference(command, options.Resolved.Recipe.Shell, options.Resolved.Recipe.ShellPrelude)
 	var stdout bytes.Buffer
-	if err := runCommand(ctx, sandbox, dir, env, command, nil, &stdout, stderr, options, "for_each", 0, stack); err != nil {
+	if err := runCommand(ctx, sandbox, dir, env, command, nil, &stdout, stderr, options, phaseForEach, 0, stack); err != nil {
 		return nil, err
 	}
 	return recipe.ParseValueCandidates(stdout.String()), nil
@@ -353,11 +451,12 @@ func recipeWorkdir(root, value string) (string, error) {
 func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
 	if options.Verbose {
 		label := phase
-		if phase != "main" || len(options.Resolved.Recipe.ForEach) > 0 {
+		if phase != phaseMain || len(options.Resolved.Recipe.ForEach) > 0 {
 			label = fmt.Sprintf("%s[%d]", phase, index)
 		}
 		fmt.Fprintf(stderr, "shadowtree: %s: %s\n", label, strings.Join(command, " "))
 	}
+	stdout, stderr = options.stageLog.writers(phase, stdout, stderr)
 	if _, ok := recipe.ParseRecipeReference(command); ok && options.Recipes != nil {
 		return runRecipeReference(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, stack)
 	}
@@ -476,7 +575,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile)
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
 	if err != nil {
 		return err
 	}
@@ -484,6 +583,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	nested.Resolved = resolved
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
+	nested.stageLog = nil
 	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
 	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
@@ -502,7 +602,7 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Target())
 	}
-	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile)
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
 	if err != nil {
 		return err
 	}
@@ -512,6 +612,7 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	nested.ConfigEnv = target.Loaded.Config.Env
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
+	nested.stageLog = nil
 	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
 	return runResolvedCommands(ctx, sandbox, targetExecutionDir(sandbox, target.SourceDir, target.Dir), nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
@@ -601,6 +702,33 @@ func targetExecutionDir(sandbox *sandboxWorkspace, sourceDir, targetDir string) 
 	return filepath.Join(sandbox.root, rel)
 }
 
+func mirrorRecipeLogToSandbox(logPath, source string, sandbox *sandboxWorkspace) error {
+	if logPath == "" || sandbox == nil {
+		return nil
+	}
+	rel, ok := relInside(source, logPath)
+	if !ok {
+		return nil
+	}
+	name := filepath.ToSlash(rel)
+	info, err := os.Stat(logPath)
+	if err != nil {
+		return fmt.Errorf("stat log: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("log is not a regular file: %s", logPath)
+	}
+	if sandbox.overlay {
+		root, err := os.OpenRoot(sandbox.upper)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return copyRegularFileToRoot(root, name, logPath, info.Mode().Perm())
+	}
+	return copyRegularFile(logPath, filepath.Join(sandbox.root, filepath.FromSlash(name)), info.Mode().Perm())
+}
+
 func recipeReferenceStackKey(configPath, name string) string {
 	if configPath == "" {
 		return name
@@ -622,6 +750,11 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	if resolved.ConfigPath != "" {
 		fmt.Fprintf(w, "config: %s\n", resolved.ConfigPath)
+	}
+	if resolved.LogPath != "" {
+		fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
+		fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
+		fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
 	}
 	if !resolved.Sandboxed {
 		fmt.Fprintln(w, "sandboxed: false")

@@ -31,7 +31,42 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	text := `[recipes.build]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
-	assertLabels(t, items, "cmd", "sandboxed", "sync_out")
+	assertLabels(t, items, "cmd", "sandboxed", "sync_out", "log", "log_stages", "log_tee")
+}
+
+func TestCompletionsIncludeLogValues(t *testing.T) {
+	cases := []struct {
+		name   string
+		text   string
+		line   int
+		column int
+		labels []string
+	}{
+		{
+			name: "log tee",
+			text: `[recipes.test]
+log = "run.log"
+log_tee = `,
+			line:   2,
+			column: len(`log_tee = `),
+			labels: []string{"true", "false"},
+		},
+		{
+			name: "log stages",
+			text: `[recipes.test]
+log = "run.log"
+log_stages = ["`,
+			line:   2,
+			column: len(`log_stages = ["`),
+			labels: []string{"pre", "cmd", "post"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			items := completionsAt(t.Context(), tc.text, lspPosition{Line: tc.line, Character: tc.column})
+			assertLabels(t, items, tc.labels...)
+		})
+	}
 }
 
 func TestCompletionsExcludeKeysInSyncOutArrayValues(t *testing.T) {
@@ -370,6 +405,13 @@ cmd = "echo {`
 	if edit["newText"] != "@}" {
 		t.Fatalf("newText = %#v, want variadic placeholder suffix", edit["newText"])
 	}
+}
+
+func TestCompletionsIncludeRunIDPlaceholder(t *testing.T) {
+	text := `[recipes.test]
+log = "logs/{`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`log = "logs/{`)})
+	assertLabels(t, items, "{run_id}")
 }
 
 func TestCompletionsExcludeVariadicArgsPlaceholderInSyncOut(t *testing.T) {

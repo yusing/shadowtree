@@ -21,10 +21,15 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:       Command{"go", "test", "{pkg}", "{@}"},
 		Sandboxed: new(true),
+		Log:       "base.log",
+		LogStages: []string{LogStageCmd},
+		LogTee:    new(false),
 	}
 	override := Recipe{
 		Pre:       []Command{{"go", "generate", "./..."}},
 		Sandboxed: new(false),
+		Log:       "override.log",
+		LogStages: []string{LogStagePre, LogStagePost},
 	}
 
 	got := MergeRecipe(base, override)
@@ -36,6 +41,64 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	}
 	if got.Sandboxed == nil || *got.Sandboxed {
 		t.Fatalf("Sandboxed = %#v, want false", got.Sandboxed)
+	}
+	if got.Log != "override.log" {
+		t.Fatalf("Log = %q", got.Log)
+	}
+	if !slices.Equal(got.LogStages, []string{LogStagePre, LogStagePost}) {
+		t.Fatalf("LogStages = %#v", got.LogStages)
+	}
+	if got.LogTee == nil || *got.LogTee {
+		t.Fatalf("LogTee = %#v, want false inherited from base", got.LogTee)
+	}
+}
+
+func TestResolveExpandsRunIDEverywhere(t *testing.T) {
+	recipes := applyGlobals(t, map[string]Recipe{
+		"test": {
+			Cmd:          ScriptCommand("printf '%s' '{marker} {local} {run_id}'"),
+			Pre:          []Command{ScriptCommand("printf '%s' '{run_id}'")},
+			Post:         []Command{ScriptCommand("printf '%s' '{run_id}'")},
+			ForEach:      ScriptCommand("@enum {run_id}"),
+			ShellPrelude: "RUN_ID={run_id}",
+			Workdir:      "work/{run_id}/{item}",
+			SyncOut:      []string{"out/{run_id}"},
+			Log:          "logs/{run_id}.log",
+			Vars: map[string]string{
+				"local": "recipe-{run_id}",
+			},
+			Env: map[string]string{
+				"RUN_ID": "{run_id}",
+			},
+		},
+	}, map[string]string{
+		"marker": "global-{run_id}",
+	}, "", "")
+
+	got, err := ResolveWithOptions("test", recipes["test"], nil, nil, map[string]string{
+		"GLOBAL_RUN_ID": "{run_id}",
+	}, "", "", ResolveOptions{RunID: "0123456789abcdef0123456789abcdef"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RunID != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("RunID = %q", got.RunID)
+	}
+	for _, value := range []string{
+		ScriptBody(got.Main),
+		ScriptBody(got.Recipe.Pre[0]),
+		ScriptBody(got.Recipe.Post[0]),
+		ScriptBody(got.Recipe.ForEach),
+		got.Recipe.ShellPrelude,
+		got.Recipe.Workdir,
+		got.SyncOut[0],
+		got.LogPath,
+		got.Recipe.Env["RUN_ID"],
+		got.GlobalEnv["GLOBAL_RUN_ID"],
+	} {
+		if strings.Contains(value, "{run_id}") || !strings.Contains(value, got.RunID) {
+			t.Fatalf("value %q did not expand run_id %q", value, got.RunID)
+		}
 	}
 }
 
@@ -517,9 +580,10 @@ func TestBuiltinValuesListsVarsAndArguments(t *testing.T) {
 	if !ok {
 		t.Fatal("BuiltinValues did not detect @vars")
 	}
-	if len(values) != 2 ||
+	if len(values) != 3 ||
 		values[0] != (ValueCandidate{Value: "mode", Help: "Build mode."}) ||
-		values[1] != (ValueCandidate{Value: "project", Help: "placeholder"}) {
+		values[1] != (ValueCandidate{Value: "project", Help: "placeholder"}) ||
+		values[2] != (ValueCandidate{Value: RunIDPlaceholder, Help: "run identifier"}) {
 		t.Fatalf("values = %#v", values)
 	}
 }
@@ -1535,6 +1599,81 @@ func TestValidateConfigRejectsInvalidVarKeys(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateConfig(cfg); err == nil {
 				t.Fatal("ValidateConfig succeeded with invalid var key")
+			}
+		})
+	}
+}
+
+func TestValidateConfigRejectsReservedRunIDDeclarations(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{
+			name: "top vars",
+			cfg:  Config{Vars: map[string]string{RunIDPlaceholder: "custom"}},
+		},
+		{
+			name: "var commands",
+			cfg:  Config{VarCommands: map[string]Command{RunIDPlaceholder: ScriptCommand("printf custom")}},
+		},
+		{
+			name: "recipe vars",
+			cfg: Config{Recipes: map[string]Recipe{
+				"test": {Cmd: Command{"true"}, Vars: map[string]string{RunIDPlaceholder: "custom"}},
+			}},
+		},
+		{
+			name: "arguments",
+			cfg: Config{Recipes: map[string]Recipe{
+				"test": {
+					Cmd:       Command{"true"},
+					Arguments: map[string]Argument{RunIDPlaceholder: {}},
+				},
+			}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateConfig(tc.cfg); err == nil || !strings.Contains(err.Error(), RunIDPlaceholder) {
+				t.Fatalf("ValidateConfig() error = %v, want reserved run_id error", err)
+			}
+		})
+	}
+}
+
+func TestValidateConfigRejectsInvalidLogSettings(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  Recipe
+		want string
+	}{
+		{
+			name: "log stages without log",
+			rec:  Recipe{Cmd: Command{"true"}, LogStages: []string{LogStageCmd}},
+			want: "log_stages requires log",
+		},
+		{
+			name: "log tee without log",
+			rec:  Recipe{Cmd: Command{"true"}, LogTee: new(false)},
+			want: "log_tee requires log",
+		},
+		{
+			name: "bad stage",
+			rec:  Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{"cleanup"}},
+			want: `unsupported stage "cleanup"`,
+		},
+		{
+			name: "empty stages",
+			rec:  Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{}},
+			want: "log_stages must not be empty",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateConfig(Config{Recipes: map[string]Recipe{"test": tc.rec}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateConfig() error = %v, want %q", err, tc.want)
 			}
 		})
 	}

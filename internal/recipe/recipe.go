@@ -3,6 +3,8 @@ package recipe
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"go/version"
@@ -40,6 +42,13 @@ const (
 	ForEachItemPlaceholder      = "item"
 	ForEachItemHelpPlaceholder  = "item_help"
 	ForEachItemIndexPlaceholder = "item_index"
+	RunIDPlaceholder            = "run_id"
+)
+
+const (
+	LogStagePre  = "pre"
+	LogStageCmd  = "cmd"
+	LogStagePost = "post"
 )
 
 const (
@@ -57,6 +66,8 @@ var ReservedNames = map[string]bool{
 	"version":    true,
 	"__complete": true,
 }
+
+var allLogStages = []string{LogStagePre, LogStageCmd, LogStagePost}
 
 type Command []string
 
@@ -95,6 +106,9 @@ type Recipe struct {
 	Post         []Command           `toml:"post"`
 	Env          map[string]string   `toml:"env"`
 	SyncOut      []string            `toml:"sync_out"`
+	Log          string              `toml:"log"`
+	LogStages    []string            `toml:"log_stages"`
+	LogTee       *bool               `toml:"log_tee"`
 	varsExpanded bool
 }
 
@@ -117,6 +131,14 @@ type Resolved struct {
 	GlobalEnv  map[string]string
 	ConfigPath string
 	Profile    string
+	RunID      string
+	LogPath    string
+	LogStages  []string
+	LogTee     bool
+}
+
+type ResolveOptions struct {
+	RunID string
 }
 
 // RecipeReferenceTarget is a parsed @recipe or @path:recipe command target.
@@ -375,6 +397,15 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.SyncOut != nil {
 		out.SyncOut = slices.Clone(override.SyncOut)
 	}
+	if override.Log != "" {
+		out.Log = override.Log
+	}
+	if override.LogStages != nil {
+		out.LogStages = slices.Clone(override.LogStages)
+	}
+	if override.LogTee != nil {
+		out.LogTee = new(*override.LogTee)
+	}
 	return out
 }
 
@@ -384,14 +415,15 @@ func ApplyGlobalsExpanded(recipes map[string]Recipe, vars, dynamicVars map[strin
 	for name := range dynamicVars {
 		delete(staticVars, name)
 	}
-	expandedStaticVars, err := expandVarsWithBase(staticVars, dynamicVars)
+	expandedStaticVars, err := expandVarsWithBase(staticVars, runtimePlaceholderSentinels(dynamicVars))
 	if err != nil {
 		return nil, fmt.Errorf("vars: %w", err)
 	}
 	globalVars := mergeStringMaps(expandedStaticVars, dynamicVars)
+	globalVarsForExpansion := runtimePlaceholderSentinels(globalVars)
 	out := maps.Clone(recipes)
 	for name, rec := range out {
-		recipeVars, err := expandVarsWithBase(rec.Vars, globalVars)
+		recipeVars, err := expandVarsWithBase(rec.Vars, globalVarsForExpansion)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q vars: %w", name, err)
 		}
@@ -407,9 +439,22 @@ func ApplyGlobalsExpanded(recipes map[string]Recipe, vars, dynamicVars map[strin
 }
 
 func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv map[string]string, configPath, profile string) (Resolved, error) {
+	return ResolveWithOptions(name, rec, cliArgs, globalSyncOut, globalEnv, configPath, profile, ResolveOptions{})
+}
+
+func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv map[string]string, configPath, profile string, opts ResolveOptions) (Resolved, error) {
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
 	}
+	runID := opts.RunID
+	if runID == "" {
+		var err error
+		runID, err = NewRunID()
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q run_id: %w", name, err)
+		}
+	}
+	runtimeValues := map[string]string{RunIDPlaceholder: runID}
 	values, variadicArgs, err := resolveArguments(rec, cliArgs)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
@@ -417,12 +462,19 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	vars := rec.Vars
 	if !rec.varsExpanded {
 		var err error
-		vars, err = expandVars(rec.Vars)
+		vars, err = expandVarsWithBase(rec.Vars, runtimeValues)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q vars: %w", name, err)
+		}
+	} else {
+		var err error
+		vars, err = expandRuntimePlaceholdersInMap(vars, runtimeValues)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q vars: %w", name, err)
 		}
 	}
 	values = mergeStringMaps(vars, values)
+	values[RunIDPlaceholder] = runID
 	commandValues := values
 	if len(rec.ForEach) > 0 {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
@@ -448,6 +500,20 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values, nil)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
+		}
+	}
+	logPath := rec.Log
+	var logStages []string
+	logTee := true
+	if logPath != "" {
+		expanded, err := expandStrings([]string{logPath}, values, nil)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q log: %w", name, err)
+		}
+		logPath = expanded[0]
+		logStages = EffectiveLogStages(rec)
+		if rec.LogTee != nil {
+			logTee = *rec.LogTee
 		}
 	}
 	var forEach Command
@@ -522,7 +588,19 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		GlobalEnv:  expandedGlobalEnv,
 		ConfigPath: configPath,
 		Profile:    profile,
+		RunID:      runID,
+		LogPath:    logPath,
+		LogStages:  logStages,
+		LogTee:     logTee,
 	}, nil
+}
+
+func NewRunID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func commandsUseShellPrelude(cmd Command, pre, post []Command, forEach Command, shell, shellPrelude string) bool {
@@ -596,6 +674,9 @@ func ValidateConfig(cfg Config) error {
 			return fmt.Errorf("recipe %q arguments: %w", name, err)
 		}
 		if err := ValidateVarsMap(fmt.Sprintf("recipe %q vars", name), rec.Vars); err != nil {
+			return err
+		}
+		if err := ValidateLogSettings(name, rec); err != nil {
 			return err
 		}
 		if len(rec.Cmd) > 0 {
@@ -755,6 +836,9 @@ func PositionalArguments(args map[string]Argument) []string {
 func ValidateArguments(args map[string]Argument) error {
 	positions := map[int]string{}
 	for name, arg := range args {
+		if name == RunIDPlaceholder {
+			return fmt.Errorf("argument name %q is reserved", name)
+		}
 		if strings.TrimSpace(name) == "" {
 			return errors.New("empty argument name")
 		}
@@ -829,7 +913,42 @@ func validateIdentifierKey(section, key string) error {
 	if !identifierPattern.MatchString(key) {
 		return fmt.Errorf("%s has invalid key %q", section, key)
 	}
+	if key == RunIDPlaceholder {
+		return fmt.Errorf("%s key %q is reserved", section, key)
+	}
 	return nil
+}
+
+func ValidateLogSettings(name string, rec Recipe) error {
+	if rec.Log == "" {
+		if len(rec.LogStages) > 0 {
+			return fmt.Errorf("recipe %q log_stages requires log", name)
+		}
+		if rec.LogTee != nil {
+			return fmt.Errorf("recipe %q log_tee requires log", name)
+		}
+		return nil
+	}
+	if rec.LogStages != nil && len(rec.LogStages) == 0 {
+		return fmt.Errorf("recipe %q log_stages must not be empty", name)
+	}
+	for _, stage := range rec.LogStages {
+		if !ValidLogStage(stage) {
+			return fmt.Errorf("recipe %q log_stages: unsupported stage %q", name, stage)
+		}
+	}
+	return nil
+}
+
+func EffectiveLogStages(rec Recipe) []string {
+	if len(rec.LogStages) == 0 {
+		return slices.Clone(allLogStages)
+	}
+	return slices.Clone(rec.LogStages)
+}
+
+func ValidLogStage(stage string) bool {
+	return slices.Contains(allLogStages, stage)
 }
 
 func ValidateCommand(command Command) error {
@@ -1140,6 +1259,42 @@ func expandStringMap(items map[string]string, values map[string]string) (map[str
 
 func expandVars(vars map[string]string) (map[string]string, error) {
 	return expandVarsWithBase(vars, nil)
+}
+
+func runtimePlaceholderSentinels(base map[string]string) map[string]string {
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out[RunIDPlaceholder] = "{" + RunIDPlaceholder + "}"
+	return out
+}
+
+func expandRuntimePlaceholdersInMap(items map[string]string, runtimeValues map[string]string) (map[string]string, error) {
+	if items == nil {
+		return nil, nil
+	}
+	if !mapContainsPlaceholder(items) {
+		return maps.Clone(items), nil
+	}
+	out := maps.Clone(items)
+	for _, key := range slices.Sorted(maps.Keys(items)) {
+		value := items[key]
+		if !strings.Contains(value, "{") {
+			continue
+		}
+		expanded, err := expandPlaceholderNames(value, func(name, match string) (string, error) {
+			if value, ok := runtimeValues[name]; ok {
+				return value, nil
+			}
+			return match, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		out[key] = expanded
+	}
+	return out, nil
 }
 
 func expandVarsWithBase(vars, base map[string]string) (map[string]string, error) {

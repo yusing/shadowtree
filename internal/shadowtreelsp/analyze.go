@@ -81,6 +81,9 @@ var recipeKeys = []completion{
 	{Label: "pre", InsertText: "pre = []", Kind: completionKindKeyword, Detail: "Commands before main"},
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
 	{Label: "sync_out", InsertText: "sync_out = []", Kind: completionKindKeyword, Detail: "Recipe sync-out paths"},
+	{Label: "log", InsertText: `log = ""`, Kind: completionKindKeyword, Detail: "Recipe log file"},
+	{Label: "log_stages", InsertText: `log_stages = ["pre", "cmd", "post"]`, Kind: completionKindKeyword, Detail: "Recipe stages written to log"},
+	{Label: "log_tee", InsertText: "log_tee = true", Kind: completionKindKeyword, Detail: "Also write logged output to the terminal"},
 }
 
 var argumentKeys = []completion{
@@ -117,6 +120,12 @@ var pathKindValues = []completion{
 var boolValues = []completion{
 	{Label: "true", InsertText: "true", Kind: completionKindValue, Detail: "Boolean true"},
 	{Label: "false", InsertText: "false", Kind: completionKindValue, Detail: "Boolean false"},
+}
+
+var logStageValues = []completion{
+	{Label: recipe.LogStagePre, InsertText: recipe.LogStagePre, Kind: completionKindValue, Detail: "Pre commands", Quote: true},
+	{Label: recipe.LogStageCmd, InsertText: recipe.LogStageCmd, Kind: completionKindValue, Detail: "Main command", Quote: true},
+	{Label: recipe.LogStagePost, InsertText: recipe.LogStagePost, Kind: completionKindValue, Detail: "Post commands", Quote: true},
 }
 
 func analyzeDocument(text string, line int) documentAnalysis {
@@ -1381,8 +1390,10 @@ func valueCompletions(key string) []completion {
 		return argumentTypeValues
 	case "path_kind":
 		return pathKindValues
-	case "sandboxed", "required":
+	case "sandboxed", "required", "log_tee":
 		return boolValues
+	case "log_stages":
+		return logStageValues
 	default:
 		return nil
 	}
@@ -1405,6 +1416,7 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 	names = append(names, analysis.GlobalVars...)
 	names = append(names, analysis.RecipeVars[recipeName]...)
 	names = append(names, analysis.Arguments[recipeName]...)
+	names = append(names, recipe.RunIDPlaceholder)
 	if allowForEach && analysis.FanOutRecipes[recipeName] {
 		names = append(names, recipe.ForEachItemPlaceholder, recipe.ForEachItemHelpPlaceholder, recipe.ForEachItemIndexPlaceholder)
 	}
@@ -1427,6 +1439,7 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 		detail[recipe.ForEachItemHelpPlaceholder] = "Current for_each help text"
 		detail[recipe.ForEachItemIndexPlaceholder] = "Current for_each index"
 	}
+	detail[recipe.RunIDPlaceholder] = "Current run identifier"
 	var items []completion
 	if allowVariadic && strings.HasPrefix("@", prefix) {
 		insertText := "@"

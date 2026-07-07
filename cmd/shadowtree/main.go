@@ -430,6 +430,16 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Workdir:"))
 		fmt.Fprintf(w, "    %s\n", colors.literal(rec.Workdir))
 	}
+	if rec.Log != "" {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Log:"))
+		fmt.Fprintf(w, "    %s\n", colors.literal(rec.Log))
+		if len(rec.LogStages) > 0 {
+			fmt.Fprintf(w, "    %s %s\n", colors.label("stages:"), colors.literal(strings.Join(rec.LogStages, ",")))
+		}
+		if rec.LogTee != nil {
+			fmt.Fprintf(w, "    %s %s\n", colors.label("tee:"), colors.literal(strconv.FormatBool(*rec.LogTee)))
+		}
+	}
 	argNames := slices.Sorted(maps.Keys(rec.Arguments))
 	if len(argNames) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Arguments:"))

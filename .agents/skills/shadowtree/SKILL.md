@@ -151,6 +151,9 @@ Use these fields under `[recipes.<name>]`:
 - `post`: list of commands after `cmd`.
 - `sandboxed`: boolean; defaults to `true`.
 - `sync_out`: sandboxed paths copied back after successful recipe completion.
+- `log`: optional recipe log file path; supports placeholders including `{run_id}`.
+- `log_stages`: optional stages logged to `log`; values are `pre`, `cmd`, `post`; omitted means all three.
+- `log_tee`: boolean; defaults to `true`; when `false`, selected stage output goes only to the log.
 - `env`: recipe environment overrides.
 - `vars`: recipe placeholder values overriding top-level `vars`.
 - `shell`: recipe shell override.
@@ -245,7 +248,7 @@ scalar `values` recipe references.
 
 ## Placeholders And Vars
 
-`{NAME}` placeholders expand in `cmd`, `pre`, `post`, `for_each`, `shell_prelude`, `workdir`, and `sync_out`.
+`{NAME}` placeholders expand in `cmd`, `pre`, `post`, `for_each`, `shell_prelude`, `workdir`, `sync_out`, and `log`.
 
 Value sources:
 
@@ -255,6 +258,12 @@ Value sources:
 4. typed argument values, overriding vars with the same name.
 
 Shell parameter expansion is preserved: `${NAME}` is not treated as a Shadowtree placeholder.
+
+`{run_id}` is built in. Shadowtree generates one lowercase hex run ID per
+top-level invocation and reuses it through `pre`, `cmd`, `post`, `for_each`, and
+nested `@recipe` calls. `run_id` is reserved and cannot be declared in
+top-level `vars`, top-level `var_commands`, recipe `vars`, or recipe
+`arguments`.
 
 `var_commands` use top-level `env`, configured `shell`, and top-level `shell_prelude`. They are not evaluated during shell completion.
 
@@ -269,6 +278,13 @@ Fan-out placeholders exist only when a recipe has `for_each`:
 `@go-main-packages`, `@recipes`, `@vars`, command output, and recipe references. `pre` runs once before the loop;
 `post` runs once after it; the first failing item stops later items. `workdir`
 can also be used without `for_each`; it must resolve to a relative workspace path.
+
+Recipe logging opens/truncates one file before commands start. `log` paths must
+be relative and stay under the active config directory, or the source checkout
+when no config path exists. `cmd` logging includes each main `for_each` item but
+not the value-provider command. `post` output is still logged after a failing
+`pre` or `cmd`. A selected parent stage captures nested recipe output; nested
+recipe `log` settings do not open another log during the reference.
 
 Completion criterion: placeholders have a value at resolve time, or `--print`/run will fail with a missing value error.
 

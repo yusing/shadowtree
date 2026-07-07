@@ -676,7 +676,8 @@ func filterValueCandidates(candidates []ValueCandidate, prefix string) []ValueCa
 
 func varCandidates(rec Recipe) []ValueCandidate {
 	names := make([]string, 0, len(rec.Vars)+len(rec.Arguments))
-	help := map[string]string{}
+	help := map[string]string{RunIDPlaceholder: "run identifier"}
+	names = append(names, RunIDPlaceholder)
 	for name := range rec.Vars {
 		names = append(names, name)
 		help[name] = "placeholder"

@@ -939,6 +939,16 @@ sync_out = ["out/{non_existent}.txt"]
 			end:   len(`sync_out = ["out/{non_existent}`),
 		},
 		{
+			name: "log",
+			text: `[recipes.test]
+cmd = "true"
+log = "logs/{non_existent}.log"
+`,
+			line:  2,
+			start: len(`log = "logs/`),
+			end:   len(`log = "logs/{non_existent}`),
+		},
+		{
 			name: "global vars",
 			text: `[vars]
 docs_dir = "{non_existent}/wiki"
@@ -1021,6 +1031,7 @@ pre = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
 cmd = "go test {PROJECT} {GENERATED} {local} {pkg} {item} {item_help} {item_index} {@}"
 post = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
 sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
+log = "logs/{run_id}.log"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)

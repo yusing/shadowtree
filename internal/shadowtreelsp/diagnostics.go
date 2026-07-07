@@ -350,6 +350,7 @@ func dynamicCommandReferenceOverlapIndex(references []commandReferenceSpan) map[
 
 func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Recipe, region scriptRegion, knownNames map[string]map[string]bool) map[string]bool {
 	names := map[string]bool{}
+	names[recipe.RunIDPlaceholder] = true
 	for name := range cfg.Vars {
 		names[name] = true
 	}
@@ -460,7 +461,7 @@ func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) 
 
 func placeholderDiagnosticKey(key string) bool {
 	switch key {
-	case "cmd", "pre", "post", "for_each", "workdir", "sync_out", "shell_prelude":
+	case "cmd", "pre", "post", "for_each", "workdir", "sync_out", "shell_prelude", "log":
 		return true
 	default:
 		return false
@@ -474,7 +475,7 @@ func placeholderDiagnosticValueKey(table, key string) bool {
 	if varsTable(table) {
 		return true
 	}
-	return key == "workdir" || key == "sync_out"
+	return key == "workdir" || key == "sync_out" || key == "log"
 }
 
 func envTable(table string) bool {
