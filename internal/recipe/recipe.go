@@ -43,6 +43,7 @@ const (
 	ForEachItemHelpPlaceholder  = "item_help"
 	ForEachItemIndexPlaceholder = "item_index"
 	RunIDPlaceholder            = "run_id"
+	ProfileArgumentName         = "profile"
 )
 
 const (
@@ -93,22 +94,23 @@ type Config struct {
 }
 
 type Recipe struct {
-	Help         string              `toml:"help"`
-	Arguments    map[string]Argument `toml:"arguments"`
-	Vars         map[string]string   `toml:"vars"`
-	Shell        string              `toml:"shell"`
-	ShellPrelude string              `toml:"shell_prelude"`
-	Sandboxed    *bool               `toml:"sandboxed"`
-	ForEach      Command             `toml:"for_each"`
-	Workdir      string              `toml:"workdir"`
-	Cmd          Command             `toml:"cmd"`
-	Pre          []Command           `toml:"pre"`
-	Post         []Command           `toml:"post"`
-	Env          map[string]string   `toml:"env"`
-	SyncOut      []string            `toml:"sync_out"`
-	Log          string              `toml:"log"`
-	LogStages    []string            `toml:"log_stages"`
-	LogTee       *bool               `toml:"log_tee"`
+	Help         string                   `toml:"help"`
+	Arguments    map[string]Argument      `toml:"arguments"`
+	Profiles     map[string]RecipeProfile `toml:"profiles"`
+	Vars         map[string]string        `toml:"vars"`
+	Shell        string                   `toml:"shell"`
+	ShellPrelude string                   `toml:"shell_prelude"`
+	Sandboxed    *bool                    `toml:"sandboxed"`
+	ForEach      Command                  `toml:"for_each"`
+	Workdir      string                   `toml:"workdir"`
+	Cmd          Command                  `toml:"cmd"`
+	Pre          []Command                `toml:"pre"`
+	Post         []Command                `toml:"post"`
+	Env          map[string]string        `toml:"env"`
+	SyncOut      []string                 `toml:"sync_out"`
+	Log          string                   `toml:"log"`
+	LogStages    []string                 `toml:"log_stages"`
+	LogTee       *bool                    `toml:"log_tee"`
 	varsExpanded bool
 }
 
@@ -120,6 +122,11 @@ type Argument struct {
 	Required bool    `toml:"required"`
 	Default  any     `toml:"default"`
 	Values   Command `toml:"values"`
+}
+
+// RecipeProfile sets argument defaults selected with profile=<name>.
+type RecipeProfile struct {
+	Arguments map[string]any `toml:"arguments"`
 }
 
 type Resolved struct {
@@ -363,6 +370,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	}
 	if override.Arguments != nil {
 		out.Arguments = mergeArguments(out.Arguments, override.Arguments)
+	}
+	if override.Profiles != nil {
+		out.Profiles = mergeProfiles(out.Profiles, override.Profiles)
 	}
 	if override.Vars != nil {
 		out.Vars = maps.Clone(override.Vars)
@@ -673,6 +683,9 @@ func ValidateConfig(cfg Config) error {
 		if err := ValidateArguments(rec.Arguments); err != nil {
 			return fmt.Errorf("recipe %q arguments: %w", name, err)
 		}
+		if err := validateProfiles(rec.Arguments, rec.Profiles); err != nil {
+			return fmt.Errorf("recipe %q profiles: %w", name, err)
+		}
 		if err := ValidateVarsMap(fmt.Sprintf("recipe %q vars", name), rec.Vars); err != nil {
 			return err
 		}
@@ -714,7 +727,76 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 	return values, variadicArgs, err
 }
 
+func extractRecipeProfile(rec Recipe, cliArgs []string) (string, []string, error) {
+	if len(rec.Profiles) == 0 || len(cliArgs) == 0 {
+		return "", cliArgs, nil
+	}
+	profile := ""
+	selectorIndex := -1
+	passthrough := false
+	for i, token := range cliArgs {
+		if passthrough {
+			continue
+		}
+		if token == "--" {
+			passthrough = true
+			continue
+		}
+		key, value, ok := strings.Cut(token, "=")
+		if !ok || key != ProfileArgumentName {
+			continue
+		}
+		if err := ValidateProfileSelection(rec, profile, value); err != nil {
+			return "", nil, err
+		}
+		if selectorIndex < 0 {
+			selectorIndex = i
+		}
+		profile = value
+	}
+	if selectorIndex < 0 {
+		return "", cliArgs, nil
+	}
+	out := make([]string, 0, len(cliArgs)-1)
+	passthrough = false
+	for _, token := range cliArgs {
+		if passthrough {
+			out = append(out, token)
+			continue
+		}
+		if token == "--" {
+			passthrough = true
+			out = append(out, token)
+			continue
+		}
+		key, _, ok := strings.Cut(token, "=")
+		if ok && key == ProfileArgumentName {
+			continue
+		}
+		out = append(out, token)
+	}
+	return profile, out, nil
+}
+
+// ValidateProfileSelection validates a profile=<name> selector against a recipe.
+func ValidateProfileSelection(rec Recipe, selectedProfile, value string) error {
+	if selectedProfile != "" {
+		return errors.New("profile specified multiple times")
+	}
+	if value == "" {
+		return errors.New("profile must not be empty")
+	}
+	if _, ok := rec.Profiles[value]; !ok {
+		return fmt.Errorf("unknown profile %q", value)
+	}
+	return nil
+}
+
 func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
+	profileName, cliArgs, err := extractRecipeProfile(rec, cliArgs)
+	if err != nil {
+		return nil, nil, err
+	}
 	usesVariadicArgs := RecipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
 		if len(cliArgs) == 0 {
@@ -735,16 +817,20 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 	values := map[string]string{}
 	for name, arg := range rec.Arguments {
 		if arg.Default != nil {
-			value, err := defaultValueString(arg.Default)
+			value, err := resolvedArgumentValueString(name, arg, arg.Default)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%s default: %w", name, err)
 			}
-			if err := validateArgumentValue(name, arg, value); err != nil {
-				return nil, nil, err
-			}
-			value, err = expandPathArgumentValue(arg, value)
+			values[name] = value
+		}
+	}
+	if profileName != "" {
+		profile := rec.Profiles[profileName]
+		for name, raw := range profile.Arguments {
+			arg := rec.Arguments[name]
+			value, err := resolvedArgumentValueString(name, arg, raw)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s: %w", name, err)
+				return nil, nil, fmt.Errorf("profile %q: %w", profileName, err)
 			}
 			values[name] = value
 		}
@@ -861,17 +947,41 @@ func ValidateArguments(args map[string]Argument) error {
 			positions[arg.Position] = name
 		}
 		if arg.Default != nil {
-			value, err := defaultValueString(arg.Default)
+			_, err := argumentValueString(name, arg, arg.Default)
 			if err != nil {
 				return fmt.Errorf("%s default: %w", name, err)
-			}
-			if err := validateArgumentValue(name, arg, value); err != nil {
-				return err
 			}
 		}
 		if arg.Values != nil {
 			if err := validateValueCommand("values", arg.Values); err != nil {
 				return fmt.Errorf("%s values: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfile) error {
+	if len(profiles) == 0 {
+		return nil
+	}
+	if _, ok := args[ProfileArgumentName]; ok {
+		return fmt.Errorf("argument name %q is reserved when profiles are configured", ProfileArgumentName)
+	}
+	for name, profile := range profiles {
+		if err := validateIdentifierKey("profiles", name); err != nil {
+			return err
+		}
+		if len(profile.Arguments) == 0 {
+			continue
+		}
+		for argName, raw := range profile.Arguments {
+			arg, ok := args[argName]
+			if !ok {
+				return fmt.Errorf("%s: unknown argument %q", name, argName)
+			}
+			if _, err := argumentValueString(argName, arg, raw); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
 			}
 		}
 	}
@@ -1125,6 +1235,29 @@ func mergeArguments(base, override map[string]Argument) map[string]Argument {
 	}
 	for name, arg := range override {
 		out[name] = MergeArgument(out[name], arg)
+	}
+	return out
+}
+
+func mergeProfiles(base, override map[string]RecipeProfile) map[string]RecipeProfile {
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]RecipeProfile{}
+	}
+	for name, profile := range override {
+		out[name] = mergeRecipeProfile(out[name], profile)
+	}
+	return out
+}
+
+func mergeRecipeProfile(base, override RecipeProfile) RecipeProfile {
+	out := base
+	if override.Arguments != nil {
+		out.Arguments = maps.Clone(base.Arguments)
+		if out.Arguments == nil {
+			out.Arguments = map[string]any{}
+		}
+		maps.Copy(out.Arguments, override.Arguments)
 	}
 	return out
 }
@@ -1923,6 +2056,29 @@ func validateArgumentValue(name string, arg Argument, value string) error {
 	return nil
 }
 
+func argumentValueString(name string, arg Argument, raw any) (string, error) {
+	value, err := ScalarValueString(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	if err := validateArgumentValue(name, arg, value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func resolvedArgumentValueString(name string, arg Argument, raw any) (string, error) {
+	value, err := argumentValueString(name, arg, raw)
+	if err != nil {
+		return "", err
+	}
+	value, err = expandPathArgumentValue(arg, value)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	return value, nil
+}
+
 func expandPathArgumentValue(arg Argument, value string) (string, error) {
 	if argumentType(arg) != "path" || value != "~" && !strings.HasPrefix(value, "~/") {
 		return value, nil
@@ -1944,7 +2100,8 @@ func argumentType(arg Argument) string {
 	return arg.Type
 }
 
-func defaultValueString(value any) (string, error) {
+// ScalarValueString converts a TOML scalar value to its argument string form.
+func ScalarValueString(value any) (string, error) {
 	switch value := value.(type) {
 	case string:
 		return value, nil

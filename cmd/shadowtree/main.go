@@ -462,6 +462,18 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 			return fmt.Errorf("arg %s values: %w", argName, err)
 		}
 	}
+	profileNames := slices.Sorted(maps.Keys(rec.Profiles))
+	if len(profileNames) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Profiles:"))
+	}
+	for _, profileName := range profileNames {
+		fmt.Fprintf(w, "    %s", colors.argument(profileName))
+		argNames := slices.Sorted(maps.Keys(rec.Profiles[profileName].Arguments))
+		for _, argName := range argNames {
+			fmt.Fprintf(w, " %s", colors.literal(argName+"="+profileArgumentDisplayValue(rec.Profiles[profileName].Arguments[argName])))
+		}
+		fmt.Fprintln(w)
+	}
 	if recipe.RecipeSandboxed(rec) {
 		if len(rec.SyncOut) > 0 {
 			fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sync out:"))
@@ -502,6 +514,16 @@ func printArgumentInfo(w io.Writer, arg recipe.Argument, colors helpColors) {
 			fmt.Fprintf(w, " default=%s", colors.literal(fmt.Sprint(arg.Default)))
 		}
 	}
+}
+
+func profileArgumentDisplayValue(value any) string {
+	if text, err := recipe.ScalarValueString(value); err == nil {
+		if _, ok := value.(string); ok {
+			return strconv.Quote(text)
+		}
+		return text
+	}
+	return fmt.Sprint(value)
 }
 
 func printArgumentValues(ctx context.Context, w io.Writer, arg recipe.Argument, rec recipe.Recipe, opts recipeHelpOptions) error {

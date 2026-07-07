@@ -720,6 +720,32 @@ values = '''
 	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify `), len(`@minify component=foo`))
 }
 
+func TestDocumentDiagnosticsRejectUnknownRecipeProfileArgument(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
+type = "int"
+
+[recipes.benchmark.profiles.stable.arguments]
+requests = 20000
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" profiles: stable: unknown argument "requests"`)
+}
+
+func TestDocumentDiagnosticsRejectUnknownRecipeReferenceProfile(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
+type = "int"
+
+[recipes.benchmark.profiles.stable.arguments]
+connections = 64
+
+[recipes.benchmark]
+cmd = "true"
+
+[recipes.check]
+cmd = "@benchmark[profile=stress]"
+`)
+	assertOneDiagnostic(t, diagnostics, `unknown profile "stress"`)
+}
+
 func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceEnumBracketArgumentValue(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.minify.arguments.component]
 type = "string"

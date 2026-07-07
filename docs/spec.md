@@ -506,6 +506,53 @@ shadowtree 'build[project=./cmd/shadowtree,binary=shadowtree-dev]'
 
 Bracket-style syntax is preferred for shell completion, especially in fish.
 
+Recipe-local profiles can set multiple typed argument defaults. They are
+declared under:
+
+```toml
+[recipes.<name>.profiles.<profile-name>.arguments]
+<arg-name> = <scalar>
+```
+
+Profile names use identifier syntax (`[A-Za-z_][A-Za-z0-9_]*`). Profile
+argument keys must name typed arguments declared by the same recipe, and values
+are converted and type-checked the same way as argument `default` values. A
+recipe with `profiles` reserves the `profile` recipe argument name for profile
+selection.
+
+Select a profile with `profile=<profile-name>` after the recipe name:
+
+```toml
+[recipes.benchmark]
+cmd = "run-benchmark --connections {connections} --requests {requests} --runs {runs}"
+
+[recipes.benchmark.arguments.connections]
+type = "int"
+default = 32
+
+[recipes.benchmark.arguments.requests]
+type = "int"
+default = 1000
+
+[recipes.benchmark.arguments.runs]
+type = "int"
+default = 1
+
+[recipes.benchmark.profiles.stable.arguments]
+connections = 64
+requests = 20000
+runs = 5
+```
+
+```sh
+shadowtree benchmark profile=stable runs=3
+```
+
+Argument values are resolved in this order: typed argument defaults, selected
+recipe profile defaults, then explicit positional or `key=value` CLI arguments.
+The `profile=<name>` selector is consumed like a typed argument and is excluded
+from `{@}`. Tokens after `--` are not profile selectors.
+
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
 expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `shell_prelude`,
@@ -961,6 +1008,8 @@ Supported completion behavior:
 - `shadowtree --profile <TAB>` completes `go` and `node`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.
+- `shadowtree benchmark profile=<TAB>` completes recipe-local profile names
+  such as `stable` and `stress`.
 - `shadowtree build[<TAB>` completes bracket-style arguments such as
   `build[project=`.
 - `shadowtree test race=<TAB>` completes `true` and `false` for bool

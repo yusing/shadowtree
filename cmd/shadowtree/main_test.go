@@ -271,6 +271,39 @@ func TestPrintRecipeHelpIncludesDynamicArgumentValues(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
+		Help: "Run benchmark.",
+		Cmd:  recipe.Command{"benchmark"},
+		Arguments: map[string]recipe.Argument{
+			"connections": {Type: "int", Default: 32},
+			"requests":    {Type: "int", Default: 1000},
+		},
+		Profiles: map[string]recipe.RecipeProfile{
+			"stable": {
+				Arguments: map[string]any{
+					"connections": int64(64),
+					"requests":    int64(20000),
+				},
+			},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"- Profiles:",
+		"    stable connections=64 requests=20000",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpFormatsArgumentBlocks(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{

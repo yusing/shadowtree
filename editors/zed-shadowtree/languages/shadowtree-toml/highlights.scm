@@ -47,6 +47,7 @@
     "recipes"
     "help"
     "arguments"
+    "profiles"
     "sandboxed"
     "for_each"
     "workdir"

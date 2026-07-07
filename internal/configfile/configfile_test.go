@@ -25,7 +25,7 @@ project_root = "pwd"
 [recipes.test]
 help = "Run tests."
 sandboxed = false
-cmd = "go test {pkg} {@}"
+cmd = "go test -count {count} {pkg} {@}"
 pre = ["go generate ./..."]
 
 [recipes.test.arguments.pkg]
@@ -36,6 +36,9 @@ default = "."
 help = "Repeat count."
 type = "int"
 default = 1
+
+[recipes.test.profiles.stable.arguments]
+count = 5
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +76,13 @@ default = 1
 	}
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")
+	}
+	resolved, err := recipe.Resolve("test", loaded.Config.Recipes["test"], []string{"profile=stable"}, nil, nil, path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(recipe.ScriptBody(resolved.Main), "5") {
+		t.Fatalf("resolved main = %#v, want profile count", resolved.Main)
 	}
 }
 

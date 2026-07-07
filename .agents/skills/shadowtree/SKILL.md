@@ -159,6 +159,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell`: recipe shell override.
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
+- `profiles`: recipe-local argument default sets selected by `profile=<name>`.
 
 Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
@@ -317,7 +318,8 @@ shadowtree 'build[project=./cmd/tool,binary=tool-dev]'
 Resolution rules:
 
 - With no typed `arguments`, recipe CLI args are accepted only when `cmd` includes `{@}`.
-- With typed `arguments`, defaults load first; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
+- With typed `arguments`, defaults load first; selected recipe profile defaults apply next; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
+- Recipe profiles live under `[recipes.<name>.profiles.<profile>.arguments]`. Select with `profile=<profile>` after the recipe name. Profile argument keys must match typed arguments, values use the same scalar conversion and validation as `default`, and explicit CLI args override profile values.
 - Unknown named args, unexpected positional args, missing required args, and invalid typed values fail.
 - Use `--` after typed recipe arguments to pass following argv literally to `{@}`, especially option values that contain `=` such as `-- --cookie NAME=value`.
 - Bool completion suggests `true` and `false`.

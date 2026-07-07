@@ -161,6 +161,37 @@ func TestCandidatesCompleteSpacedRecipeArguments(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteRecipeProfileArgument(t *testing.T) {
+	rec := recipe.Recipe{
+		Cmd: recipe.Command{"benchmark"},
+		Arguments: map[string]recipe.Argument{
+			"connections": {Type: "int"},
+		},
+		Profiles: map[string]recipe.RecipeProfile{
+			"stable": {},
+			"stress": {},
+		},
+	}
+
+	candidates := complete(t, []string{"shadowtree", "benchmark", ""}, map[string]recipe.Recipe{"benchmark": rec})
+	if !hasCandidate(candidates, "profile=") || !hasCandidate(candidates, "connections=") {
+		t.Fatalf("candidates = %#v, want profile and typed argument names", candidates)
+	}
+	if got := helpFor(candidates, "profile="); got != "recipe profile" {
+		t.Fatalf("profile help = %q", got)
+	}
+
+	candidates = complete(t, []string{"shadowtree", "benchmark", "profile=st"}, map[string]recipe.Recipe{"benchmark": rec})
+	if len(candidates) != 2 || candidates[0].Value != "profile=stable" || candidates[1].Value != "profile=stress" {
+		t.Fatalf("candidates = %#v, want profile values", candidates)
+	}
+
+	candidates = complete(t, []string{"shadowtree", "benchmark[profile=st"}, map[string]recipe.Recipe{"benchmark": rec})
+	if len(candidates) != 2 || candidates[0].Value != "benchmark[profile=stable" || candidates[1].Value != "benchmark[profile=stress" {
+		t.Fatalf("candidates = %#v, want bracket profile values", candidates)
+	}
+}
+
 func TestCandidatesPreferSpacedArgumentNameOverPositionalPath(t *testing.T) {
 	dir := t.TempDir()
 	mkdirAll(t, filepath.Join(dir, "bin"))

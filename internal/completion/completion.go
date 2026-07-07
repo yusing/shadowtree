@@ -376,7 +376,7 @@ func argumentCandidates(ctx context.Context, spec shellSpec, words []string, rec
 		}
 	}
 	rec, exists := recipes[name]
-	if !exists || len(rec.Arguments) == 0 {
+	if !exists || len(rec.Arguments) == 0 && len(rec.Profiles) == 0 {
 		return nil, false
 	}
 	if current == "" && rawCurrent != "" {
@@ -401,6 +401,10 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 	before, active := splitGroupedContent(spec, content)
 	tokenPrefix := prefix + before
 	if key, valuePrefix, ok := strings.Cut(active, "="); ok {
+		if key == recipe.ProfileArgumentName && len(rec.Profiles) > 0 {
+			valuePrefix, prefix = splitQuotedValuePrefix(valuePrefix, tokenPrefix+key+"=")
+			return profileValueCandidates(prefix, valuePrefix, rec)
+		}
 		arg, exists := rec.Arguments[key]
 		if !exists {
 			return nil
@@ -428,6 +432,10 @@ func GroupedArgumentCandidates(ctx context.Context, prefix, content string, rec 
 
 func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
 	if key, valuePrefix, ok := strings.Cut(current, "="); ok {
+		if key == recipe.ProfileArgumentName && len(rec.Profiles) > 0 {
+			valuePrefix, prefix := splitQuotedValuePrefix(valuePrefix, key+"=")
+			return profileValueCandidates(prefix, valuePrefix, rec)
+		}
 		arg, exists := rec.Arguments[key]
 		if !exists {
 			return nil
@@ -481,22 +489,50 @@ func cutGroupedStart(spec shellSpec, text string) (string, string, bool) {
 }
 
 func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[string]bool) []Candidate {
-	names := slices.Sorted(maps.Keys(rec.Arguments))
+	names := slices.Collect(maps.Keys(rec.Arguments))
+	if len(rec.Profiles) > 0 && !used[recipe.ProfileArgumentName] {
+		names = append(names, recipe.ProfileArgumentName)
+	}
+	slices.Sort(names)
+	matchName := strings.TrimSuffix(current, "=")
 	var candidates []Candidate
 	for _, name := range names {
 		if used[name] {
 			continue
 		}
 		value := prefix + name + "="
-		if current != "" && !strings.HasPrefix(name, strings.TrimSuffix(current, "=")) {
+		if current != "" && !strings.HasPrefix(name, matchName) {
 			continue
 		}
 		candidates = append(candidates, Candidate{
 			Value: value,
-			Help:  recipe.ArgumentHelp(rec.Arguments[name]),
+			Help:  argumentNameHelp(rec, name),
 		})
 	}
 	return candidates
+}
+
+func argumentNameHelp(rec recipe.Recipe, name string) string {
+	if name == recipe.ProfileArgumentName && len(rec.Profiles) > 0 {
+		return "recipe profile"
+	}
+	return recipe.ArgumentHelp(rec.Arguments[name])
+}
+
+func profileValueCandidates(prefix, valuePrefix string, rec recipe.Recipe) []Candidate {
+	matchPrefix := prefix + valuePrefix
+	var names []string
+	for name := range rec.Profiles {
+		if strings.HasPrefix(prefix+name, matchPrefix) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	candidates := make([]Candidate, 0, len(names))
+	for _, name := range names {
+		candidates = append(candidates, Candidate{Value: prefix + name, Help: "recipe profile"})
+	}
+	return filterPrefix(candidates, matchPrefix)
 }
 
 func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe.Argument, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {

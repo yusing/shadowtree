@@ -25,11 +25,13 @@ type documentAnalysis struct {
 	RecipeVars    map[string][]string
 	RecipeEnv     map[string][]string
 	Arguments     map[string][]string
+	Profiles      map[string][]string
 	ArgumentHelp  map[string]map[string]string
 	FanOutRecipes map[string]bool
 	ScriptRegions []scriptRegion
 	CurrentTable  string
 	Sources       configfile.SourceMap
+	HasInclude    bool
 }
 
 type completion struct {
@@ -135,6 +137,7 @@ func analyzeDocument(text string, line int) documentAnalysis {
 		RecipeVars:    map[string][]string{},
 		RecipeEnv:     map[string][]string{},
 		Arguments:     map[string][]string{},
+		Profiles:      map[string][]string{},
 		ArgumentHelp:  map[string]map[string]string{},
 		FanOutRecipes: map[string]bool{},
 	}
@@ -150,10 +153,15 @@ func analyzeDocument(text string, line int) documentAnalysis {
 				if len(parts) >= 4 && parts[2] == "arguments" {
 					analysis.Arguments[parts[1]] = appendUnique(analysis.Arguments[parts[1]], parts[3])
 				}
+				if len(parts) >= 4 && parts[2] == "profiles" {
+					analysis.Profiles[parts[1]] = appendUnique(analysis.Profiles[parts[1]], parts[3])
+				}
 			}
 		}
 		if key, ok := pairKey(raw); ok {
 			switch {
+			case table == "" && key == "include":
+				analysis.HasInclude = true
 			case table == "vars" || table == "var_commands":
 				analysis.GlobalVars = appendUnique(analysis.GlobalVars, key)
 			case table == "env":
@@ -186,6 +194,9 @@ func analyzeDocument(text string, line int) documentAnalysis {
 				}
 				analysis.ArgumentHelp[recipeName][argName] = recipe.ArgumentHelp(arg)
 			}
+			for profileName := range rec.Profiles {
+				analysis.Profiles[recipeName] = appendUnique(analysis.Profiles[recipeName], profileName)
+			}
 		}
 	}
 	slices.Sort(analysis.Recipes)
@@ -197,6 +208,9 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	}
 	for name := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[name])
+	}
+	for name := range analysis.Profiles {
+		slices.Sort(analysis.Profiles[name])
 	}
 	analysis.ScriptRegions = scriptRegions(lines, shellSettings(lines))
 	return analysis
@@ -246,6 +260,21 @@ func enrichAnalysisWithResolvedConfig(ctx context.Context, text string, analysis
 		if len(rec.ForEach) > 0 {
 			analysis.FanOutRecipes[recipeName] = true
 		}
+		if len(rec.Profiles) > 0 {
+			names := analysis.Profiles[recipeName]
+			seen := make(map[string]bool, len(names)+len(rec.Profiles))
+			for _, name := range names {
+				seen[name] = true
+			}
+			for name := range rec.Profiles {
+				if seen[name] {
+					continue
+				}
+				seen[name] = true
+				names = append(names, name)
+			}
+			analysis.Profiles[recipeName] = names
+		}
 		for argName, arg := range rec.Arguments {
 			if analysis.ArgumentHelp[recipeName] == nil {
 				analysis.ArgumentHelp[recipeName] = map[string]string{}
@@ -263,6 +292,9 @@ func enrichAnalysisWithResolvedConfig(ctx context.Context, text string, analysis
 	slices.Sort(analysis.Recipes)
 	for recipeName := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[recipeName])
+	}
+	for recipeName := range analysis.Profiles {
+		slices.Sort(analysis.Profiles[recipeName])
 	}
 	for recipeName := range analysis.RecipeVars {
 		slices.Sort(analysis.RecipeVars[recipeName])
@@ -320,7 +352,10 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	if syncOutArrayStringValueAt(analysis.Lines, pos) {
 		return nil
 	}
-	return keyCompletions(analysis.CurrentTable)
+	if recipeName, _, ok := recipeProfileArgumentsTableParts(analysis.CurrentTable); ok && (len(analysis.Arguments[recipeName]) == 0 || analysis.HasInclude) {
+		enrichAnalysisWithResolvedConfig(ctx, text, &analysis, -1, opts)
+	}
+	return keyCompletions(analysis, analysis.CurrentTable, opts)
 }
 
 func tablePrefixNeedsResolvedRecipes(prefix string) bool {
@@ -329,7 +364,7 @@ func tablePrefixNeedsResolvedRecipes(prefix string) bool {
 		return false
 	}
 	_, rest, ok = strings.Cut(rest, ".")
-	return ok && (rest == "arguments" || strings.HasPrefix(rest, "arguments."))
+	return ok && (rest == "arguments" || strings.HasPrefix(rest, "arguments.") || rest == "profiles" || strings.HasPrefix(rest, "profiles."))
 }
 
 func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
@@ -1012,6 +1047,29 @@ func tableCompletions(analysis documentAnalysis, prefix string, opts completionO
 			})
 		}
 		return items
+	case rest == "profiles" || rest == "profiles.":
+		items := []completion{
+			{Label: "<name>", InsertText: "", Kind: completionKindField, Detail: "New recipe profile"},
+		}
+		for _, profile := range analysis.Profiles[recipe] {
+			items = append(items, completion{
+				Label:      profile,
+				InsertText: profile + "]",
+				Kind:       completionKindField,
+				Detail:     "Existing recipe profile",
+			})
+		}
+		return items
+	}
+	if _, profileRest, ok := cutRecipeProfileRest(rest); ok {
+		switch {
+		case profileRest == "":
+			return recipeProfileSubtableCompletions()
+		case profileRest == "arguments":
+			return []completion{{Label: "arguments", InsertText: "arguments]", Kind: completionKindField, Detail: "Profile argument defaults"}}
+		case profileRest == "arguments.":
+			return nil
+		}
 	}
 	return recipeSubtableCompletions()
 }
@@ -1170,10 +1228,17 @@ func recipeSubtableCompletions() []completion {
 		{Label: "vars", InsertText: "vars]", Kind: completionKindVariable, Detail: "Recipe placeholders"},
 		{Label: "env", InsertText: "env]", Kind: completionKindField, Detail: "Recipe environment"},
 		{Label: "arguments", InsertText: "arguments.", Kind: completionKindField, Detail: "Recipe argument"},
+		{Label: "profiles", InsertText: "profiles.", Kind: completionKindField, Detail: "Recipe profile"},
 	}
 }
 
-func keyCompletions(table string) []completion {
+func recipeProfileSubtableCompletions() []completion {
+	return []completion{
+		{Label: "arguments", InsertText: "arguments]", Kind: completionKindField, Detail: "Profile argument defaults"},
+	}
+}
+
+func keyCompletions(analysis documentAnalysis, table string, opts completionOptions) []completion {
 	switch {
 	case table == "":
 		return topKeys
@@ -1185,8 +1250,24 @@ func keyCompletions(table string) []completion {
 		if len(parts) == 4 && parts[2] == "arguments" {
 			return argumentKeys
 		}
+		if recipeName, _, ok := recipeProfileArgumentsTableParts(table); ok {
+			return recipeProfileArgumentKeyCompletions(analysis, recipeName, opts)
+		}
 	}
 	return nil
+}
+
+func recipeProfileArgumentKeyCompletions(analysis documentAnalysis, recipeName string, opts completionOptions) []completion {
+	items := make([]completion, 0, len(analysis.Arguments[recipeName]))
+	for _, name := range analysis.Arguments[recipeName] {
+		items = append(items, completion{
+			Label:      name,
+			InsertText: name + " = ",
+			Kind:       completionKindVariable,
+			Detail:     completionSourceDetail("Argument default", analysis.Sources.ArgumentSource(recipeName, name), opts),
+		})
+	}
+	return items
 }
 
 func workdirValueCompletions(ctx context.Context, table, key, prefix string, opts completionOptions) ([]completion, bool) {
@@ -1309,11 +1390,14 @@ func arrayStringRegionAt(lines []string, pos lspPosition, targetKey string) (scr
 }
 
 func argumentDefaultValueCompletions(ctx context.Context, text, table, key, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
-	if key != "default" {
-		return nil, false
-	}
 	recipeName, argName, ok := recipeArgumentTableParts(table)
-	if !ok {
+	if ok {
+		if key != "default" {
+			return nil, false
+		}
+	} else if recipeName, _, ok = recipeProfileArgumentsTableParts(table); ok {
+		argName = key
+	} else {
 		return nil, false
 	}
 	_, recipes, ok := completionConfigIgnoringLine(ctx, text, pos.Line, opts)
@@ -1409,6 +1493,34 @@ func recipeArgumentTableParts(table string) (string, string, bool) {
 		return "", "", false
 	}
 	return recipeName, argName, true
+}
+
+func cutRecipeProfileRest(rest string) (string, string, bool) {
+	afterProfiles, ok := strings.CutPrefix(rest, "profiles.")
+	if !ok {
+		return "", "", false
+	}
+	profileName, profileRest, ok := strings.Cut(afterProfiles, ".")
+	if !ok || profileName == "" {
+		return profileName, "", true
+	}
+	return profileName, profileRest, true
+}
+
+func recipeProfileArgumentsTableParts(table string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(table, "recipes.")
+	if !ok {
+		return "", "", false
+	}
+	recipeName, rest, ok := strings.Cut(rest, ".profiles.")
+	if !ok || recipeName == "" {
+		return "", "", false
+	}
+	profileName, rest, ok := strings.Cut(rest, ".")
+	if !ok || profileName == "" || rest != "arguments" {
+		return "", "", false
+	}
+	return recipeName, profileName, true
 }
 
 func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, allowVariadic, allowForEach bool, opts completionOptions) []completion {

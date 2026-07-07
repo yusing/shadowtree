@@ -199,6 +199,45 @@ func TestCompletionsIncludeMergedBuiltinArgumentTables(t *testing.T) {
 	assertLabels(t, items, "pkg")
 }
 
+func TestCompletionsIncludeRecipeProfileTables(t *testing.T) {
+	text := `[recipes.benchmark.arguments.connections]
+type = "int"
+
+[recipes.benchmark.profiles.stable.arguments]
+connections = 64
+
+[recipes.benchmark.profiles.
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`[recipes.benchmark.profiles.`)})
+	assertLabels(t, items, "stable")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`[recipes.benchmark.profiles.stable.`)})
+	assertLabels(t, items, "arguments")
+}
+
+func TestCompletionsIncludeRecipeProfileArgumentKeys(t *testing.T) {
+	text := `[recipes.benchmark.arguments.connections]
+type = "int"
+
+[recipes.benchmark.arguments.requests]
+type = "int"
+
+[recipes.benchmark.profiles.stable.arguments]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: 0})
+	assertLabels(t, items, "connections", "requests")
+}
+
+func TestCompletionsIncludeRecipeProfileArgumentValues(t *testing.T) {
+	text := `[recipes.test.arguments.race]
+type = "bool"
+
+[recipes.test.profiles.stable.arguments]
+race = ` + "\n"
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`race = `)})
+	assertLabels(t, items, "true", "false")
+}
+
 func TestCompletionsIncludeForEachItemPlaceholders(t *testing.T) {
 	text := `[recipes.lint]
 for_each = "@enum a b"

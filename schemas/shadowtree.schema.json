@@ -98,6 +98,9 @@
         "arguments": {
           "$ref": "#/definitions/arguments"
         },
+        "profiles": {
+          "$ref": "#/definitions/recipeProfiles"
+        },
         "vars": {
           "$ref": "#/definitions/vars",
           "description": "Recipe-local placeholder values. These override top-level vars and may reference other vars."
@@ -168,6 +171,38 @@
       "patternProperties": {
         "^(?!run_id$)[^=()\\[\\], \\t\\r\\n]+$": {
           "$ref": "#/definitions/argument"
+        }
+      }
+    },
+    "recipeProfiles": {
+      "type": "object",
+      "description": "Recipe-local profiles selected with profile=<name>. A profile sets typed argument defaults before explicit CLI arguments are applied.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
+          "$ref": "#/definitions/recipeProfile"
+        }
+      }
+    },
+    "recipeProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "$ref": "#/definitions/profileArguments"
+        }
+      },
+      "x-taplo": {
+        "initKeys": ["arguments"]
+      }
+    },
+    "profileArguments": {
+      "type": "object",
+      "description": "Argument defaults applied by this recipe profile. Keys must name arguments declared under the recipe's arguments table.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(?!run_id$)[^=()\\[\\], \\t\\r\\n]+$": {
+          "$ref": "#/definitions/scalar"
         }
       }
     },
@@ -279,7 +314,7 @@
       }
     },
     "scalar": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "string"
         },

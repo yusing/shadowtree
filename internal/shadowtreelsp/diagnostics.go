@@ -203,12 +203,13 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 }
 
 func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
-	if len(ref.Args) == 0 || len(rec.Arguments) == 0 {
+	if len(ref.Args) == 0 || len(rec.Arguments) == 0 && len(rec.Profiles) == 0 {
 		return nil
 	}
 	usesVariadicArgs := recipe.RecipeUsesVariadicArgs(rec)
 	positionals := recipe.PositionalArguments(rec.Arguments)
 	nextPositional := 0
+	selectedProfile := ""
 	var diagnostics []lspDiagnostic
 	for _, argSpan := range ref.Args {
 		text := strings.TrimSpace(argSpan.Text)
@@ -238,6 +239,19 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 				continue
 			}
 		} else if usesShellExpansion && shellExpansionInArgumentName(name) {
+			continue
+		}
+		if name == recipe.ProfileArgumentName && len(rec.Profiles) > 0 {
+			if usesShellExpansion {
+				selectedProfile = value
+				continue
+			}
+			value = unquoteRecipeReferenceArgumentValue(value)
+			if err := recipe.ValidateProfileSelection(rec, selectedProfile, value); err != nil {
+				diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
+				continue
+			}
+			selectedProfile = value
 			continue
 		}
 		arg, exists := rec.Arguments[name]

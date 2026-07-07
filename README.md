@@ -347,6 +347,35 @@ literally to `{@}`, including option values that contain `=`:
 shadowtree test pkg=./internal/recipe -- --flag NAME=value
 ```
 
+Recipe-local profiles can set several argument defaults at once. Select them
+with `profile=<name>` after the recipe name; explicit CLI arguments still win:
+
+```toml
+[recipes.benchmark]
+cmd = "run-benchmark --connections {connections} --requests {requests} --runs {runs}"
+
+[recipes.benchmark.arguments.connections]
+type = "int"
+default = 32
+
+[recipes.benchmark.arguments.requests]
+type = "int"
+default = 1000
+
+[recipes.benchmark.arguments.runs]
+type = "int"
+default = 1
+
+[recipes.benchmark.profiles.stable.arguments]
+connections = 64
+requests = 20000
+runs = 5
+```
+
+```sh
+shadowtree benchmark profile=stable runs=3
+```
+
 ## Built-In Profiles
 
 Supported profiles are `go` and `node`. A profile is selected by explicit

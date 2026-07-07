@@ -1072,6 +1072,52 @@ func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveTypedArgumentsAppliesProfileDefaults(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"vegeta", "-connections", "{connections}", "-requests", "{requests}", "-runs", "{runs}", "{@}"},
+		Arguments: map[string]Argument{
+			"connections": {Type: "int", Default: 32},
+			"requests":    {Type: "int", Default: 1000},
+			"runs":        {Type: "int", Default: 1},
+		},
+		Profiles: map[string]RecipeProfile{
+			"stable": {
+				Arguments: map[string]any{
+					"connections": int64(64),
+					"requests":    int64(20000),
+					"runs":        int64(5),
+				},
+			},
+		},
+	}
+
+	got, err := Resolve("benchmark", rec, []string{"profile=stable", "runs=7", "--", "-label=stable"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Command{"vegeta", "-connections", "64", "-requests", "20000", "-runs", "7", "-label=stable"}
+	if !slices.Equal(got.Main, want) {
+		t.Fatalf("Main = %#v, want %#v", got.Main, want)
+	}
+}
+
+func TestResolveTypedArgumentsRejectsUnknownProfile(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"run", "{connections}"},
+		Arguments: map[string]Argument{
+			"connections": {Type: "int", Default: 32},
+		},
+		Profiles: map[string]RecipeProfile{
+			"stable": {},
+		},
+	}
+
+	_, err := Resolve("benchmark", rec, []string{"profile=smoke"}, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `unknown profile "smoke"`) {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
 func TestResolveUntypedRecipeSplicesVariadicArgs(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"go", "test", "./...", "{@}"},
