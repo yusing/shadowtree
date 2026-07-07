@@ -199,6 +199,7 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 		if text == "" {
 			continue
 		}
+		usesShellExpansion := argSpan.Dynamic
 		if text == "--" && usesVariadicArgs {
 			break
 		}
@@ -217,6 +218,11 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 			name = positionals[nextPositional]
 			value = text
 			nextPositional++
+			if usesShellExpansion {
+				continue
+			}
+		} else if usesShellExpansion && shellExpansionInArgumentName(name) {
+			continue
 		}
 		arg, exists := rec.Arguments[name]
 		if !exists {
@@ -224,6 +230,9 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 				continue
 			}
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, "unknown argument "+strconv.Quote(name)))
+			continue
+		}
+		if usesShellExpansion {
 			continue
 		}
 		value = unquoteRecipeReferenceArgumentValue(value)
@@ -236,6 +245,10 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 		}
 	}
 	return diagnostics
+}
+
+func shellExpansionInArgumentName(name string) bool {
+	return strings.ContainsAny(name, "$`")
 }
 
 func commandReferenceArgumentDiagnostic(lines []string, arg commandReferenceArgumentSpan, message string) lspDiagnostic {

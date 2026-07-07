@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -339,7 +340,12 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 }
 
 func runExternalCommand(ctx context.Context, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	executable, err := lookPathEnv(command[0], env, dir)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, executable, command[1:]...)
+	cmd.Args[0] = command[0]
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = stdin
@@ -353,6 +359,73 @@ func runExternalCommand(ctx context.Context, dir string, env []string, command r
 		return err
 	}
 	return nil
+}
+
+func lookPathEnv(file string, env []string, dir string) (string, error) {
+	if commandHasPathSeparator(file) {
+		return file, nil
+	}
+	path, ok := envValue(env, "PATH")
+	if !ok {
+		if env == nil {
+			return exec.LookPath(file)
+		}
+		return "", fmt.Errorf("%s: %w", file, exec.ErrNotFound)
+	}
+	names := executableNames(file, env)
+	for _, pathDir := range filepath.SplitList(path) {
+		for _, name := range names {
+			execPath := filepath.Join(pathDir, name)
+			statPath := execPath
+			if pathDir == "" {
+				execPath = "." + string(filepath.Separator) + name
+				statPath = filepath.Join(dir, name)
+			} else if !filepath.IsAbs(pathDir) {
+				statPath = filepath.Join(dir, pathDir, name)
+			}
+			info, err := os.Stat(statPath)
+			if err != nil || info.IsDir() || !isExecutable(info) {
+				continue
+			}
+			return execPath, nil
+		}
+	}
+	return "", fmt.Errorf("%s: %w", file, exec.ErrNotFound)
+}
+
+func commandHasPathSeparator(file string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.ContainsAny(file, `/\`)
+	}
+	return strings.Contains(file, "/")
+}
+
+func executableNames(file string, env []string) []string {
+	if runtime.GOOS != "windows" || filepath.Ext(file) != "" {
+		return []string{file}
+	}
+	pathext, ok := envValue(env, "PATHEXT")
+	if !ok || pathext == "" {
+		pathext = ".COM;.EXE;.BAT;.CMD"
+	}
+	names := []string{file}
+	for _, ext := range strings.Split(pathext, ";") {
+		if ext == "" {
+			continue
+		}
+		if ext[0] != '.' {
+			ext = "." + ext
+		}
+		names = append(names, file+ext)
+	}
+	return names
+}
+
+func isExecutable(info os.FileInfo) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
@@ -1094,21 +1167,43 @@ func shouldSkip(rel string, entry fs.DirEntry) bool {
 }
 
 func mergedEnv(base []string, overlays ...map[string]string) []string {
-	env := map[string]string{}
-	for _, item := range base {
-		key, value, ok := strings.Cut(item, "=")
-		if ok {
-			env[key] = value
-		}
-	}
+	env := envListMap(base)
 	for _, overlay := range overlays {
 		maps.Copy(env, overlay)
 	}
+	return envMapList(env)
+}
+
+func envMapList(env map[string]string) []string {
 	out := make([]string, 0, len(env))
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		out = append(out, key+"="+env[key])
 	}
 	return out
+}
+
+func envListMap(env []string) map[string]string {
+	values := make(map[string]string, len(env))
+	for _, item := range env {
+		name, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[name] = value
+		}
+	}
+	return values
+}
+
+func envValue(env []string, name string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		key, value, ok := strings.Cut(env[i], "=")
+		if !ok {
+			continue
+		}
+		if key == name || runtime.GOOS == "windows" && strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func writerOr(w io.Writer, fallback io.Writer) io.Writer {

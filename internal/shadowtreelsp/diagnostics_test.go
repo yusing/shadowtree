@@ -783,6 +783,57 @@ default = "."
 	}
 }
 
+func TestDocumentDiagnosticsAllowShellVariablesInRecipeReferenceArguments(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.bench]
+cmd = '''
+pkg=./internal/runner
+bench=BenchmarkRun
+@test "$pkg" -run '^$' -bench "$bench" -benchtime=1x -count=1 {@}
+'''
+
+[recipes.test]
+cmd = "go test {pkg} {@}"
+
+[recipes.test.arguments.pkg]
+type = "rel_path"
+position = 1
+default = "."
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsValidateSingleQuotedDollarRecipeReferenceArguments(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@compile flag='$not_bool'
+'''
+
+[recipes.compile]
+cmd = "go build"
+
+[recipes.compile.arguments.flag]
+type = "bool"
+`)
+	assertOneDiagnostic(t, diagnostics, `flag: want bool, got "$not_bool"`)
+}
+
+func TestDocumentDiagnosticsRejectUnknownNamedArgWithDynamicValue(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@compile typo="$MODE"
+'''
+
+[recipes.compile]
+cmd = "go build"
+
+[recipes.compile.arguments.mode]
+type = "string"
+`)
+	assertOneDiagnostic(t, diagnostics, `unknown argument "typo"`)
+}
+
 func TestDocumentDiagnosticsRejectUnknownNamedArgWithVariadicArgs(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 cmd = '''

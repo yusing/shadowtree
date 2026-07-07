@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"maps"
 	"slices"
 	"strings"
 
@@ -33,13 +32,14 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
 	}
 	exported := map[string]string{}
+	exportCommands := map[syntax.Pos]struct{}{}
 	runner, err := interp.New(
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(dir),
 		interp.Params(scriptParams(command)...),
 		interp.StdIO(stdin, stdout, stderr),
-		interp.CallHandler(exportCallHandler(exported)),
-		interp.ExecHandlers(recipeReferenceExecHandler(references, exported, sandbox, options, stack)),
+		interp.CallHandler(exportCallHandler(exported, exportCommands)),
+		interp.ExecHandlers(recipeReferenceExecHandler(references, exported, exportCommands, sandbox, options, stack, env)),
 	)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 	return nil
 }
 
-func exportCallHandler(exported map[string]string) interp.CallHandlerFunc {
+func exportCallHandler(exported map[string]string, exportCommands map[syntax.Pos]struct{}) interp.CallHandlerFunc {
 	return func(ctx context.Context, args []string) ([]string, error) {
 		if len(args) < 2 || args[0] != "export" {
 			return args, nil
@@ -77,6 +77,7 @@ func exportCallHandler(exported map[string]string) interp.CallHandlerFunc {
 				exported[name] = current.Str
 			}
 		}
+		exportCommands[handler.Pos] = struct{}{}
 		return []string{":"}, nil
 	}
 }
@@ -93,13 +94,18 @@ func scriptParams(command recipe.Command) []string {
 	return slices.Concat([]string{"--"}, command[4:])
 }
 
-func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map[string]string, sandbox *sandboxWorkspace, options Options, stack []string) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map[string]string, exportCommands map[syntax.Pos]struct{}, sandbox *sandboxWorkspace, options Options, stack []string, baseEnv []string) func(interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 {
 				return next(ctx, args)
 			}
 			handler := interp.HandlerCtx(ctx)
+			if _, ok := exportCommands[handler.Pos]; ok {
+				delete(exportCommands, handler.Pos)
+			} else {
+				syncScriptExports(handler.Env, exported)
+			}
 			if err := applyScriptExports(handler.Env, exported); err != nil {
 				return err
 			}
@@ -109,7 +115,7 @@ func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map
 			if _, ok := recipe.ParseRecipeReference(recipe.Command(args)); !ok || options.Recipes == nil {
 				return next(ctx, args)
 			}
-			env := environList(handler.Env)
+			env := scriptEnvironList(handler.Env, baseEnv)
 			err := runRecipeReference(ctx, sandbox, handler.Dir, env, recipe.Command(args), handler.Stdin, handler.Stdout, handler.Stderr, options, stack)
 			if err == nil {
 				return nil
@@ -120,6 +126,17 @@ func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map
 			}
 			return err
 		}
+	}
+}
+
+func syncScriptExports(env expand.Environ, exported map[string]string) {
+	for name := range exported {
+		vr := env.Get(name)
+		if !vr.IsSet() || vr.Kind != expand.String {
+			delete(exported, name)
+			continue
+		}
+		exported[name] = vr.Str
 	}
 }
 
@@ -144,17 +161,26 @@ func applyScriptExports(env expand.Environ, exported map[string]string) error {
 	return nil
 }
 
-func environList(env expand.Environ) []string {
-	values := map[string]string{}
+func scriptEnvironList(env expand.Environ, baseEnv []string) []string {
+	values := envListMap(baseEnv)
+	baseNames := make(map[string]struct{}, len(values))
+	for name := range values {
+		baseNames[name] = struct{}{}
+		vr := env.Get(name)
+		if !vr.IsSet() || !vr.Exported || vr.Kind != expand.String {
+			delete(values, name)
+			continue
+		}
+		values[name] = vr.Str
+	}
 	env.Each(func(name string, vr expand.Variable) bool {
+		if _, ok := baseNames[name]; ok {
+			return true
+		}
 		if vr.IsSet() && vr.Exported && vr.Kind == expand.String {
 			values[name] = vr.Str
 		}
 		return true
 	})
-	out := make([]string, 0, len(values))
-	for _, name := range slices.Sorted(maps.Keys(values)) {
-		out = append(out, name+"="+values[name])
-	}
-	return out
+	return envMapList(values)
 }

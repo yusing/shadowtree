@@ -248,6 +248,134 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithArguments(t *testing.T) {
 	}
 }
 
+func TestRunExpandsScriptVariablesInRecipeReferenceArguments(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/runtime\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(source, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(source, "go.args")
+	fakeGo := filepath.Join(bin, "go")
+	if err := os.WriteFile(fakeGo, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GO_CAPTURE\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: source})
+	recipes["bench"] = recipe.Recipe{
+		Cmd:       recipe.ScriptCommand("run_bench() {\n\tpkg=./internal/runner\n\tbench=BenchmarkRun\n\t@test \"$pkg\" -run '^$' -bench \"$bench\" -benchtime=1x -count=1 {@}\n}\nrun_bench"),
+		Env:       map[string]string{"GO_CAPTURE": capture, "PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH")},
+		Sandboxed: new(false),
+	}
+	resolved, err := recipe.Resolve(
+		"bench",
+		recipes["bench"],
+		[]string{"-cpu", "1"},
+		nil,
+		nil,
+		"",
+		recipe.GoProfile,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   recipes,
+		SourceDir: source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "test\n./internal/runner\n-run\n^$\n-bench\nBenchmarkRun\n-benchtime=1x\n-count=1\n-cpu\n1\n"
+	if string(got) != want {
+		t.Fatalf("go args = %q, want %q", string(got), want)
+	}
+}
+
+func TestRunScriptRecipeReferenceUsesRelativePathFromRecipeDir(t *testing.T) {
+	source := t.TempDir()
+	bin := filepath.Join(source, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "shadow-echo"), []byte("#!/bin/sh\nprintf shadow\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("@echo"),
+			Env:       map[string]string{"PATH": "bin"},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"echo": {Cmd: recipe.Command{"shadow-echo"}}},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunScriptRecipeReferenceRespectsUnsetPath(t *testing.T) {
+	source := t.TempDir()
+	bin := filepath.Join(source, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "shadow-echo"), []byte("#!/bin/sh\nprintf shadow\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("unset PATH\n@echo"),
+			Env:       map[string]string{"PATH": bin},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"echo": {Cmd: recipe.Command{"shadow-echo"}}},
+		SourceDir: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "executable file not found") {
+		t.Fatalf("Run error = %v, want command not found", err)
+	}
+}
+
 func TestRunInvokesLiteralScriptRecipeReferenceInConditional(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
@@ -562,6 +690,76 @@ func TestRunSupportsExportBeforeScriptRecipeReference(t *testing.T) {
 	}
 }
 
+func TestRunUsesCurrentExportedValueForScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("export VALUE=old\nVALUE=shadow\n@echo-value"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"echo-value": {Cmd: recipe.Command{"sh", "-c", "printf %s \"${VALUE:-missing}\""}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "shadow" {
+		t.Fatalf("stdout = %q, want current exported value", stdout.String())
+	}
+}
+
+func TestRunDoesNotReexportUnsetValueForScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("export VALUE=shadow\nunset VALUE\n@echo-value"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"echo-value": {Cmd: recipe.Command{"sh", "-c", "printf %s \"${VALUE:-missing}\""}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "missing" {
+		t.Fatalf("stdout = %q, want unset value hidden", stdout.String())
+	}
+}
+
 func TestRunSupportsExportBeforeExternalCommandInScriptWithRecipeReference(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
@@ -601,6 +799,42 @@ func TestRunDoesNotPassUnexportedVariablesToScriptRecipeReference(t *testing.T) 
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("VALUE=shadow\n@echo-value"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"echo-value": {Cmd: recipe.Command{"sh", "-c", "printf %s \"${VALUE:-missing}\""}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "missing" {
+		t.Fatalf("stdout = %q, want unexported value hidden", stdout.String())
+	}
+}
+
+func TestRunDoesNotPassRecreatedUnexportedVariableToScriptRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("unset VALUE\nVALUE=shadow\n@echo-value"),
+			Env:       map[string]string{"VALUE": "base"},
 			Sandboxed: new(false),
 		},
 		nil,

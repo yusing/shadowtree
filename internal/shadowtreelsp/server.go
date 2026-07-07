@@ -228,7 +228,7 @@ func initializeResult() map[string]any {
 				"change":    2,
 			},
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@", ",", ":"},
+				"triggerCharacters": []string{"[", ".", "{", "=", "\"", "'", "@", "$", ",", ":"},
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{

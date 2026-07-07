@@ -21,7 +21,9 @@ type documentAnalysis struct {
 	Lines         []string
 	Recipes       []string
 	GlobalVars    []string
+	GlobalEnv     []string
 	RecipeVars    map[string][]string
+	RecipeEnv     map[string][]string
 	Arguments     map[string][]string
 	ArgumentHelp  map[string]map[string]string
 	FanOutRecipes map[string]bool
@@ -121,6 +123,7 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	analysis := documentAnalysis{
 		Lines:         lines,
 		RecipeVars:    map[string][]string{},
+		RecipeEnv:     map[string][]string{},
 		Arguments:     map[string][]string{},
 		ArgumentHelp:  map[string]map[string]string{},
 		FanOutRecipes: map[string]bool{},
@@ -143,10 +146,15 @@ func analyzeDocument(text string, line int) documentAnalysis {
 			switch {
 			case table == "vars" || table == "var_commands":
 				analysis.GlobalVars = appendUnique(analysis.GlobalVars, key)
+			case table == "env":
+				analysis.GlobalEnv = appendUnique(analysis.GlobalEnv, key)
 			case strings.HasPrefix(table, "recipes."):
 				parts := strings.Split(table, ".")
 				if len(parts) == 3 && parts[2] == "vars" {
 					analysis.RecipeVars[parts[1]] = appendUnique(analysis.RecipeVars[parts[1]], key)
+				}
+				if len(parts) == 3 && parts[2] == "env" {
+					analysis.RecipeEnv[parts[1]] = appendUnique(analysis.RecipeEnv[parts[1]], key)
 				}
 			}
 		}
@@ -155,6 +163,7 @@ func analyzeDocument(text string, line int) documentAnalysis {
 		}
 	}
 	slices.Sort(analysis.GlobalVars)
+	slices.Sort(analysis.GlobalEnv)
 	var cfg recipe.Config
 	if _, err := toml.Decode(text, &cfg); err == nil {
 		for recipeName, rec := range cfg.Recipes {
@@ -172,6 +181,9 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	slices.Sort(analysis.Recipes)
 	for name := range analysis.RecipeVars {
 		slices.Sort(analysis.RecipeVars[name])
+	}
+	for name := range analysis.RecipeEnv {
+		slices.Sort(analysis.RecipeEnv[name])
 	}
 	for name := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[name])
@@ -239,6 +251,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 		return tableCompletions(analysis, tablePrefix)
 	}
 	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
+		return items
+	}
+	if items, ok := shellVariableCompletions(analysis, pos); ok {
 		return items
 	}
 	if items, ok := commandListRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
@@ -456,6 +471,306 @@ func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStar
 		})
 	}
 	return items
+}
+
+func shellVariableCompletions(analysis documentAnalysis, pos lspPosition) ([]completion, bool) {
+	region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos)
+	if !ok || !supportedShell(region.Shell) {
+		return nil, false
+	}
+	line := lineAt(analysis.Lines, pos.Line)
+	prefix, ok := shellVariableCompletionPrefixAt(line, pos, region)
+	if !ok {
+		return nil, false
+	}
+	names := shellVariableCompletionNames(analysis, region, pos, prefix.Text)
+	if len(names) == 0 {
+		return nil, true
+	}
+	items := make([]completion, 0, len(names))
+	for _, name := range names {
+		label := "$" + name
+		insertText := name
+		if prefix.Braced {
+			label = "${" + name + "}"
+			if !prefix.Closed {
+				insertText += "}"
+			}
+		}
+		items = append(items, completion{
+			Label:      label,
+			InsertText: insertText,
+			Kind:       completionKindVariable,
+			Detail:     "Shell variable",
+			Edit:       &completionEdit{Start: prefix.EditStart, End: prefix.EditEnd},
+		})
+	}
+	return items, true
+}
+
+type shellVariableCompletionPrefix struct {
+	EditStart int
+	EditEnd   int
+	Text      string
+	Braced    bool
+	Closed    bool
+}
+
+func shellVariableCompletionPrefixAt(line string, pos lspPosition, region scriptRegion) (shellVariableCompletionPrefix, bool) {
+	character := min(pos.Character, len(line))
+	start := 0
+	if pos.Line == region.StartLine {
+		start = region.StartCol
+	}
+	end := len(line)
+	if pos.Line == region.EndLine {
+		end = min(end, region.EndCol)
+	}
+	if character < start || character > end {
+		return shellVariableCompletionPrefix{}, false
+	}
+	dollar := strings.LastIndexByte(line[start:character], '$')
+	if dollar < 0 {
+		return shellVariableCompletionPrefix{}, false
+	}
+	dollar += start
+	if shellSingleQuotedAt(line, start, character) {
+		return shellVariableCompletionPrefix{}, false
+	}
+	if dollar > start && line[dollar-1] == '\\' || dollar+1 < len(line) && line[dollar+1] == '(' {
+		return shellVariableCompletionPrefix{}, false
+	}
+	if dollar+1 < character && line[dollar+1] == '{' {
+		editStart := dollar + 2
+		text := line[editStart:character]
+		if !identifierPrefix(text) {
+			return shellVariableCompletionPrefix{}, false
+		}
+		editEnd := character
+		for editEnd < end && isIdentPart(line[editEnd]) {
+			editEnd++
+		}
+		closed := editEnd < end && line[editEnd] == '}'
+		return shellVariableCompletionPrefix{
+			EditStart: editStart,
+			EditEnd:   editEnd,
+			Text:      text,
+			Braced:    true,
+			Closed:    closed,
+		}, true
+	}
+	editStart := dollar + 1
+	text := line[editStart:character]
+	if !identifierPrefix(text) {
+		return shellVariableCompletionPrefix{}, false
+	}
+	editEnd := character
+	for editEnd < end && isIdentPart(line[editEnd]) {
+		editEnd++
+	}
+	return shellVariableCompletionPrefix{EditStart: editStart, EditEnd: editEnd, Text: text}, true
+}
+
+func shellSingleQuotedAt(line string, start, character int) bool {
+	quote := byte(0)
+	for col := start; col < character; col++ {
+		switch {
+		case quote == '\'':
+			if line[col] == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if line[col] == '\\' {
+				col++
+				continue
+			}
+			if line[col] == '"' {
+				quote = 0
+			}
+		case line[col] == '\'' || line[col] == '"':
+			quote = line[col]
+		}
+	}
+	return quote == '\''
+}
+
+func shellVariableCompletionNames(analysis documentAnalysis, region scriptRegion, pos lspPosition, prefix string) []string {
+	recipeName := currentRecipe(region.Table)
+	names := map[string]struct{}{}
+	addName := func(name string) {
+		if strings.HasPrefix(name, prefix) {
+			names[name] = struct{}{}
+		}
+	}
+	for _, name := range analysis.GlobalEnv {
+		addName(name)
+	}
+	for _, name := range analysis.RecipeEnv[recipeName] {
+		addName(name)
+	}
+	for lineNo := region.StartLine; lineNo <= pos.Line && lineNo < len(analysis.Lines); lineNo++ {
+		line := analysis.Lines[lineNo]
+		start, end := 0, len(line)
+		if lineNo == region.StartLine {
+			start = region.StartCol
+		}
+		if lineNo == region.EndLine {
+			end = min(end, region.EndCol)
+		}
+		if lineNo == pos.Line {
+			end = min(end, pos.Character)
+		}
+		for _, name := range shellAssignmentNames(line, start, end, region.Shell) {
+			addName(name)
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
+}
+
+func shellAssignmentNames(line string, start, end int, shell string) []string {
+	if shell == "fish" {
+		return fishShellAssignmentNames(line, start, end)
+	}
+	var names []string
+	commandPosition := true
+	var pendingAssignments []string
+	for col := start; col < end; {
+		ch := line[col]
+		if ch == '#' {
+			break
+		}
+		if isShellSpace(ch) {
+			col++
+			continue
+		}
+		if ch == '\'' || ch == '"' {
+			col = skipShellString(line, col, end, ch)
+			pendingAssignments = nil
+			commandPosition = false
+			continue
+		}
+		if commandPosition {
+			assignEnd, ok := scanShellAssignment(line, col, end)
+			if ok {
+				if eq := strings.IndexByte(line[col:assignEnd], '='); eq > 0 {
+					pendingAssignments = append(pendingAssignments, line[col:col+eq])
+				}
+				col = assignEnd
+				continue
+			}
+		}
+		if isShellOperator(ch) {
+			if commandPosition {
+				names = append(names, pendingAssignments...)
+			}
+			pendingAssignments = nil
+			commandPosition = true
+			col++
+			continue
+		}
+		if isShellWordStart(ch) {
+			wordStart := col
+			for col < end && isShellWordPart(line[col]) {
+				col++
+			}
+			word := line[wordStart:col]
+			if commandPosition && word == "export" {
+				var exportNames []string
+				col, exportNames = shExportNames(line, col, end)
+				names = append(names, exportNames...)
+				pendingAssignments = nil
+				commandPosition = false
+				continue
+			}
+			if commandPosition {
+				pendingAssignments = nil
+			}
+			commandPosition = shellKeyword(shell, word) && commandContinuesAfterKeyword(shell, word)
+			continue
+		}
+		col++
+	}
+	if commandPosition {
+		names = append(names, pendingAssignments...)
+	}
+	return names
+}
+
+func shExportNames(line string, start, end int) (int, []string) {
+	var names []string
+	col := start
+	for col < end {
+		for col < end && isShellSpace(line[col]) {
+			col++
+		}
+		if col >= end || line[col] == '#' || isShellOperator(line[col]) {
+			break
+		}
+		wordStart := col
+		for col < end && !isShellSpace(line[col]) && !isShellOperator(line[col]) && line[col] != '#' {
+			if line[col] == '\'' || line[col] == '"' {
+				col = skipShellString(line, col, end, line[col])
+				continue
+			}
+			col++
+		}
+		word := line[wordStart:col]
+		if word == "" || strings.HasPrefix(word, "-") {
+			continue
+		}
+		name, _, _ := strings.Cut(word, "=")
+		if validShellVariableName(name) {
+			names = append(names, name)
+		}
+	}
+	return col, names
+}
+
+func fishShellAssignmentNames(line string, start, end int) []string {
+	var names []string
+	for col := start; col < end; {
+		for col < end && isShellSpace(line[col]) {
+			col++
+		}
+		if col >= end || line[col] == '#' {
+			break
+		}
+		wordStart := col
+		for col < end && isShellWordPart(line[col]) {
+			col++
+		}
+		if line[wordStart:col] != "set" {
+			for col < end && !isShellOperator(line[col]) && line[col] != '#' {
+				col++
+			}
+			continue
+		}
+		for col < end {
+			for col < end && isShellSpace(line[col]) {
+				col++
+			}
+			if col >= end || line[col] == '#' || isShellOperator(line[col]) {
+				break
+			}
+			argStart := col
+			for col < end && isShellWordPart(line[col]) {
+				col++
+			}
+			arg := line[argStart:col]
+			if arg == "" {
+				col++
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			if isIdentStart(arg[0]) {
+				names = append(names, arg)
+			}
+			break
+		}
+	}
+	return names
 }
 
 func scriptRegionAt(lines []string, regions []scriptRegion, pos lspPosition) (scriptRegion, bool) {
@@ -1763,10 +2078,11 @@ type commandReferenceSpan struct {
 }
 
 type commandReferenceArgumentSpan struct {
-	Text  string
-	Line  int
-	Start int
-	End   int
+	Text    string
+	Dynamic bool
+	Line    int
+	Start   int
+	End     int
 }
 
 func (ref commandReferenceSpan) Target() string {
@@ -2043,11 +2359,16 @@ func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion
 		if argStartLine != argEndLine {
 			continue
 		}
+		text := arg.Value
+		if line := lineAt(lines, argStartLine); argStartCol <= argEndCol && argEndCol <= len(line) {
+			text = line[argStartCol:argEndCol]
+		}
 		span.Args = append(span.Args, commandReferenceArgumentSpan{
-			Text:  arg.Value,
-			Line:  argStartLine,
-			Start: argStartCol,
-			End:   argEndCol,
+			Text:    text,
+			Dynamic: arg.Dynamic,
+			Line:    argStartLine,
+			Start:   argStartCol,
+			End:     argEndCol,
 		})
 	}
 	return span
@@ -2488,4 +2809,25 @@ func isIdentStart(ch byte) bool {
 
 func isIdentPart(ch byte) bool {
 	return isIdentStart(ch) || ch >= '0' && ch <= '9'
+}
+
+func identifierPrefix(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if !isIdentPart(value[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func validShellVariableName(value string) bool {
+	if value == "" || !isIdentStart(value[0]) {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		if !isIdentPart(value[i]) {
+			return false
+		}
+	}
+	return true
 }

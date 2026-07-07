@@ -429,6 +429,115 @@ cmd = "@t"
 	assertLabels(t, items, "@test")
 }
 
+func TestCompletionsIncludeShellVariablesInScriptRecipeReferenceArgs(t *testing.T) {
+	text := `[env]
+GOFLAGS = "-count=1"
+
+[recipes.bench.env]
+BENCHTIME = "1x"
+
+[recipes.bench]
+cmd = '''
+pkg=./internal/runner
+bench=BenchmarkRun
+@test "$p" -bench "$b" -benchtime="$"
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`@test "$p`)})
+	assertLabels(t, items, "$pkg")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`@test "$p" -bench "$b`)})
+	assertLabels(t, items, "$bench")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 10, Character: len(`@test "$p" -bench "$b" -benchtime="$`)})
+	assertLabels(t, items, "$GOFLAGS", "$BENCHTIME", "$pkg", "$bench")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 10, Character: len(`@test "$p`)})
+	edit := completionTextEdit(t, result, "$pkg")
+	if edit["newText"] != "pkg" {
+		t.Fatalf("newText = %#v, want variable name", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`@test "$`), len(`@test "$p`))
+}
+
+func TestCompletionsIncludeExportedShellVariables(t *testing.T) {
+	text := `[recipes.bench]
+cmd = '''
+export CALLFILTER_BENCH_ROWS={count}
+$
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`$`)})
+	assertLabels(t, items, "$CALLFILTER_BENCH_ROWS")
+}
+
+func TestCompletionsExcludeCommandScopedShellAssignments(t *testing.T) {
+	text := `[recipes.bench]
+cmd = '''
+scoped=123 foo
+persistent=456
+$
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`$`)})
+	assertLabels(t, items, "$persistent")
+	assertNoLabels(t, items, "$scoped")
+}
+
+func TestCompletionsIncludeBracedShellVariables(t *testing.T) {
+	text := `[recipes.bench]
+cmd = '''
+pkg=./internal/runner
+@test "${p"
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`@test "${p`)})
+	assertLabels(t, items, "${pkg}")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 3, Character: len(`@test "${p`)})
+	edit := completionTextEdit(t, result, "${pkg}")
+	if edit["newText"] != "pkg}" {
+		t.Fatalf("newText = %#v, want braced variable tail", edit["newText"])
+	}
+	assertEditRange(t, edit, len(`@test "${`), len(`@test "${p`))
+}
+
+func TestCompletionsExcludeShellVariablesInSingleQuotes(t *testing.T) {
+	text := `[recipes.bench]
+cmd = '''
+pkg=./internal/runner
+@test '$p'
+'''
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`@test '$p`)})
+	assertNoLabels(t, items, "$pkg")
+}
+
+func TestCommandReferenceSpansMarkOnlyExpandedShellArgumentsDynamic(t *testing.T) {
+	text := `[recipes.test]
+cmd = '''
+@build literal='$not_dynamic' expanded="$dynamic"
+'''
+`
+	lines := strings.Split(text, "\n")
+	refs := commandReferenceSpans(lines)
+	if len(refs) != 1 {
+		t.Fatalf("refs = %#v, want one", refs)
+	}
+	if len(refs[0].Args) != 2 {
+		t.Fatalf("args = %#v, want two", refs[0].Args)
+	}
+	if refs[0].Args[0].Text != "literal='$not_dynamic'" || refs[0].Args[1].Text != `expanded="$dynamic"` {
+		t.Fatalf("args = %#v", refs[0].Args)
+	}
+	if refs[0].Args[0].Dynamic {
+		t.Fatalf("single-quoted arg marked dynamic: %#v", refs[0].Args[0])
+	}
+	if !refs[0].Args[1].Dynamic {
+		t.Fatalf("double-quoted arg was not marked dynamic: %#v", refs[0].Args[1])
+	}
+}
+
 func TestCompletionsIncludeEnumInArgumentValuesReferences(t *testing.T) {
 	text := `[recipes.test.arguments.target]
 values = "@"

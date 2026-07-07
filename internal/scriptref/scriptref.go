@@ -26,9 +26,10 @@ type Reference struct {
 
 // Argument describes a shell word passed to a recipe reference.
 type Argument struct {
-	Start Position
-	End   Position
-	Value string
+	Start   Position
+	End     Position
+	Value   string
+	Dynamic bool
 }
 
 // SupportedShell reports whether shell can be parsed for recipe references.
@@ -83,15 +84,39 @@ func References(file *syntax.File) []Reference {
 		}
 		for _, arg := range call.Args[1:] {
 			ref.Args = append(ref.Args, Argument{
-				Start: position(arg.Pos()),
-				End:   position(arg.End()),
-				Value: arg.Lit(),
+				Start:   position(arg.Pos()),
+				End:     position(arg.End()),
+				Value:   arg.Lit(),
+				Dynamic: wordHasExpansion(arg),
 			})
 		}
 		references = append(references, ref)
 		return true
 	})
 	return references
+}
+
+func wordHasExpansion(word *syntax.Word) bool {
+	for _, part := range word.Parts {
+		if wordPartHasExpansion(part) {
+			return true
+		}
+	}
+	return false
+}
+
+func wordPartHasExpansion(part syntax.WordPart) bool {
+	switch part := part.(type) {
+	case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp, *syntax.ProcSubst:
+		return true
+	case *syntax.DblQuoted:
+		for _, nested := range part.Parts {
+			if wordPartHasExpansion(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func position(pos syntax.Pos) Position {
