@@ -126,6 +126,7 @@ shadowtree init ./ci/shadowtree.toml
 Top-level fields:
 
 ```toml
+include = ["./common.shadowtree.toml"]
 profile = "go"
 shell = "sh"
 shell_prelude = '''
@@ -168,6 +169,25 @@ required = false
 default = "value"
 values = "cmd arg"
 ```
+
+`include` entries are TOML config file paths resolved relative to the config
+file that contains them. Included files are merged before the including file;
+later includes override earlier includes, and the including file overrides all
+included files. Includes are global mixins: top-level `profile`, `shell`,
+`shell_prelude`, `vars`, `var_commands`, `env`, `sync_out`, and `recipes` all
+participate in the effective config.
+
+When multiple files define `shell_prelude`, Shadowtree concatenates included
+preludes first, then the including file's prelude. If `a.shadowtree.toml`
+includes `b.shadowtree.toml`, `a`'s prelude and all recipes can use shell
+variables and functions created by `b`'s prelude. `b`'s prelude body cannot read
+variables assigned later by `a` while the prelude is being evaluated.
+
+Same-name recipes from includes are field-merged, with the including file
+winning for fields it sets. There is no deletion syntax for inherited recipes,
+arguments, vars, or env keys in this version. Use `@path:recipe` instead of
+`include` when a recipe should stay isolated and run from another config's
+directory.
 
 ## Recipe Fields
 

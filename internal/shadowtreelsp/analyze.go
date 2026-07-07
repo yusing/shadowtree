@@ -29,6 +29,7 @@ type documentAnalysis struct {
 	FanOutRecipes map[string]bool
 	ScriptRegions []scriptRegion
 	CurrentTable  string
+	Sources       configfile.SourceMap
 }
 
 type completion struct {
@@ -62,6 +63,7 @@ const (
 )
 
 var topKeys = []completion{
+	{Label: "include", InsertText: `include = []`, Kind: completionKindKeyword, Detail: "Included Shadowtree config files"},
 	{Label: "profile", InsertText: `profile = "go"`, Kind: completionKindKeyword, Detail: "Shadowtree profile"},
 	{Label: "shell", InsertText: `shell = "sh"`, Kind: completionKindKeyword, Detail: "Shell for script commands"},
 	{Label: "shell_prelude", InsertText: "shell_prelude = '''\n\n'''", Kind: completionKindKeyword, Detail: "Shared shell code"},
@@ -191,17 +193,30 @@ func analyzeDocument(text string, line int) documentAnalysis {
 	return analysis
 }
 
-func enrichAnalysisWithResolvedRecipes(ctx context.Context, text string, analysis *documentAnalysis, ignoreLine int, opts completionOptions) {
+func enrichAnalysisWithResolvedConfig(ctx context.Context, text string, analysis *documentAnalysis, ignoreLine int, opts completionOptions) {
+	var loaded configfile.Loaded
 	var recipes map[string]recipe.Recipe
 	var ok bool
 	if ignoreLine >= 0 {
-		recipes, ok = completionRecipesIgnoringLine(ctx, text, ignoreLine, opts)
+		loaded, recipes, ok = completionConfigIgnoringLine(ctx, text, ignoreLine, opts)
 	} else {
-		recipes, ok = completionRecipes(ctx, text, opts)
+		loaded, recipes, ok = completionConfig(ctx, text, opts)
 	}
 	if !ok {
 		return
 	}
+	analysis.Sources = loaded.Sources
+	for name := range loaded.Config.Vars {
+		analysis.GlobalVars = appendUnique(analysis.GlobalVars, name)
+	}
+	for name := range loaded.Config.VarCommands {
+		analysis.GlobalVars = appendUnique(analysis.GlobalVars, name)
+	}
+	for name := range loaded.Config.Env {
+		analysis.GlobalEnv = appendUnique(analysis.GlobalEnv, name)
+	}
+	slices.Sort(analysis.GlobalVars)
+	slices.Sort(analysis.GlobalEnv)
 	for recipeName, rec := range recipes {
 		analysis.Recipes = appendUnique(analysis.Recipes, recipeName)
 		if len(rec.Arguments) > 0 {
@@ -228,10 +243,23 @@ func enrichAnalysisWithResolvedRecipes(ctx context.Context, text string, analysi
 			}
 			analysis.ArgumentHelp[recipeName][argName] = recipe.ArgumentHelp(arg)
 		}
+		configRecipe := loaded.Config.Recipes[recipeName]
+		for name := range configRecipe.Vars {
+			analysis.RecipeVars[recipeName] = appendUnique(analysis.RecipeVars[recipeName], name)
+		}
+		for name := range configRecipe.Env {
+			analysis.RecipeEnv[recipeName] = appendUnique(analysis.RecipeEnv[recipeName], name)
+		}
 	}
 	slices.Sort(analysis.Recipes)
 	for recipeName := range analysis.Arguments {
 		slices.Sort(analysis.Arguments[recipeName])
+	}
+	for recipeName := range analysis.RecipeVars {
+		slices.Sort(analysis.RecipeVars[recipeName])
+	}
+	for recipeName := range analysis.RecipeEnv {
+		slices.Sort(analysis.RecipeEnv[recipeName])
 	}
 }
 
@@ -241,14 +269,14 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	prefix := linePrefix(line, pos.Character)
 	if tablePrefix, ok := openTablePrefix(prefix); ok {
 		if tablePrefixNeedsResolvedRecipes(tablePrefix) {
-			enrichAnalysisWithResolvedRecipes(ctx, text, &analysis, pos.Line, opts)
+			enrichAnalysisWithResolvedConfig(ctx, text, &analysis, pos.Line, opts)
 		}
-		return tableCompletions(analysis, tablePrefix)
+		return tableCompletions(analysis, tablePrefix, opts)
 	}
 	if items, ok := recipeArgumentReferenceCompletions(ctx, text, analysis.CurrentTable, prefix, pos, opts); ok {
 		return items
 	}
-	if items, ok := shellVariableCompletions(analysis, pos); ok {
+	if items, ok := shellVariableCompletions(ctx, text, analysis, pos, opts); ok {
 		return items
 	}
 	if items, ok := commandListRecipeReferenceCompletions(ctx, text, analysis, pos, opts); ok {
@@ -262,8 +290,11 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		key, _ := keyBeforeValue(prefix)
-		enrichAnalysisWithResolvedRecipes(ctx, text, &analysis, -1, opts)
-		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key))
+		enrichAnalysisWithResolvedConfig(ctx, text, &analysis, -1, opts)
+		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key), opts)
+	}
+	if items, ok := includePathCompletions(analysis.Lines, pos, opts); ok {
+		return items
 	}
 	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
 		return nil
@@ -306,7 +337,7 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		return nil, false
 	}
 	fragment := strings.TrimPrefix(value, "@")
-	recipes, ok := completionRecipes(ctx, text, opts)
+	loaded, recipes, ok := completionConfig(ctx, text, opts)
 	if !ok {
 		return nil, true
 	}
@@ -330,7 +361,7 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		recipes,
 		lspCompletionCandidateOptions(opts),
 	)
-	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character), true
+	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character, loaded.Sources, ref.Name, opts), true
 }
 
 func commandListRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
@@ -391,7 +422,7 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 	if !ok {
 		return nil
 	}
-	recipes, ok := completionRecipes(ctx, text, opts)
+	loaded, recipes, ok := completionConfig(ctx, text, opts)
 	if !ok {
 		return nil
 	}
@@ -411,7 +442,7 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 		recipes,
 		lspCompletionCandidateOptions(opts),
 	)
-	return recipeArgumentCompletions(candidates, start+1, pos.Character)
+	return recipeArgumentCompletions(candidates, start+1, pos.Character, loaded.Sources, ref.Name, opts)
 }
 
 func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
@@ -422,7 +453,7 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	if !ok || strings.TrimSpace(name) == "" {
 		return nil
 	}
-	recipes, ok := completionRecipes(ctx, text, opts)
+	loaded, recipes, ok := completionConfig(ctx, text, opts)
 	if !ok {
 		return nil
 	}
@@ -446,29 +477,31 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	}
 	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, recipes, lspCompletionCandidateOptions(opts))
 	editStart := start + 1 + len(name) + 1 + currentStart
-	return recipeArgumentCompletions(candidates, editStart, pos.Character)
+	return recipeArgumentCompletions(candidates, editStart, pos.Character, loaded.Sources, ref.Name, opts)
 }
 
-func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStart, editEnd int) []completion {
+func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStart, editEnd int, sources configfile.SourceMap, recipeName string, opts completionOptions) []completion {
 	items := make([]completion, 0, len(candidates))
 	for _, candidate := range candidates {
 		label := recipeArgumentCompletionLabel(candidate.Value)
 		kind := completionKindValue
+		detail := candidate.Help
 		if strings.HasSuffix(label, "=") {
 			kind = completionKindVariable
+			detail = completionSourceDetail(detail, sources.ArgumentHelpSource(recipeName, strings.TrimSuffix(label, "=")), opts)
 		}
 		items = append(items, completion{
 			Label:      label,
 			InsertText: candidate.Value,
 			Kind:       kind,
-			Detail:     candidate.Help,
+			Detail:     detail,
 			Edit:       &completionEdit{Start: editStart, End: editEnd},
 		})
 	}
 	return items
 }
 
-func shellVariableCompletions(analysis documentAnalysis, pos lspPosition) ([]completion, bool) {
+func shellVariableCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
 	region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos)
 	if !ok || !scriptref.SupportedShell(region.Shell) {
 		return nil, false
@@ -478,10 +511,12 @@ func shellVariableCompletions(analysis documentAnalysis, pos lspPosition) ([]com
 	if !ok {
 		return nil, false
 	}
+	enrichAnalysisWithResolvedConfig(ctx, text, &analysis, -1, opts)
 	names := shellVariableCompletionNames(analysis, region, pos, prefix.Text)
 	if len(names) == 0 {
 		return nil, true
 	}
+	recipeName := currentRecipe(region.Table)
 	items := make([]completion, 0, len(names))
 	for _, name := range names {
 		label := "$" + name
@@ -496,7 +531,7 @@ func shellVariableCompletions(analysis documentAnalysis, pos lspPosition) ([]com
 			Label:      label,
 			InsertText: insertText,
 			Kind:       completionKindVariable,
-			Detail:     "Shell variable",
+			Detail:     completionSourceDetail("Shell variable", shellVariableCompletionSource(analysis, recipeName, name), opts),
 			Edit:       &completionEdit{Start: prefix.EditStart, End: prefix.EditEnd},
 		})
 	}
@@ -622,6 +657,13 @@ func shellVariableCompletionNames(analysis documentAnalysis, region scriptRegion
 	return slices.Sorted(maps.Keys(names))
 }
 
+func shellVariableCompletionSource(analysis documentAnalysis, recipeName, name string) string {
+	if source := analysis.Sources.RecipeEnvSource(recipeName, name); source != "" {
+		return source
+	}
+	return analysis.Sources.Env[name]
+}
+
 func shellAssignmentNames(line string, start, end int) []string {
 	var names []string
 	commandPosition := true
@@ -720,20 +762,26 @@ func shExportNames(line string, start, end int) (int, []string) {
 
 func scriptRegionAt(lines []string, regions []scriptRegion, pos lspPosition) (scriptRegion, bool) {
 	for _, region := range regions {
-		if pos.Line < region.StartLine || pos.Line > region.EndLine {
-			continue
+		if scriptRegionContains(lines, region, pos) {
+			return region, true
 		}
-		line := lineAt(lines, pos.Line)
-		character := min(pos.Character, len(line))
-		if pos.Line == region.StartLine && character < region.StartCol {
-			continue
-		}
-		if pos.Line == region.EndLine && character > region.EndCol {
-			continue
-		}
-		return region, true
 	}
 	return scriptRegion{}, false
+}
+
+func scriptRegionContains(lines []string, region scriptRegion, pos lspPosition) bool {
+	if pos.Line < region.StartLine || pos.Line > region.EndLine {
+		return false
+	}
+	line := lineAt(lines, pos.Line)
+	character := min(pos.Character, len(line))
+	if pos.Line == region.StartLine && character < region.StartCol {
+		return false
+	}
+	if pos.Line == region.EndLine && character > region.EndCol {
+		return false
+	}
+	return true
 }
 
 func inScriptRegion(lines []string, regions []scriptRegion, pos lspPosition) bool {
@@ -818,24 +866,42 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 }
 
 func completionRecipes(ctx context.Context, text string, opts completionOptions) (map[string]recipe.Recipe, bool) {
-	var cfg recipe.Config
-	if _, err := toml.Decode(text, &cfg); err != nil {
-		return nil, false
-	}
-	return completionRecipesFromConfig(ctx, cfg, opts)
+	_, recipes, ok := completionConfig(ctx, text, opts)
+	return recipes, ok
 }
 
-func completionRecipesFromConfig(ctx context.Context, cfg recipe.Config, opts completionOptions) (map[string]recipe.Recipe, bool) {
+func completionConfig(ctx context.Context, text string, opts completionOptions) (configfile.Loaded, map[string]recipe.Recipe, bool) {
+	var cfg recipe.Config
+	md, err := toml.Decode(text, &cfg)
+	if err != nil {
+		return configfile.Loaded{}, nil, false
+	}
+	return completionConfigFromConfig(ctx, cfg, md, opts)
+}
+
+func completionConfigFromConfig(ctx context.Context, cfg recipe.Config, md toml.MetaData, opts completionOptions) (configfile.Loaded, map[string]recipe.Recipe, bool) {
 	path := opts.ConfigPath
 	if path == "" {
 		path = configfile.Names[0]
 	}
-	loaded := configfile.Loaded{Path: path, Config: cfg}
+	loaded, err := configfile.LoadConfigWithMeta(path, cfg, md)
+	if err != nil {
+		return configfile.Loaded{}, nil, false
+	}
 	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, completionBaseDir(opts), configfile.ResolveOptions{})
 	if err != nil {
-		return nil, false
+		return configfile.Loaded{}, nil, false
 	}
-	return recipes, true
+	return loaded, recipes, true
+}
+
+func completionConfigIgnoringLine(ctx context.Context, text string, line int, opts completionOptions) (configfile.Loaded, map[string]recipe.Recipe, bool) {
+	lines := strings.Split(text, "\n")
+	if line < 0 || line >= len(lines) {
+		return configfile.Loaded{}, nil, false
+	}
+	lines[line] = ""
+	return completionConfig(ctx, strings.Join(lines, "\n"), opts)
 }
 
 func cutReferenceGroup(value string) (string, string, bool) {
@@ -861,7 +927,7 @@ func recipeArgumentCompletionLabel(value string) string {
 	return value
 }
 
-func tableCompletions(analysis documentAnalysis, prefix string) []completion {
+func tableCompletions(analysis documentAnalysis, prefix string, opts completionOptions) []completion {
 	switch {
 	case prefix == "":
 		return []completion{
@@ -879,7 +945,7 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 				Label:      recipe,
 				InsertText: recipe + "]",
 				Kind:       completionKindField,
-				Detail:     "Existing recipe",
+				Detail:     completionSourceDetail("Existing recipe", analysis.Sources.Recipes[recipe], opts),
 			})
 		}
 		return items
@@ -900,7 +966,7 @@ func tableCompletions(analysis documentAnalysis, prefix string) []completion {
 				Label:      arg,
 				InsertText: arg + "]",
 				Kind:       completionKindVariable,
-				Detail:     "Existing argument",
+				Detail:     completionSourceDetail("Existing argument", analysis.Sources.ArgumentSource(recipe, arg), opts),
 			})
 		}
 		return items
@@ -912,7 +978,7 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fal
 	if pathPrefix, recipePrefix, ok := strings.Cut(prefix, ":"); ok {
 		return crossConfigRecipeReferenceCompletions(ctx, pathPrefix, recipePrefix, opts)
 	}
-	recipes, ok := completionRecipes(ctx, text, opts)
+	loaded, recipes, ok := completionConfig(ctx, text, opts)
 	names := slices.Collect(maps.Keys(recipes))
 	if !ok {
 		names = slices.Clone(fallbackRecipeNames)
@@ -932,7 +998,7 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fal
 			Label:           "@" + name,
 			InsertText:      name,
 			Kind:            completionKindFunction,
-			Detail:          recipeReferenceDetail(recipes, name),
+			Detail:          recipeReferenceDetail(recipes, name, loaded.Sources.RecipeHelpSource(name), opts),
 			RecipeReference: true,
 		})
 	}
@@ -991,21 +1057,35 @@ func crossConfigRecipeReferenceCompletions(ctx context.Context, pathPrefix, reci
 			Label:           "@" + value,
 			InsertText:      value,
 			Kind:            completionKindFunction,
-			Detail:          recipeReferenceDetail(recipes, name),
+			Detail:          recipeReferenceDetail(recipes, name, "", opts),
 			RecipeReference: true,
 		})
 	}
 	return items
 }
 
-func recipeReferenceDetail(recipes map[string]recipe.Recipe, name string) string {
+func recipeReferenceDetail(recipes map[string]recipe.Recipe, name, source string, opts completionOptions) string {
 	if detail := recipe.BuiltinReferenceDetail(name); detail != "" {
 		return detail
 	}
 	if rec, ok := recipes[name]; ok && rec.Help != "" {
-		return rec.Help
+		return completionSourceDetail(rec.Help, source, opts)
 	}
-	return "Shadowtree recipe reference"
+	return completionSourceDetail("Shadowtree recipe reference", source, opts)
+}
+
+func completionSourceDetail(detail, source string, opts completionOptions) string {
+	if source == "" || opts.ConfigPath == "" || configfile.SamePath(source, opts.ConfigPath) {
+		return detail
+	}
+	base := completionBaseDir(opts)
+	label := filepath.ToSlash(source)
+	if base != "" {
+		if rel, err := filepath.Rel(base, source); err == nil && !strings.HasPrefix(rel, "..") {
+			label = filepath.ToSlash(rel)
+		}
+	}
+	return detail + " (from " + label + ")"
 }
 
 func crossConfigCompletionRecipe(ctx context.Context, ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {
@@ -1103,6 +1183,98 @@ func workdirValueCompletions(ctx context.Context, table, key, prefix string, opt
 	return items, true
 }
 
+func includePathCompletions(lines []string, pos lspPosition, opts completionOptions) ([]completion, bool) {
+	region, ok := includeArrayStringRegionAt(lines, pos)
+	if !ok || region.StartLine != region.EndLine {
+		return nil, false
+	}
+	line := lineAt(lines, pos.Line)
+	character := min(pos.Character, len(line))
+	if character < region.StartCol || character > region.EndCol {
+		return nil, false
+	}
+	prefix := line[region.StartCol:character]
+	base := completionBaseDir(opts)
+	if base == "" {
+		base = "."
+	}
+	dirPart, namePrefix := pathSplitSlash(prefix)
+	dir := filepath.Join(base, filepath.FromSlash(dirPart))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, true
+	}
+	var items []completion
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, namePrefix) {
+			continue
+		}
+		value := filepath.ToSlash(filepath.Join(dirPart, name))
+		detail := "TOML file"
+		if entry.IsDir() {
+			value += "/"
+			detail = "Directory"
+		} else if filepath.Ext(name) != ".toml" {
+			continue
+		}
+		items = append(items, completion{
+			Label:      value,
+			InsertText: value,
+			Kind:       completionKindValue,
+			Detail:     detail,
+			Incomplete: entry.IsDir(),
+			Edit:       &completionEdit{Start: region.StartCol, End: region.EndCol},
+		})
+	}
+	return items, true
+}
+
+func pathSplitSlash(value string) (string, string) {
+	value = filepath.ToSlash(value)
+	index := strings.LastIndexByte(value, '/')
+	if index < 0 {
+		return "", value
+	}
+	return value[:index+1], value[index+1:]
+}
+
+func includeArrayStringRegionAt(lines []string, pos lspPosition) (scriptRegion, bool) {
+	return arrayStringRegionAt(lines, pos, "include")
+}
+
+func arrayStringRegionAt(lines []string, pos lspPosition, targetKey string) (scriptRegion, bool) {
+	for lineNo := pos.Line; lineNo >= 0; lineNo-- {
+		line := lineAt(lines, lineNo)
+		if lineNo == pos.Line {
+			line = linePrefix(line, pos.Character)
+		}
+		if table, ok := completeTableHeader(line); ok && table != "" {
+			return scriptRegion{}, false
+		}
+		key, ok := pairKey(line)
+		if !ok {
+			continue
+		}
+		if key != targetKey {
+			continue
+		}
+		regions, endLine := commandListStringRegions(lines, lineNo, "", key, "", func(string) bool {
+			return true
+		})
+		if pos.Line > endLine {
+			return scriptRegion{}, false
+		}
+		for _, region := range regions {
+			if scriptRegionContains(lines, region, pos) {
+				return region, true
+			}
+		}
+		return scriptRegion{}, false
+	}
+	return scriptRegion{}, false
+}
+
 func argumentDefaultValueCompletions(ctx context.Context, text, table, key, prefix string, pos lspPosition, opts completionOptions) ([]completion, bool) {
 	if key != "default" {
 		return nil, false
@@ -1111,7 +1283,7 @@ func argumentDefaultValueCompletions(ctx context.Context, text, table, key, pref
 	if !ok {
 		return nil, false
 	}
-	recipes, ok := completionRecipesIgnoringLine(ctx, text, pos.Line, opts)
+	_, recipes, ok := completionConfigIgnoringLine(ctx, text, pos.Line, opts)
 	if !ok {
 		return nil, true
 	}
@@ -1142,15 +1314,6 @@ func lspCompletionCandidateOptions(opts completionOptions) recipecompletion.Opti
 		ConfigPath:                 opts.ConfigPath,
 		DisableCommandBackedValues: true,
 	}
-}
-
-func completionRecipesIgnoringLine(ctx context.Context, text string, line int, opts completionOptions) (map[string]recipe.Recipe, bool) {
-	lines := strings.Split(text, "\n")
-	if line < 0 || line >= len(lines) {
-		return nil, false
-	}
-	lines[line] = ""
-	return completionRecipes(ctx, strings.Join(lines, "\n"), opts)
 }
 
 func argumentDefaultValueCompletionItems(candidates []recipecompletion.Candidate, argName string, quote bool) []completion {
@@ -1213,7 +1376,7 @@ func recipeArgumentTableParts(table string) (string, string, bool) {
 	return recipeName, argName, true
 }
 
-func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, allowVariadic, allowForEach bool) []completion {
+func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, allowVariadic, allowForEach bool, opts completionOptions) []completion {
 	var names []string
 	names = append(names, analysis.GlobalVars...)
 	names = append(names, analysis.RecipeVars[recipeName]...)
@@ -1224,15 +1387,15 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 	names = uniqueSorted(names)
 	detail := map[string]string{}
 	for _, name := range analysis.GlobalVars {
-		detail[name] = "Shared placeholder"
+		detail[name] = completionSourceDetail("Shared placeholder", analysis.Sources.GlobalPlaceholderSource(name), opts)
 	}
 	for _, name := range analysis.RecipeVars[recipeName] {
-		detail[name] = "Recipe placeholder"
+		detail[name] = completionSourceDetail("Recipe placeholder", analysis.Sources.RecipeVarSource(recipeName, name), opts)
 	}
 	for _, name := range analysis.Arguments[recipeName] {
-		detail[name] = "Argument placeholder"
+		detail[name] = completionSourceDetail("Argument placeholder", analysis.Sources.ArgumentSource(recipeName, name), opts)
 		if help := analysis.ArgumentHelp[recipeName][name]; help != "" {
-			detail[name] = help
+			detail[name] = completionSourceDetail(help, analysis.Sources.ArgumentHelpSource(recipeName, name), opts)
 		}
 	}
 	if allowForEach && analysis.FanOutRecipes[recipeName] {
@@ -2623,30 +2786,8 @@ func keyBeforeValue(prefix string) (string, bool) {
 }
 
 func syncOutArrayStringValueAt(lines []string, pos lspPosition) bool {
-	for lineNo := pos.Line; lineNo >= 0; lineNo-- {
-		line := lineAt(lines, lineNo)
-		if lineNo == pos.Line {
-			line = linePrefix(line, pos.Character)
-		}
-		if _, ok := completeTableHeader(line); ok {
-			return false
-		}
-		key, ok := pairKey(line)
-		if !ok {
-			continue
-		}
-		if key != "sync_out" {
-			continue
-		}
-		regions, endLine := commandListStringRegions(lines, lineNo, "", key, "", func(string) bool {
-			return true
-		})
-		if pos.Line > endLine {
-			return false
-		}
-		return inScriptRegion(lines, regions, pos)
-	}
-	return false
+	_, ok := arrayStringRegionAt(lines, pos, "sync_out")
+	return ok
 }
 
 func placeholderPrefix(prefix string) (string, bool) {

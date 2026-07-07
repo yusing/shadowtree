@@ -42,6 +42,17 @@ sync_out = [
 	assertNoLabels(t, items, "cmd", "for_each", "sync_out")
 }
 
+func TestCompletionsExcludeKeysInMultilineSyncOutArrayValues(t *testing.T) {
+	text := `[recipes.build]
+sync_out = [
+  '''
+  bin/
+  '''
+]`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`  bin/`)})
+	assertNoLabels(t, items, "cmd", "for_each", "sync_out")
+}
+
 func TestCompletionsIncludeKeysAfterIncompleteSyncOutArray(t *testing.T) {
 	text := `[recipes.generate]
 sync_out = [
@@ -80,6 +91,46 @@ cmd = '''go build {'''
 	if edit["newText"] != "pkg}" {
 		t.Fatalf("newText = %#v, want placeholder suffix", edit["newText"])
 	}
+}
+
+func TestCompletionsIncludeIncludedPlaceholdersWithSourceHints(t *testing.T) {
+	root := t.TempDir()
+	includedPath := filepath.Join(root, "common.shadowtree.toml")
+	if err := os.WriteFile(includedPath, []byte(`
+[vars]
+INCLUDED_VAR = "from-var"
+
+[var_commands]
+INCLUDED_DYNAMIC = "printf dynamic"
+
+[recipes.included.vars]
+INCLUDED_RECIPE_VAR = "from-recipe"
+
+[recipes.included.arguments.target]
+help = "Included target."
+
+[recipes.included]
+help = "Included recipe."
+cmd = "echo {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+
+[recipes.included]
+cmd = "echo {"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`cmd = "echo {`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "{INCLUDED_VAR}", "{INCLUDED_DYNAMIC}", "{INCLUDED_RECIPE_VAR}", "{target}")
+	assertCompletionDetail(t, items, "{INCLUDED_VAR}", "Shared placeholder (from common.shadowtree.toml)")
+	assertCompletionDetail(t, items, "{INCLUDED_DYNAMIC}", "Shared placeholder (from common.shadowtree.toml)")
+	assertCompletionDetail(t, items, "{INCLUDED_RECIPE_VAR}", "Recipe placeholder (from common.shadowtree.toml)")
+	assertCompletionDetail(t, items, "{target}", "Included target. (from common.shadowtree.toml)")
 }
 
 func TestCompletionsIncludeMergedBuiltinArgumentPlaceholders(t *testing.T) {
@@ -203,6 +254,37 @@ workdir = /`
 	}
 }
 
+func TestCompletionsIncludeIncludePathFilesAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "dir", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dir", "shared.toml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = [""]`
+	opts := completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")}
+	items := completionsAtWithOptions(t.Context(), text, lspPosition{Line: 0, Character: len(`include = ["`)}, opts)
+	assertLabels(t, items, "common.shadowtree.toml", "dir/")
+	assertNoLabels(t, items, "README.md")
+
+	text = `include = ["dir/"]`
+	items = completionsAtWithOptions(t.Context(), text, lspPosition{Line: 0, Character: len(`include = ["dir/`)}, opts)
+	assertLabels(t, items, "dir/shared.toml", "dir/nested/")
+
+	result := completionResultWithOptions(t.Context(), text, lspPosition{Line: 0, Character: len(`include = ["dir/`)}, opts)
+	edit := completionTextEdit(t, result, "dir/shared.toml")
+	if edit["newText"] != "dir/shared.toml" {
+		t.Fatalf("newText = %#v, want include path", edit["newText"])
+	}
+}
+
 func TestCompletionsExcludeWorkdirPathsInScriptRegion(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "services"), 0o755); err != nil {
@@ -314,6 +396,68 @@ pre = ["echo 123", "@gen"]
 
 	items = completionsAt(t.Context(), text, lspPosition{Line: 8, Character: len(`pre = ["echo 123", "@gen`)})
 	assertLabels(t, items, "@gen-swagger")
+}
+
+func TestCompletionsIncludeIncludedRecipeReferencesWithSourceHints(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(`
+[recipes.common.arguments.target]
+help = "Included target."
+
+[recipes.common]
+help = "Common recipe."
+cmd = "echo {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+
+[recipes.test]
+pre = ["@com"]
+`
+	opts := completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")}
+	items := completionsAtWithOptions(t.Context(), text, lspPosition{Line: 3, Character: len(`pre = ["@com`)}, opts)
+	assertLabels(t, items, "@common")
+	assertCompletionDetail(t, items, "@common", "Common recipe. (from common.shadowtree.toml)")
+
+	text = strings.Replace(text, `"@com"]`, `"@common["]`, 1)
+	items = completionsAtWithOptions(t.Context(), text, lspPosition{Line: 3, Character: len(`pre = ["@common[`)}, opts)
+	assertLabels(t, items, "target=")
+	assertCompletionDetail(t, items, "target=", "Included target. (from common.shadowtree.toml)")
+}
+
+func TestCompletionsKeepIncludedHelpSourceHintsThroughPartialOverrides(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(`
+[recipes.build.arguments.target]
+help = "Target from common."
+
+[recipes.build]
+help = "Build from common."
+cmd = "echo {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+
+[recipes.build.arguments.target]
+default = "."
+
+[recipes.build]
+cmd = "go build {target}"
+
+[recipes.test]
+pre = ["@b"]
+`
+	opts := completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")}
+	items := completionsAtWithOptions(t.Context(), text, lspPosition{Line: 9, Character: len(`pre = ["@b`)}, opts)
+	assertLabels(t, items, "@build")
+	assertCompletionDetail(t, items, "@build", "Build from common. (from common.shadowtree.toml)")
+
+	text = strings.Replace(text, `"@b"]`, `"@build["]`, 1)
+	items = completionsAtWithOptions(t.Context(), text, lspPosition{Line: 9, Character: len(`pre = ["@build[`)}, opts)
+	assertLabels(t, items, "target=")
+	assertCompletionDetail(t, items, "target=", "Target from common. (from common.shadowtree.toml)")
 }
 
 func TestRecipeReferenceCompletionUsesRecipeHelpAndTextEdit(t *testing.T) {
@@ -458,6 +602,38 @@ bench=BenchmarkRun
 		t.Fatalf("newText = %#v, want variable name", edit["newText"])
 	}
 	assertEditRange(t, edit, len(`@test "$`), len(`@test "$p`))
+}
+
+func TestCompletionsIncludeIncludedShellVariablesWithSourceHints(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(`
+[env]
+INCLUDED_ENV = "top"
+
+[recipes.included.env]
+INCLUDED_RECIPE_ENV = "recipe"
+
+[recipes.included]
+cmd = "echo"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+
+[recipes.included]
+cmd = '''
+echo "$"
+'''
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 4, Character: len(`echo "$`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "$INCLUDED_ENV", "$INCLUDED_RECIPE_ENV")
+	assertCompletionDetail(t, items, "$INCLUDED_ENV", "Shell variable (from common.shadowtree.toml)")
+	assertCompletionDetail(t, items, "$INCLUDED_RECIPE_ENV", "Shell variable (from common.shadowtree.toml)")
 }
 
 func TestCompletionsIncludeExportedShellVariables(t *testing.T) {

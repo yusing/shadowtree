@@ -135,6 +135,7 @@ repository.
 Shadowtree config is TOML:
 
 ```toml
+include = ["./common.shadowtree.toml"]
 profile = "go"
 shell = "sh"
 
@@ -180,6 +181,21 @@ workdir = "{item}"
 cmd = "go mod tidy"
 post = ["if test -f go.work; then go work sync; fi"]
 ```
+
+Use `include` to share config across projects or subprojects. Include entries
+are TOML file paths resolved relative to the file that contains them. Included
+files are merged first, then the current config overrides them:
+
+```toml
+include = ["./tools.shadowtree.toml", "./ci.shadowtree.toml"]
+```
+
+Includes are mixins, not isolated imports. Included recipes appear in
+`shadowtree help`, `shadowtree recipes`, shell completion, and editor
+completion as if they were defined in the current config. Top-level `vars`,
+`var_commands`, `env`, `sync_out`, `profile`, `shell`, and `shell_prelude` also
+merge into the effective config. Included preludes run before the current
+file's prelude.
 
 Use shell strings for process execution:
 

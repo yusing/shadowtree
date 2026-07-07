@@ -53,13 +53,21 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	resolver := diagnosticRecipeResolver{
 		ctx:  ctx,
 		cfg:  cfg,
+		md:   md,
 		opts: completionOptionsForURI(opts.URI),
 	}
 	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, &resolver)...)
 	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg, &resolver)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
-	if err := recipe.ValidateConfig(cfg); err != nil && len(diagnostics) == 0 {
-		diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
+	if len(diagnostics) == 0 {
+		if err := recipe.ValidateConfig(cfg); err != nil {
+			diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
+		}
+	}
+	if len(diagnostics) == 0 {
+		if err := resolver.Err(); err != nil {
+			diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
+		}
 	}
 	if diagnostics == nil {
 		return []lspDiagnostic{}
@@ -70,19 +78,47 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 type diagnosticRecipeResolver struct {
 	ctx      context.Context
 	cfg      recipe.Config
+	md       toml.MetaData
 	opts     completionOptions
+	loaded   configfile.Loaded
 	recipes  map[string]recipe.Recipe
+	err      error
 	ok       bool
 	resolved bool
 }
 
 func (resolver *diagnosticRecipeResolver) Recipes() (map[string]recipe.Recipe, bool) {
+	loaded, recipes, ok := resolver.Loaded()
+	_ = loaded
+	return recipes, ok
+}
+
+func (resolver *diagnosticRecipeResolver) Loaded() (configfile.Loaded, map[string]recipe.Recipe, bool) {
 	if resolver.resolved {
-		return resolver.recipes, resolver.ok
+		return resolver.loaded, resolver.recipes, resolver.ok
 	}
-	resolver.recipes, resolver.ok = completionRecipesFromConfig(resolver.ctx, resolver.cfg, resolver.opts)
+	path := resolver.opts.ConfigPath
+	if path == "" {
+		path = configfile.Names[0]
+	}
+	loaded, err := configfile.LoadConfigWithMeta(path, resolver.cfg, resolver.md)
+	if err != nil {
+		resolver.err = err
+		resolver.resolved = true
+		return resolver.loaded, resolver.recipes, false
+	}
+	resolver.loaded = loaded
+	resolver.recipes, _, resolver.err = configfile.ResolveRecipes(resolver.ctx, loaded, completionBaseDir(resolver.opts), configfile.ResolveOptions{})
+	resolver.ok = resolver.err == nil
 	resolver.resolved = true
-	return resolver.recipes, resolver.ok
+	return resolver.loaded, resolver.recipes, resolver.ok
+}
+
+func (resolver *diagnosticRecipeResolver) Err() error {
+	if !resolver.resolved {
+		resolver.Loaded()
+	}
+	return resolver.err
 }
 
 func commandReferenceDiagnostics(ctx context.Context, text string, resolver *diagnosticRecipeResolver) []lspDiagnostic {
@@ -260,7 +296,19 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 	lines := strings.Split(text, "\n")
 	scriptRegionList := scriptRegions(lines, shellSettings(lines))
 	regions := placeholderDiagnosticRegions(lines, scriptRegionList)
+	if len(regions) == 0 {
+		return nil
+	}
 	var recipes map[string]recipe.Recipe
+	effectiveCfg := cfg
+	if len(cfg.Include) > 0 {
+		loaded, resolvedRecipes, ok := resolver.Loaded()
+		if !ok {
+			return nil
+		}
+		effectiveCfg = loaded.Config
+		recipes = resolvedRecipes
+	}
 	var referenceOverlaps map[int][]span
 	knownVars := map[string]map[string]bool{}
 	var diagnostics []lspDiagnostic
@@ -268,7 +316,7 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 		if (recipeTable(region.Table) || recipeSubtable(region.Table, "env")) && recipes == nil {
 			recipes, _ = resolver.Recipes()
 		}
-		known := placeholderDiagnosticNames(cfg, recipes, region, knownVars)
+		known := placeholderDiagnosticNames(effectiveCfg, recipes, region, knownVars)
 		if known == nil {
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -17,8 +18,62 @@ import (
 var Names = []string{".shadowtree.toml"}
 
 type Loaded struct {
-	Path   string
-	Config recipe.Config
+	Path    string
+	Config  recipe.Config
+	Sources SourceMap
+}
+
+// SourceMap records the config file that last supplied user-facing names.
+type SourceMap struct {
+	Recipes      map[string]string
+	RecipeHelp   map[string]string
+	Vars         map[string]string
+	VarCommands  map[string]string
+	Env          map[string]string
+	RecipeVars   map[string]map[string]string
+	RecipeEnv    map[string]map[string]string
+	Arguments    map[string]map[string]string
+	ArgumentHelp map[string]map[string]string
+}
+
+func (sources SourceMap) RecipeHelpSource(name string) string {
+	if source := sources.RecipeHelp[name]; source != "" {
+		return source
+	}
+	return sources.Recipes[name]
+}
+
+func (sources SourceMap) RecipeVarSource(recipeName, name string) string {
+	return nestedSource(sources.RecipeVars, recipeName, name)
+}
+
+func (sources SourceMap) RecipeEnvSource(recipeName, name string) string {
+	return nestedSource(sources.RecipeEnv, recipeName, name)
+}
+
+func (sources SourceMap) ArgumentSource(recipeName, name string) string {
+	return nestedSource(sources.Arguments, recipeName, name)
+}
+
+func (sources SourceMap) ArgumentHelpSource(recipeName, name string) string {
+	if source := nestedSource(sources.ArgumentHelp, recipeName, name); source != "" {
+		return source
+	}
+	return sources.ArgumentSource(recipeName, name)
+}
+
+func (sources SourceMap) GlobalPlaceholderSource(name string) string {
+	if source := sources.VarCommands[name]; source != "" {
+		return source
+	}
+	return sources.Vars[name]
+}
+
+func nestedSource(sources map[string]map[string]string, first, second string) string {
+	if sources == nil {
+		return ""
+	}
+	return sources[first][second]
 }
 
 // ResolveOptions controls how recipes are assembled from a loaded config.
@@ -28,23 +83,297 @@ type ResolveOptions struct {
 }
 
 func Load(path string) (Loaded, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Loaded{}, err
+	return load(path, nil, nil, nil)
+}
+
+// LoadConfigWithMeta expands includes for an already-decoded root config with TOML field metadata.
+func LoadConfigWithMeta(path string, cfg recipe.Config, md toml.MetaData) (Loaded, error) {
+	return load(path, &cfg, &md, nil)
+}
+
+func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack []string) (Loaded, error) {
+	absPath := CleanAbs(path)
+	for _, ancestor := range stack {
+		if absPath == ancestor {
+			return Loaded{}, fmt.Errorf("include cycle: %s", includeCycle(stack, absPath))
+		}
 	}
-	cfg := recipe.Config{}
-	switch ext := strings.ToLower(filepath.Ext(path)); ext {
-	case ".toml":
-		if err := toml.Unmarshal(data, &cfg); err != nil {
+	stack = append(stack, absPath)
+	var cfg recipe.Config
+	var md toml.MetaData
+	var err error
+	if rootConfig != nil {
+		cfg = *rootConfig
+		if rootMeta != nil {
+			md = *rootMeta
+		}
+	} else {
+		cfg, md, err = read(path)
+		if err != nil {
 			return Loaded{}, err
 		}
-	default:
-		return Loaded{}, fmt.Errorf("unsupported config extension: %s", ext)
+	}
+	if err := validateIncludes(cfg.Include); err != nil {
+		return Loaded{}, err
 	}
 	if err := recipe.ValidateConfig(cfg); err != nil {
 		return Loaded{}, err
 	}
-	return Loaded{Path: path, Config: cfg}, nil
+
+	loaded := Loaded{Path: path}
+	for _, include := range cfg.Include {
+		includePath := include
+		if !filepath.IsAbs(includePath) {
+			includePath = filepath.Join(filepath.Dir(path), includePath)
+		}
+		included, err := load(includePath, nil, nil, stack)
+		if err != nil {
+			return Loaded{}, fmt.Errorf("include %q from %s: %w", include, path, err)
+		}
+		loaded.Config = mergeConfigs(loaded.Config, included.Config, nil)
+		loaded.Sources = mergeSourceMaps(loaded.Sources, included.Sources)
+	}
+	cfg.Include = nil
+	loaded.Config = mergeConfigs(loaded.Config, cfg, explicitRequiredFields(cfg, md))
+	loaded.Sources = mergeSourceMaps(loaded.Sources, sourceMapForConfig(cfg, md, absPath))
+	if err := recipe.ValidateConfig(loaded.Config); err != nil {
+		return Loaded{}, err
+	}
+	return loaded, nil
+}
+
+func read(path string) (recipe.Config, toml.MetaData, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return recipe.Config{}, toml.MetaData{}, err
+	}
+	cfg := recipe.Config{}
+	var md toml.MetaData
+	switch ext := strings.ToLower(filepath.Ext(path)); ext {
+	case ".toml":
+		var err error
+		md, err = toml.Decode(string(data), &cfg)
+		if err != nil {
+			return recipe.Config{}, toml.MetaData{}, err
+		}
+	default:
+		return recipe.Config{}, toml.MetaData{}, fmt.Errorf("unsupported config extension: %s", ext)
+	}
+	return cfg, md, nil
+}
+
+func validateIncludes(includes []string) error {
+	for i, include := range includes {
+		if strings.TrimSpace(include) != include || include == "" {
+			return fmt.Errorf("include[%d] must be a non-empty path without surrounding whitespace", i)
+		}
+	}
+	return nil
+}
+
+func CleanAbs(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
+}
+
+func SamePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return CleanAbs(a) == CleanAbs(b)
+}
+
+func includeCycle(stack []string, path string) string {
+	cycle := append(slices.Clone(stack), path)
+	for i, item := range cycle {
+		cycle[i] = filepath.ToSlash(item)
+	}
+	return strings.Join(cycle, " -> ")
+}
+
+func mergeConfigs(base, override recipe.Config, requiredFields map[string]map[string]bool) recipe.Config {
+	out := base
+	if override.Profile != "" {
+		out.Profile = override.Profile
+	}
+	out.Env = mergeStringMaps(out.Env, override.Env)
+	out.Vars = mergeStringMaps(out.Vars, override.Vars)
+	out.VarCommands = mergeCommandMaps(out.VarCommands, override.VarCommands)
+	if override.Shell != "" {
+		out.Shell = override.Shell
+	}
+	out.ShellPrelude = recipe.JoinShell(out.ShellPrelude, override.ShellPrelude)
+	out.SyncOut = append(slices.Clone(out.SyncOut), override.SyncOut...)
+	out.Recipes = mergeRecipeMaps(out.Recipes, override.Recipes, requiredFields)
+	return out
+}
+
+func mergeRecipeMaps(base, override map[string]recipe.Recipe, requiredFields map[string]map[string]bool) map[string]recipe.Recipe {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]recipe.Recipe{}
+	}
+	for name, rec := range override {
+		out[name] = mergeIncludedRecipe(out[name], rec, requiredFields[name])
+	}
+	return out
+}
+
+func mergeIncludedRecipe(base, override recipe.Recipe, requiredFields map[string]bool) recipe.Recipe {
+	out := recipe.MergeRecipe(base, override)
+	if override.Vars != nil {
+		out.Vars = mergeStringMaps(base.Vars, override.Vars)
+	}
+	if override.Env != nil {
+		out.Env = mergeStringMaps(base.Env, override.Env)
+	}
+	for argName := range requiredFields {
+		arg := out.Arguments[argName]
+		arg.Required = override.Arguments[argName].Required
+		out.Arguments[argName] = arg
+	}
+	return out
+}
+
+func mergeStringMaps(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, override)
+	return out
+}
+
+func mergeCommandMaps(base, override map[string]recipe.Command) map[string]recipe.Command {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]recipe.Command{}
+	}
+	for name, command := range override {
+		out[name] = slices.Clone(command)
+	}
+	return out
+}
+
+func explicitRequiredFields(cfg recipe.Config, md toml.MetaData) map[string]map[string]bool {
+	fields := map[string]map[string]bool{}
+	for recipeName, rec := range cfg.Recipes {
+		for argName := range rec.Arguments {
+			if !md.IsDefined("recipes", recipeName, "arguments", argName, "required") {
+				continue
+			}
+			if fields[recipeName] == nil {
+				fields[recipeName] = map[string]bool{}
+			}
+			fields[recipeName][argName] = true
+		}
+	}
+	return fields
+}
+
+func sourceMapForConfig(cfg recipe.Config, md toml.MetaData, path string) SourceMap {
+	sources := SourceMap{
+		Recipes:      map[string]string{},
+		RecipeHelp:   map[string]string{},
+		Vars:         map[string]string{},
+		VarCommands:  map[string]string{},
+		Env:          map[string]string{},
+		RecipeVars:   map[string]map[string]string{},
+		RecipeEnv:    map[string]map[string]string{},
+		Arguments:    map[string]map[string]string{},
+		ArgumentHelp: map[string]map[string]string{},
+	}
+	for name := range cfg.Vars {
+		sources.Vars[name] = path
+	}
+	for name := range cfg.VarCommands {
+		sources.VarCommands[name] = path
+	}
+	for name := range cfg.Env {
+		sources.Env[name] = path
+	}
+	for recipeName, rec := range cfg.Recipes {
+		sources.Recipes[recipeName] = path
+		if md.IsDefined("recipes", recipeName, "help") {
+			sources.RecipeHelp[recipeName] = path
+		}
+		if len(rec.Vars) > 0 {
+			sources.RecipeVars[recipeName] = map[string]string{}
+			for name := range rec.Vars {
+				sources.RecipeVars[recipeName][name] = path
+			}
+		}
+		if len(rec.Env) > 0 {
+			sources.RecipeEnv[recipeName] = map[string]string{}
+			for name := range rec.Env {
+				sources.RecipeEnv[recipeName][name] = path
+			}
+		}
+		if len(rec.Arguments) > 0 {
+			sources.Arguments[recipeName] = map[string]string{}
+			for name := range rec.Arguments {
+				sources.Arguments[recipeName][name] = path
+				if md.IsDefined("recipes", recipeName, "arguments", name, "help") {
+					if sources.ArgumentHelp[recipeName] == nil {
+						sources.ArgumentHelp[recipeName] = map[string]string{}
+					}
+					sources.ArgumentHelp[recipeName][name] = path
+				}
+			}
+		}
+	}
+	return sources
+}
+
+func mergeSourceMaps(base, override SourceMap) SourceMap {
+	return SourceMap{
+		Recipes:      mergeStringMaps(base.Recipes, override.Recipes),
+		RecipeHelp:   mergeStringMaps(base.RecipeHelp, override.RecipeHelp),
+		Vars:         mergeStringMaps(base.Vars, override.Vars),
+		VarCommands:  mergeStringMaps(base.VarCommands, override.VarCommands),
+		Env:          mergeStringMaps(base.Env, override.Env),
+		RecipeVars:   mergeNestedSourceMaps(base.RecipeVars, override.RecipeVars),
+		RecipeEnv:    mergeNestedSourceMaps(base.RecipeEnv, override.RecipeEnv),
+		Arguments:    mergeNestedSourceMaps(base.Arguments, override.Arguments),
+		ArgumentHelp: mergeNestedSourceMaps(base.ArgumentHelp, override.ArgumentHelp),
+	}
+}
+
+func mergeNestedSourceMaps(base, override map[string]map[string]string) map[string]map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := cloneNestedSourceMap(base)
+	if out == nil {
+		out = map[string]map[string]string{}
+	}
+	for name, values := range override {
+		out[name] = mergeStringMaps(out[name], values)
+	}
+	return out
+}
+
+func cloneNestedSourceMap(values map[string]map[string]string) map[string]map[string]string {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(values))
+	for name, nested := range values {
+		out[name] = maps.Clone(nested)
+	}
+	return out
 }
 
 // ResolveRecipes merges built-ins, config recipes, globals, and optional dynamic vars.

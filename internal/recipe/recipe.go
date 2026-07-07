@@ -70,6 +70,7 @@ func (command *Command) UnmarshalTOML(value any) error {
 }
 
 type Config struct {
+	Include      []string           `toml:"include"`
 	Profile      string             `toml:"profile"`
 	Env          map[string]string  `toml:"env"`
 	Vars         map[string]string  `toml:"vars"`
@@ -399,7 +400,7 @@ func ApplyGlobalsExpanded(recipes map[string]Recipe, vars, dynamicVars map[strin
 		if rec.Shell == "" {
 			rec.Shell = shell
 		}
-		rec.ShellPrelude = joinShell(shellPrelude, rec.ShellPrelude)
+		rec.ShellPrelude = JoinShell(shellPrelude, rec.ShellPrelude)
 		out[name] = rec
 	}
 	return out, nil
@@ -1485,13 +1486,13 @@ func CommandWithShell(command Command, shell, shellPrelude string) Command {
 		if len(command) >= 4 {
 			return command
 		}
-		return Command{scriptCommand, shell, joinShell(shellPrelude, command[1]), scriptArg0}
+		return Command{scriptCommand, shell, JoinShell(shellPrelude, command[1]), scriptArg0}
 	}
 	if strings.TrimSpace(shellPrelude) == "" || !isShellScriptCommand(command) {
 		return command
 	}
 	out := slices.Clone(command)
-	out[2] = joinShell(shellPrelude, out[2])
+	out[2] = JoinShell(shellPrelude, out[2])
 	return out
 }
 
@@ -1591,7 +1592,8 @@ func mergedEnv(base []string, overlays ...map[string]string) []string {
 	return out
 }
 
-func joinShell(parts ...string) string {
+// JoinShell joins shell prelude parts using Shadowtree's runtime shell semantics.
+func JoinShell(parts ...string) string {
 	var nonempty []string
 	for _, part := range parts {
 		part = strings.TrimRight(part, "\r\n")

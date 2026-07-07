@@ -1145,6 +1145,33 @@ cmd = "@webui:gen-schema"
 	}
 }
 
+func TestDocumentDiagnosticsAcceptIncludedRecipeReferenceAndPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(`
+[vars]
+INCLUDED_VAR = "value"
+
+[recipes.common.arguments.target]
+help = "Target."
+
+[recipes.common]
+cmd = "echo {INCLUDED_VAR} {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+
+[recipes.test]
+cmd = "@common[target=api]"
+post = ["echo {INCLUDED_VAR}"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsRejectCrossConfigMissingRecipe(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")

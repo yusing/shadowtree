@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -74,6 +75,44 @@ func TestCandidatesCompleteRecipesAfterHelp(t *testing.T) {
 
 	if len(candidates) != 1 || candidates[0].Value != "test" {
 		t.Fatalf("candidates = %#v, want test only", candidates)
+	}
+}
+
+func TestCandidatesCompleteIncludedRecipesAndArguments(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.shadowtree.toml"), []byte(`
+[recipes.common.arguments.target]
+help = "Target to build."
+
+[recipes.common]
+help = "Common recipe."
+cmd = "echo {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`include = ["./common.shadowtree.toml"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := configfile.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipes, _, err := configfile.ResolveRecipes(t.Context(), loaded, dir, configfile.ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := complete(t, []string{"shadowtree", ""}, recipes)
+	if !hasCandidate(candidates, "common") {
+		t.Fatalf("candidates = %#v, want included common recipe", candidates)
+	}
+	if got := helpFor(candidates, "common"); got != "Common recipe." {
+		t.Fatalf("common help = %q", got)
+	}
+	candidates = complete(t, []string{"shadowtree", "common", ""}, recipes)
+	if !hasCandidate(candidates, "target=") {
+		t.Fatalf("candidates = %#v, want included target argument", candidates)
 	}
 }
 

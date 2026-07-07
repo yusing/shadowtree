@@ -118,6 +118,7 @@ Completion criterion: cleanup or reporting that must run after failure belongs i
 
 Use these fields at config root:
 
+- `include`: TOML config files merged before this config; paths are relative to the including config file.
 - `profile`: `go` or `node`.
 - `shell`: shell for script commands; defaults to `sh`.
 - `shell_prelude`: shell code prepended to every script command.
@@ -126,6 +127,13 @@ Use these fields at config root:
 - `vars`: static placeholders usable as `{NAME}`.
 - `var_commands`: commands evaluated from the source checkout to produce placeholder values.
 - `recipes`: map of named recipes.
+
+Includes are global mixins, not isolated imports. Later includes override
+earlier includes, and the including file overrides all included files. Included
+recipes appear in help, `recipes`, shell completion, and LSP completion.
+Top-level `vars`, `var_commands`, `env`, `sync_out`, `profile`, `shell`, and
+`shell_prelude` also merge into the effective config. Included preludes run
+before the including file's prelude.
 
 Valid `vars` and `var_commands` keys match `[A-Za-z_][A-Za-z0-9_]*`.
 

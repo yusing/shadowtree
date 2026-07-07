@@ -36,6 +36,7 @@
 (pair
   (bare_key) @keyword
   (#any-of? @keyword
+    "include"
     "profile"
     "shell"
     "shell_prelude"

@@ -10,6 +10,15 @@
       "type": "string",
       "description": "Optional JSON Schema URL for editors that read schema declarations from TOML."
     },
+    "include": {
+      "type": "array",
+      "description": "Shadowtree TOML config files to merge before this config. Paths are resolved relative to the including config file; later layers override earlier layers.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^\\S(?:.*\\S)?$"
+      }
+    },
     "profile": {
       "type": "string",
       "enum": ["go", "node"],

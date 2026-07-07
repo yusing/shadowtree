@@ -218,6 +218,236 @@ func TestLoadRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
+func TestLoadMergesIncludesBeforeCurrentConfig(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.shadowtree.toml")
+	extra := filepath.Join(dir, "extra.shadowtree.toml")
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(base, []byte(`
+profile = "node"
+shell = "sh"
+shell_prelude = "base_prelude"
+sync_out = ["base.out"]
+
+[vars]
+shared = "base"
+base_only = "base"
+
+[var_commands]
+dynamic = "printf base"
+
+[env]
+SHARED = "base"
+BASE_ONLY = "base"
+
+[recipes.build]
+help = "Base build."
+for_each = "@enum api"
+workdir = "{item}"
+cmd = "base {target}"
+
+[recipes.build.vars]
+recipe_shared = "base"
+recipe_base_only = "base"
+
+[recipes.build.env]
+RECIPE_SHARED = "base"
+RECIPE_BASE_ONLY = "base"
+
+[recipes.build.arguments.target]
+help = "Base target."
+default = "base"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(extra, []byte(`
+[vars]
+shared = "extra"
+
+[recipes.extra]
+cmd = "extra"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`
+include = ["./base.shadowtree.toml", "./extra.shadowtree.toml"]
+profile = "go"
+shell_prelude = "current_prelude"
+sync_out = ["current.out"]
+
+[vars]
+current_only = "current"
+
+[env]
+SHARED = "current"
+
+[recipes.build]
+help = "Current build."
+cmd = "current {target} {mode}"
+
+[recipes.build.vars]
+recipe_shared = "current"
+
+[recipes.build.env]
+RECIPE_SHARED = "current"
+RECIPE_CURRENT_ONLY = "current"
+
+[recipes.build.arguments.mode]
+default = "dev"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := loaded.Config
+	if cfg.Profile != "go" {
+		t.Fatalf("profile = %q, want go", cfg.Profile)
+	}
+	if cfg.Shell != "sh" {
+		t.Fatalf("shell = %q, want inherited sh", cfg.Shell)
+	}
+	if cfg.ShellPrelude != "base_prelude\ncurrent_prelude" {
+		t.Fatalf("shell_prelude = %q", cfg.ShellPrelude)
+	}
+	if got := strings.Join(cfg.SyncOut, ","); got != "base.out,current.out" {
+		t.Fatalf("sync_out = %q", got)
+	}
+	if cfg.Vars["shared"] != "extra" || cfg.Vars["base_only"] != "base" || cfg.Vars["current_only"] != "current" {
+		t.Fatalf("vars = %#v", cfg.Vars)
+	}
+	if cfg.Env["SHARED"] != "current" || cfg.Env["BASE_ONLY"] != "base" {
+		t.Fatalf("env = %#v", cfg.Env)
+	}
+	build := cfg.Recipes["build"]
+	if build.Help != "Current build." || recipe.ScriptBody(build.Cmd) != "current {target} {mode}" {
+		t.Fatalf("build = %#v", build)
+	}
+	if recipe.ScriptBody(build.ForEach) != "@enum api" || build.Workdir != "{item}" {
+		t.Fatalf("build fan-out fields not inherited: %#v", build)
+	}
+	if build.Vars["recipe_shared"] != "current" || build.Vars["recipe_base_only"] != "base" {
+		t.Fatalf("build vars = %#v", build.Vars)
+	}
+	if build.Env["RECIPE_SHARED"] != "current" || build.Env["RECIPE_BASE_ONLY"] != "base" || build.Env["RECIPE_CURRENT_ONLY"] != "current" {
+		t.Fatalf("build env = %#v", build.Env)
+	}
+	if _, ok := build.Arguments["target"]; !ok {
+		t.Fatalf("build arguments missing inherited target: %#v", build.Arguments)
+	}
+	if _, ok := build.Arguments["mode"]; !ok {
+		t.Fatalf("build arguments missing current mode: %#v", build.Arguments)
+	}
+	if _, ok := cfg.Recipes["extra"]; !ok {
+		t.Fatalf("missing recipe from later include: %#v", cfg.Recipes)
+	}
+	if source := loaded.Sources.Recipes["extra"]; source != CleanAbs(extra) {
+		t.Fatalf("extra source = %q, want %q", source, CleanAbs(extra))
+	}
+	if source := loaded.Sources.Recipes["build"]; source != CleanAbs(path) {
+		t.Fatalf("build source = %q, want %q", source, CleanAbs(path))
+	}
+	if source := loaded.Sources.Arguments["build"]["target"]; source != CleanAbs(base) {
+		t.Fatalf("target source = %q, want %q", source, CleanAbs(base))
+	}
+}
+
+func TestLoadIncludesAreRelativeToIncludingConfig(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "leaf.shadowtree.toml"), []byte(`
+[recipes.leaf]
+cmd = "leaf"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "base.shadowtree.toml"), []byte(`
+include = ["./leaf.shadowtree.toml"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+include = ["./nested/base.shadowtree.toml"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.Config.Recipes["leaf"]; !ok {
+		t.Fatalf("missing transitive recipe: %#v", loaded.Config.Recipes)
+	}
+}
+
+func TestLoadIncludeArgumentRequiredFalseOverridesRequiredTrue(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.shadowtree.toml"), []byte(`
+[recipes.build.arguments.target]
+required = true
+
+[recipes.build]
+cmd = "echo {target}"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+include = ["./common.shadowtree.toml"]
+
+[recipes.build.arguments.target]
+required = false
+default = "."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arg := loaded.Config.Recipes["build"].Arguments["target"]
+	if arg.Required {
+		t.Fatalf("required = true, want false override")
+	}
+}
+
+func TestLoadRejectsMissingInclude(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`include = ["missing.shadowtree.toml"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `include "missing.shadowtree.toml"`) {
+		t.Fatalf("Load() error = %v, want include context", err)
+	}
+}
+
+func TestLoadRejectsIncludeCycle(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.shadowtree.toml")
+	b := filepath.Join(dir, "b.shadowtree.toml")
+	if err := os.WriteFile(a, []byte(`include = ["./b.shadowtree.toml"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`include = ["./a.shadowtree.toml"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(a)
+	if err == nil || !strings.Contains(err.Error(), "include cycle:") {
+		t.Fatalf("Load() error = %v, want cycle", err)
+	}
+}
+
 func TestResolveRecipesDoesNotDetectProfileWhenConfigOmitsProfile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
