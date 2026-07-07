@@ -212,17 +212,15 @@
       }
     },
     "shell": {
-      "description": "Shell used for script commands. Defaults to sh. Supported editor highlighting values are sh, bash, and fish.",
+      "type": "string",
+      "enum": ["sh", "bash"],
+      "description": "Shell used for script commands. Defaults to sh.",
       "default": "sh",
-      "anyOf": [
-        {
-          "type": "string",
-          "enum": ["sh", "bash", "fish"]
-        },
-        {
-          "type": "string"
+      "x-taplo": {
+        "docs": {
+          "enumValues": ["POSIX shell.", "Bash."]
         }
-      ]
+      }
     },
     "shellScript": {
       "type": "string",

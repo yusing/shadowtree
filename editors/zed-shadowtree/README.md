@@ -9,7 +9,7 @@ It provides:
 - Extra Shadowtree highlighting for recipe sections, `vars`, `var_commands`,
   and argument tables.
 - Shell semantic highlighting for script-valued `cmd`, `shell_prelude`, and
-  `values` strings with `shell = "sh"`, `shell = "bash"`, or `shell = "fish"`.
+  `values` strings with `shell = "sh"` or `shell = "bash"`.
 - Completion, diagnostics, and semantic tokens through `shadowtree-lsp`.
 
 For installed usage, `shadowtree-lsp` must be available on Zed's `PATH`. If the

@@ -1157,25 +1157,6 @@ func TestResolveDoesNotInheritOuterQuotesInsideCommandSubstitution(t *testing.T)
 	}
 }
 
-func TestResolveUsesFishDoubleQuoteEscapingForFishScriptCommand(t *testing.T) {
-	rec := Recipe{
-		Shell: "fish",
-		Cmd:   ScriptCommand(`printf "%s\n" "{value}"`),
-		Arguments: map[string]Argument{
-			"value": {Default: "a`b"},
-		},
-	}
-
-	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `printf "%s\n" "a` + "`" + `b"`
-	if ScriptBody(got.Main) != want {
-		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
-	}
-}
-
 func TestResolveRejectsEmbeddedVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
 	rec := Recipe{
 		Cmd: ScriptCommand(`printf prefix{@}suffix`),
@@ -1418,22 +1399,6 @@ func TestResolveMainKeepsShellBuiltinAsScript(t *testing.T) {
 	}
 }
 
-func TestResolveMainKeepsConfiguredFishShellAsScript(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
-		"script": {
-			Cmd: ScriptCommand("set -q PATH"),
-		},
-	}, nil, "fish", "")["script"]
-
-	got, err := Resolve("script", rec, nil, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(got.Main, Command{scriptCommand, "fish", "set -q PATH", "shadowtree"}) {
-		t.Fatalf("Main = %#v", got.Main)
-	}
-}
-
 func TestExpandPlaceholdersIgnoresShellParameterExpansion(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"sh", "-c", `: "${PHP_DIR:=/var/www/frsip}"; printf {project}`},
@@ -1604,6 +1569,25 @@ func TestValidateConfigRejectsBuiltinReferenceRecipeName(t *testing.T) {
 		if err == nil {
 			t.Fatalf("ValidateConfig succeeded with builtin reference recipe name %q", name)
 		}
+	}
+}
+
+func TestValidateConfigRejectsUnsupportedGlobalShell(t *testing.T) {
+	err := ValidateConfig(Config{Shell: "fish"})
+	if err == nil || !strings.Contains(err.Error(), `shell must be sh or bash, got "fish"`) {
+		t.Fatalf("ValidateConfig() error = %v, want unsupported shell error", err)
+	}
+}
+
+func TestValidateConfigRejectsUnsupportedRecipeShell(t *testing.T) {
+	err := ValidateConfig(Config{Recipes: map[string]Recipe{
+		"script": {
+			Shell: "fish",
+			Cmd:   ScriptCommand("true"),
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `recipe "script" shell must be sh or bash, got "fish"`) {
+		t.Fatalf("ValidateConfig() error = %v, want unsupported recipe shell error", err)
 	}
 }
 

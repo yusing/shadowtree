@@ -94,7 +94,6 @@ var argumentKeys = []completion{
 var shellValues = []completion{
 	{Label: "sh", InsertText: "sh", Kind: completionKindValue, Detail: "POSIX shell", Quote: true},
 	{Label: "bash", InsertText: "bash", Kind: completionKindValue, Detail: "Bash", Quote: true},
-	{Label: "fish", InsertText: "fish", Kind: completionKindValue, Detail: "Fish", Quote: true},
 }
 
 var argumentTypeValues = []completion{
@@ -475,7 +474,7 @@ func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStar
 
 func shellVariableCompletions(analysis documentAnalysis, pos lspPosition) ([]completion, bool) {
 	region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos)
-	if !ok || !supportedShell(region.Shell) {
+	if !ok || !scriptref.SupportedShell(region.Shell) {
 		return nil, false
 	}
 	line := lineAt(analysis.Lines, pos.Line)
@@ -620,17 +619,14 @@ func shellVariableCompletionNames(analysis documentAnalysis, region scriptRegion
 		if lineNo == pos.Line {
 			end = min(end, pos.Character)
 		}
-		for _, name := range shellAssignmentNames(line, start, end, region.Shell) {
+		for _, name := range shellAssignmentNames(line, start, end) {
 			addName(name)
 		}
 	}
 	return slices.Sorted(maps.Keys(names))
 }
 
-func shellAssignmentNames(line string, start, end int, shell string) []string {
-	if shell == "fish" {
-		return fishShellAssignmentNames(line, start, end)
-	}
+func shellAssignmentNames(line string, start, end int) []string {
 	var names []string
 	commandPosition := true
 	var pendingAssignments []string
@@ -685,7 +681,7 @@ func shellAssignmentNames(line string, start, end int, shell string) []string {
 			if commandPosition {
 				pendingAssignments = nil
 			}
-			commandPosition = shellKeyword(shell, word) && commandContinuesAfterKeyword(shell, word)
+			commandPosition = shellKeyword(word) && commandContinuesAfterKeyword(word)
 			continue
 		}
 		col++
@@ -724,53 +720,6 @@ func shExportNames(line string, start, end int) (int, []string) {
 		}
 	}
 	return col, names
-}
-
-func fishShellAssignmentNames(line string, start, end int) []string {
-	var names []string
-	for col := start; col < end; {
-		for col < end && isShellSpace(line[col]) {
-			col++
-		}
-		if col >= end || line[col] == '#' {
-			break
-		}
-		wordStart := col
-		for col < end && isShellWordPart(line[col]) {
-			col++
-		}
-		if line[wordStart:col] != "set" {
-			for col < end && !isShellOperator(line[col]) && line[col] != '#' {
-				col++
-			}
-			continue
-		}
-		for col < end {
-			for col < end && isShellSpace(line[col]) {
-				col++
-			}
-			if col >= end || line[col] == '#' || isShellOperator(line[col]) {
-				break
-			}
-			argStart := col
-			for col < end && isShellWordPart(line[col]) {
-				col++
-			}
-			arg := line[argStart:col]
-			if arg == "" {
-				col++
-				continue
-			}
-			if strings.HasPrefix(arg, "-") {
-				continue
-			}
-			if isIdentStart(arg[0]) {
-				names = append(names, arg)
-			}
-			break
-		}
-	}
-	return names
 }
 
 func scriptRegionAt(lines []string, regions []scriptRegion, pos lspPosition) (scriptRegion, bool) {
@@ -840,7 +789,7 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 			}
 		}
 		if ch == '$' {
-			if token, ok := shellVariableToken(line, 0, col, end, "sh"); ok {
+			if token, ok := shellVariableToken(line, 0, col, end); ok {
 				col += token.Length
 				commandPosition = false
 				continue
@@ -857,7 +806,7 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 				col++
 			}
 			word := line[wordStart:col]
-			commandPosition = shellKeyword("sh", word) && commandContinuesAfterKeyword("sh", word)
+			commandPosition = shellKeyword(word) && commandContinuesAfterKeyword(word)
 			continue
 		}
 		col++
@@ -1422,7 +1371,7 @@ func shellSettings(lines []string) map[string]string {
 		if !ok || key != "shell" {
 			continue
 		}
-		if value, ok := pairStringValue(raw); ok && supportedShell(value) {
+		if value, ok := pairStringValue(raw); ok && scriptref.SupportedShell(value) {
 			shells[table] = value
 		}
 	}
@@ -1663,10 +1612,6 @@ func pairStringValue(line string) (string, bool) {
 	return line[start+1 : end], true
 }
 
-func supportedShell(shell string) bool {
-	return shell == "sh" || shell == "bash" || shell == "fish"
-}
-
 func scriptKey(key string) bool {
 	return key == "cmd" || key == "pre" || key == "post" || key == "for_each" || key == "shell_prelude" || key == "values"
 }
@@ -1682,7 +1627,7 @@ func shellSemanticTokens(lines []string, region scriptRegion) []semanticToken {
 		if lineNo == region.EndLine {
 			end = region.EndCol
 		}
-		tokens = append(tokens, shellLineTokens(line, lineNo, start, end, region.Shell)...)
+		tokens = append(tokens, shellLineTokens(line, lineNo, start, end)...)
 	}
 	return mergeParsedShellTokens(tokens, parsedShellSemanticTokens(lines, region))
 }
@@ -1803,14 +1748,9 @@ func shellSyntaxPosition(region scriptRegion, pos syntax.Pos) (int, int) {
 	})
 }
 
-func shellLineTokens(line string, lineNo, start, end int, shell string) []semanticToken {
+func shellLineTokens(line string, lineNo, start, end int) []semanticToken {
 	var tokens []semanticToken
 	commandPosition := true
-	fishExpectFunctionName := false
-	fishInFunctionDeclaration := false
-	fishExpectFunctionArgs := false
-	fishExpectSetName := false
-	fishExpectStatusSubcommand := false
 	for col := start; col < end; {
 		ch := line[col]
 		if ch == '#' {
@@ -1827,14 +1767,14 @@ func shellLineTokens(line string, lineNo, start, end int, shell string) []semant
 			continue
 		}
 		if ch == '"' {
-			next, stringTokens := doubleQuotedShellTokens(line, lineNo, col, end, shell)
+			next, stringTokens := doubleQuotedShellTokens(line, lineNo, col, end)
 			tokens = append(tokens, stringTokens...)
 			col = next
 			commandPosition = false
 			continue
 		}
 		if ch == '$' {
-			if token, ok := shellVariableToken(line, lineNo, col, end, shell); ok {
+			if token, ok := shellVariableToken(line, lineNo, col, end); ok {
 				tokens = append(tokens, token)
 				col += token.Length
 				commandPosition = false
@@ -1854,44 +1794,14 @@ func shellLineTokens(line string, lineNo, start, end int, shell string) []semant
 			}
 			word := line[wordStart:col]
 			switch {
-			case shell == "fish" && fishExpectFunctionName:
-				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenFunction})
-				fishExpectFunctionName = false
-				fishInFunctionDeclaration = true
-				commandPosition = false
-			case shell == "fish" && fishExpectFunctionArgs && !strings.HasPrefix(word, "-"):
-				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenVariable})
-				commandPosition = false
-			case shell == "fish" && fishExpectSetName && !strings.HasPrefix(word, "-"):
-				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenVariable})
-				fishExpectSetName = false
-				commandPosition = false
-			case shell == "fish" && fishExpectStatusSubcommand && !strings.HasPrefix(word, "-"):
-				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenParameter})
-				fishExpectStatusSubcommand = false
-				commandPosition = false
-			case shellKeyword(shell, word):
+			case shellKeyword(word):
 				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenKeyword})
-				if shell == "fish" {
-					switch word {
-					case "function":
-						fishExpectFunctionName = true
-					case "set":
-						fishExpectSetName = true
-					}
-				}
-				commandPosition = commandContinuesAfterKeyword(shell, word)
+				commandPosition = commandContinuesAfterKeyword(word)
 			case strings.HasPrefix(word, "-"):
 				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenParameter})
-				if shell == "fish" && fishInFunctionDeclaration && (word == "-a" || word == "--argument-names") {
-					fishExpectFunctionArgs = true
-				}
 				commandPosition = false
 			case commandPosition:
 				tokens = append(tokens, semanticToken{Line: lineNo, Start: wordStart, Length: len(word), Type: semanticTokenFunction})
-				if shell == "fish" && word == "status" {
-					fishExpectStatusSubcommand = true
-				}
 				commandPosition = false
 			default:
 				commandPosition = false
@@ -1903,7 +1813,7 @@ func shellLineTokens(line string, lineNo, start, end int, shell string) []semant
 	return tokens
 }
 
-func shellVariableToken(line string, lineNo, start, end int, shell string) (semanticToken, bool) {
+func shellVariableToken(line string, lineNo, start, end int) (semanticToken, bool) {
 	if start+1 >= end {
 		return semanticToken{}, false
 	}
@@ -1915,13 +1825,6 @@ func shellVariableToken(line string, lineNo, start, end int, shell string) (sema
 		if close < end {
 			return semanticToken{Line: lineNo, Start: start, Length: close - start + 1, Type: semanticTokenVariable}, true
 		}
-	}
-	if shell == "fish" && isIdentPart(line[start+1]) {
-		col := start + 2
-		for col < end && isIdentPart(line[col]) {
-			col++
-		}
-		return semanticToken{Line: lineNo, Start: start, Length: col - start, Type: semanticTokenVariable}, true
 	}
 	if strings.ContainsRune("0123456789@*#?$!-", rune(line[start+1])) {
 		return semanticToken{Line: lineNo, Start: start, Length: 2, Type: semanticTokenVariable}, true
@@ -1949,7 +1852,7 @@ func skipShellString(line string, start, end int, quote byte) int {
 	return end
 }
 
-func doubleQuotedShellTokens(line string, lineNo, start, end int, shell string) (int, []semanticToken) {
+func doubleQuotedShellTokens(line string, lineNo, start, end int) (int, []semanticToken) {
 	var tokens []semanticToken
 	col := start + 1
 	for col < end {
@@ -1959,7 +1862,7 @@ func doubleQuotedShellTokens(line string, lineNo, start, end int, shell string) 
 		case '"':
 			return col + 1, tokens
 		case '$':
-			if token, ok := shellVariableToken(line, lineNo, col, end, shell); ok {
+			if token, ok := shellVariableToken(line, lineNo, col, end); ok {
 				tokens = append(tokens, token)
 				col += token.Length
 				continue
@@ -1972,28 +1875,17 @@ func doubleQuotedShellTokens(line string, lineNo, start, end int, shell string) 
 	return end, tokens
 }
 
-func shellKeyword(shell, word string) bool {
-	if shell == "fish" {
-		return slices.Contains(fishKeywords, word)
-	}
+func shellKeyword(word string) bool {
 	return slices.Contains(shKeywords, word)
 }
 
-func commandContinuesAfterKeyword(shell, word string) bool {
-	if shell == "fish" {
-		return word == "and" || word == "or" || word == "not" || word == "command" || word == "if" || word == "while"
-	}
+func commandContinuesAfterKeyword(word string) bool {
 	return word == "if" || word == "then" || word == "do" || word == "else" || word == "elif" || word == "until" || word == "while"
 }
 
 var shKeywords = []string{
 	"case", "do", "done", "elif", "else", "esac", "fi", "for", "function",
 	"if", "in", "select", "then", "time", "until", "while",
-}
-
-var fishKeywords = []string{
-	"and", "begin", "case", "command", "else", "end", "for", "function",
-	"if", "in", "not", "or", "set", "switch", "while",
 }
 
 func isShellSpace(ch byte) bool {

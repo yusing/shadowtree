@@ -548,6 +548,9 @@ func RecipeSandboxed(rec Recipe) bool {
 }
 
 func ValidateConfig(cfg Config) error {
+	if !scriptref.SupportedShell(cfg.Shell) {
+		return fmt.Errorf("shell must be sh or bash, got %q", cfg.Shell)
+	}
 	if err := ValidateVarsMap("vars", cfg.Vars); err != nil {
 		return err
 	}
@@ -557,6 +560,9 @@ func ValidateConfig(cfg Config) error {
 	for name, rec := range cfg.Recipes {
 		if IsReservedRecipeName(name) {
 			return fmt.Errorf("recipe name %q is reserved", name)
+		}
+		if !scriptref.SupportedShell(rec.Shell) {
+			return fmt.Errorf("recipe %q shell must be sh or bash, got %q", name, rec.Shell)
 		}
 		if err := ValidateArguments(rec.Arguments); err != nil {
 			return fmt.Errorf("recipe %q arguments: %w", name, err)
@@ -1327,7 +1333,7 @@ func expandScriptPlaceholders(text string, values map[string]string, shell strin
 						if quote == 0 {
 							quote = placeholderSurroundingQuote(text, i, end)
 						}
-						out.WriteString(scriptPlaceholderReplacement(value, quote, shell))
+						out.WriteString(scriptPlaceholderReplacement(value, quote))
 					}
 					i = end + 1
 					continue
@@ -1441,12 +1447,12 @@ func recordPlaceholderContexts(text string, start, end int, quote byte, contexts
 	}
 }
 
-func scriptPlaceholderReplacement(value string, quote byte, shell string) string {
+func scriptPlaceholderReplacement(value string, quote byte) string {
 	switch quote {
 	case '\'':
 		return shellSingleQuoteEscaped(value)
 	case '"':
-		return shellDoubleQuoteEscaped(value, shell)
+		return shellDoubleQuoteEscaped(value)
 	default:
 		return value
 	}
@@ -1456,16 +1462,15 @@ func shellSingleQuoteEscaped(value string) string {
 	return strings.ReplaceAll(value, "'", "'\\''")
 }
 
-func shellDoubleQuoteEscaped(value, shell string) string {
-	replacements := []string{
-		"\\", "\\\\",
-		`"`, `\"`,
-		`$`, `\$`,
-	}
-	if defaultShell(shell) != "fish" {
-		replacements = append(replacements, "`", "\\`")
-	}
-	return strings.NewReplacer(replacements...).Replace(value)
+var shellDoubleQuoteReplacer = strings.NewReplacer(
+	"\\", "\\\\",
+	`"`, `\"`,
+	`$`, `\$`,
+	"`", "\\`",
+)
+
+func shellDoubleQuoteEscaped(value string) string {
+	return shellDoubleQuoteReplacer.Replace(value)
 }
 
 func scriptVariadicPlaceholder(text string, offset int) (int, int, bool) {

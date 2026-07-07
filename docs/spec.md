@@ -185,6 +185,8 @@ echo "hello"
 ```
 
 If `shell` is not set, Shadowtree uses `sh`.
+Supported config shells are `sh` and `bash`; fish remains supported only as a
+generated CLI completion shell.
 
 Command strings run through the configured shell after placeholder expansion.
 A string that is exactly `@recipe` or `@path:recipe` invokes another recipe;
@@ -939,8 +941,7 @@ The Zed extension defines a `Shadowtree TOML` language backed by the pinned
   command-position `@recipe` in `sh`/`bash` script strings, including
   `shell_prelude`, `for_each`, and `pre`/`post`
 
-Shell semantic highlighting supports `shell = "bash"`, `shell = "sh"`, and
-`shell = "fish"` without hardcoding a single Zed shell language name.
+Shell semantic highlighting supports `shell = "bash"` and `shell = "sh"`.
 
 Zed completion, diagnostics, and semantic tokens are provided by
 `shadowtree-lsp`.

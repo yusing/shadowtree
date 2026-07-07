@@ -33,6 +33,15 @@ position = ` + value + `
 	}
 }
 
+func TestDocumentDiagnosticsRejectUnsupportedShell(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `shell = "fish"
+
+[recipes.test]
+cmd = "true"
+`)
+	assertOneDiagnostic(t, diagnostics, `shell must be sh or bash, got "fish"`)
+}
+
 func TestServerPublishesDiagnosticsOnOpen(t *testing.T) {
 	text := `[recipes.build]
 cmd = "go build"

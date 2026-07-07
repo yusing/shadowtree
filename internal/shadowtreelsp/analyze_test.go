@@ -1217,7 +1217,7 @@ pre = ["@gen"]
 
 func TestCompletionsIncludeSupportedShellValues(t *testing.T) {
 	items := completionsAt(t.Context(), "shell = ", lspPosition{Line: 0, Character: len("shell = ")})
-	assertLabels(t, items, "sh", "bash", "fish")
+	assertLabels(t, items, "sh", "bash")
 }
 
 func TestQuotedValueTextEditAddsQuotesWhenMissing(t *testing.T) {
@@ -1620,43 +1620,6 @@ cmd = "true"
 	tokens := decodeSemanticTokens(semanticTokens(text))
 	assertSemanticToken(t, tokens, 1, len(`pre = ["`), len("echo"), semanticTokenFunction)
 	assertSemanticToken(t, tokens, 2, len(`post = ["`), len("echo"), semanticTokenFunction)
-}
-
-func TestSemanticTokensUseRecipeFishShell(t *testing.T) {
-	text := `[recipes.complete]
-shell = "fish"
-values = '''
-set -l out $argv
-if test -n "$out"
-	echo $out
-end
-if status is-interactive
-	echo interactive
-end
-function echo-error -a message
-	echo "$message" >&2
-end
-set -x _2api_CODEX_KEY $2api_CODEX_KEY
-'''
-`
-	tokens := decodeSemanticTokens(semanticTokens(text))
-	assertSemanticToken(t, tokens, 3, 0, len("set"), semanticTokenKeyword)
-	assertSemanticToken(t, tokens, 3, len("set "), len("-l"), semanticTokenParameter)
-	assertSemanticToken(t, tokens, 3, len("set -l out "), len("$argv"), semanticTokenVariable)
-	assertSemanticToken(t, tokens, 4, 0, len("if"), semanticTokenKeyword)
-	assertSemanticToken(t, tokens, 4, len("if "), len("test"), semanticTokenFunction)
-	assertSemanticToken(t, tokens, 4, strings.Index(textLine(text, 4), "$out"), len("$out"), semanticTokenVariable)
-	assertSemanticToken(t, tokens, 6, 0, len("end"), semanticTokenKeyword)
-	assertSemanticToken(t, tokens, 7, 0, len("if"), semanticTokenKeyword)
-	assertSemanticToken(t, tokens, 7, len("if "), len("status"), semanticTokenFunction)
-	assertSemanticToken(t, tokens, 7, len("if status "), len("is-interactive"), semanticTokenParameter)
-	assertSemanticToken(t, tokens, 10, 0, len("function"), semanticTokenKeyword)
-	assertSemanticToken(t, tokens, 10, len("function "), len("echo-error"), semanticTokenFunction)
-	assertSemanticToken(t, tokens, 10, len("function echo-error "), len("-a"), semanticTokenParameter)
-	assertSemanticToken(t, tokens, 10, len("function echo-error -a "), len("message"), semanticTokenVariable)
-	assertSemanticToken(t, tokens, 11, strings.Index(textLine(text, 11), "$message"), len("$message"), semanticTokenVariable)
-	assertSemanticToken(t, tokens, 13, len("set -x "), len("_2api_CODEX_KEY"), semanticTokenVariable)
-	assertSemanticToken(t, tokens, 13, len("set -x _2api_CODEX_KEY "), len("$2api_CODEX_KEY"), semanticTokenVariable)
 }
 
 func assertEditRange(t *testing.T, edit map[string]any, start, end int) {

@@ -421,9 +421,9 @@ func groupedArgumentCandidates(ctx context.Context, spec shellSpec, prefix, cont
 
 // GroupedArgumentCandidates completes bracket-style recipe arguments.
 func GroupedArgumentCandidates(ctx context.Context, prefix, content string, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts Options) []Candidate {
-	before, _ := splitGroupedContent(fishShell, content)
-	used := usedArguments(fishShell, []string{before}, "", rec)
-	return groupedArgumentCandidates(ctx, fishShell, prefix, content, rec, recipes, used, opts)
+	before, _ := splitGroupedContent(bashShell, content)
+	used := usedArguments(bashShell, []string{before}, "", rec)
+	return groupedArgumentCandidates(ctx, bashShell, prefix, content, rec, recipes, used, opts)
 }
 
 func spacedArgumentCandidates(ctx context.Context, current string, rec recipe.Recipe, recipes map[string]recipe.Recipe, used map[string]bool, opts Options) []Candidate {
