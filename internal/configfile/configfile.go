@@ -82,6 +82,15 @@ type ResolveOptions struct {
 	EvalDynamicVars bool
 }
 
+// CrossConfigTarget is a resolved @path:recipe target config.
+type CrossConfigTarget struct {
+	Loaded    Loaded
+	Profile   string
+	Recipes   map[string]recipe.Recipe
+	Dir       string
+	SourceDir string
+}
+
 func Load(path string) (Loaded, error) {
 	return load(path, nil, nil, nil)
 }
@@ -413,6 +422,76 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 		return nil, "", err
 	}
 	return recipes, profile, nil
+}
+
+func ResolveCrossConfigReference(ctx context.Context, refPath, configPath, sourceDir string, opts ResolveOptions) (CrossConfigTarget, error) {
+	targetDir, resolvedSource, err := crossConfigTargetDir(refPath, configPath, sourceDir)
+	if err != nil {
+		return CrossConfigTarget{}, err
+	}
+	loaded, err := Load(filepath.Join(targetDir, Names[0]))
+	if err != nil {
+		return CrossConfigTarget{}, err
+	}
+	recipes, profile, err := ResolveRecipes(ctx, loaded, targetDir, opts)
+	if err != nil {
+		return CrossConfigTarget{}, err
+	}
+	return CrossConfigTarget{
+		Loaded:    loaded,
+		Profile:   profile,
+		Recipes:   recipes,
+		Dir:       targetDir,
+		SourceDir: resolvedSource,
+	}, nil
+}
+
+func crossConfigTargetDir(path, configPath, sourceDir string) (string, string, error) {
+	if sourceDir == "" {
+		sourceDir = "."
+	}
+	source, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return "", "", err
+	}
+	base := source
+	if configPath != "" {
+		base = filepath.Dir(configPath)
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(source, base)
+		}
+	}
+	target := path
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(base, target)
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return "", "", err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", "", fmt.Errorf("@%s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", "", fmt.Errorf("@%s: not a directory", path)
+	}
+	resolvedSource, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", "", err
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", "", fmt.Errorf("@%s: %w", path, err)
+	}
+	rel, err := filepath.Rel(resolvedSource, resolvedTarget)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("@%s: path is outside source", path)
+	}
+	return resolvedTarget, resolvedSource, nil
 }
 
 func Find(cwd string) (Loaded, bool, error) {

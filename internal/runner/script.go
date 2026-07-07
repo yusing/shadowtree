@@ -23,6 +23,9 @@ func runScriptCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string
 		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
 	}
 	body := recipe.ScriptBody(command)
+	if !strings.Contains(body, "@") {
+		return runExternalCommand(ctx, dir, env, recipe.ShellCommand(command), stdin, stdout, stderr)
+	}
 	file, refs, err := scriptref.Parse(shell, body)
 	if err != nil {
 		return err

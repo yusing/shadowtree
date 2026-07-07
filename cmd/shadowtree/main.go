@@ -356,8 +356,7 @@ func printRecipes(w io.Writer, recipes map[string]recipe.Recipe) error {
 }
 
 func printRecipeList(w io.Writer, recipes map[string]recipe.Recipe, indent string) error {
-	names := mapsKeys(recipes)
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(recipes))
 	nameColumn := recipeNameColumn(names)
 	for _, name := range names {
 		fmt.Fprintf(w, "%s%-*s%s\n", indent, nameColumn, name, recipe.Help(recipes[name]))
@@ -431,8 +430,7 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Workdir:"))
 		fmt.Fprintf(w, "    %s\n", colors.literal(rec.Workdir))
 	}
-	argNames := mapsKeys(rec.Arguments)
-	slices.Sort(argNames)
+	argNames := slices.Sorted(maps.Keys(rec.Arguments))
 	if len(argNames) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Arguments:"))
 	}
@@ -629,12 +627,4 @@ func mustGetwd() string {
 		panic(err)
 	}
 	return cwd
-}
-
-func mapsKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	return keys
 }

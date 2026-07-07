@@ -1289,6 +1289,25 @@ cmd = "@webui:g"
 	assertCompletionDetail(t, items, "@webui:gen-schema", "Target recipe help.")
 }
 
+func TestCompletionsRejectCrossConfigRecipeReferenceThroughOutsideSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeLSPTargetConfig(t, outside, "gen-schema")
+	if err := os.Symlink(filepath.Join(outside, "webui"), filepath.Join(root, "webui")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	text := `[recipes.test]
+cmd = "@webui:g"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = "@webui:g`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertNoLabels(t, items, "@webui:gen-schema")
+}
+
 func TestCompletionsIncludeCrossConfigRecipeReferenceArguments(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "webui")
@@ -1299,7 +1318,13 @@ func TestCompletionsIncludeCrossConfigRecipeReferenceArguments(t *testing.T) {
 [recipes.gen-schema.arguments.mode]
 type = "bool"
 
+[recipes.gen-schema.arguments.target]
+values = "@recipes"
+
 [recipes.gen-schema]
+cmd = "true"
+
+[recipes.target-only]
 cmd = "true"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -1325,6 +1350,18 @@ cmd = "@webui:gen-schema[mode="
 		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
 	)
 	assertLabels(t, items, "true", "false")
+
+	text = `[recipes.test]
+cmd = "@webui:gen-schema[target="
+`
+	items = completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = "@webui:gen-schema[target=`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "target-only")
+	assertNoLabels(t, items, "test")
 }
 
 func TestCompletionsIncludeScriptCrossConfigRecipeReferences(t *testing.T) {

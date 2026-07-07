@@ -154,8 +154,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 			if strings.Contains(ref.Path, "{") {
 				continue
 			}
-			targetOpts := crossConfigDiagnosticCompletionOptions(ref.Path, completionOpts)
-			crossRecipes, err := diagnosticCrossConfigRecipes(ctx, targetOpts, crossConfigRecipes)
+			crossRecipes, targetOpts, err := diagnosticCrossConfigRecipes(ctx, ref.Path, completionOpts, crossConfigRecipes)
 			if err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
@@ -201,21 +200,6 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 		return false
 	}
 	return valueBuiltinReferenceContext(ref.Table, ref.Key)
-}
-
-func crossConfigDiagnosticCompletionOptions(path string, opts completionOptions) completionOptions {
-	base := completionBaseDir(opts)
-	if base == "" {
-		return completionOptions{}
-	}
-	targetDir := path
-	if !filepath.IsAbs(targetDir) {
-		targetDir = filepath.Join(base, targetDir)
-	}
-	return completionOptions{
-		Dir:        targetDir,
-		ConfigPath: filepath.Join(targetDir, configfile.Names[0]),
-	}
 }
 
 func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
@@ -655,29 +639,31 @@ func unquoteRecipeReferenceArgumentValue(value string) string {
 
 type diagnosticCrossConfigResult struct {
 	recipes map[string]recipe.Recipe
+	opts    completionOptions
 	err     error
 }
 
-func diagnosticCrossConfigRecipes(ctx context.Context, opts completionOptions, cache map[string]diagnosticCrossConfigResult) (map[string]recipe.Recipe, error) {
-	if opts.Dir == "" || opts.ConfigPath == "" {
-		return nil, nil
+func diagnosticCrossConfigRecipes(ctx context.Context, path string, opts completionOptions, cache map[string]diagnosticCrossConfigResult) (map[string]recipe.Recipe, completionOptions, error) {
+	base := completionBaseDir(opts)
+	if base == "" {
+		return nil, completionOptions{}, nil
 	}
-	key := filepath.Clean(opts.Dir)
+	keyPath := path
+	if !filepath.IsAbs(keyPath) {
+		keyPath = filepath.Join(base, keyPath)
+	}
+	key := filepath.Clean(keyPath)
 	if result, ok := cache[key]; ok {
-		return result.recipes, result.err
+		return result.recipes, result.opts, result.err
 	}
-	loaded, err := configfile.Load(opts.ConfigPath)
+	target, err := configfile.ResolveCrossConfigReference(ctx, path, opts.ConfigPath, base, configfile.ResolveOptions{})
 	if err != nil {
 		cache[key] = diagnosticCrossConfigResult{err: err}
-		return nil, err
+		return nil, completionOptions{}, err
 	}
-	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, opts.Dir, configfile.ResolveOptions{})
-	if err != nil {
-		cache[key] = diagnosticCrossConfigResult{err: err}
-		return nil, err
-	}
-	cache[key] = diagnosticCrossConfigResult{recipes: recipes}
-	return recipes, nil
+	targetOpts := completionOptions{Dir: target.Dir, ConfigPath: target.Loaded.Path}
+	cache[key] = diagnosticCrossConfigResult{recipes: target.Recipes, opts: targetOpts}
+	return target.Recipes, targetOpts, nil
 }
 
 func parseDiagnostic(text string, err error) lspDiagnostic {

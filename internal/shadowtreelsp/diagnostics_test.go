@@ -1203,6 +1203,27 @@ cmd = "@webui:gen-schema"
 	}
 }
 
+func TestDocumentDiagnosticsRejectCrossConfigOutsideSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeLSPTargetConfig(t, outside, "gen-schema")
+	if err := os.Symlink(filepath.Join(outside, "webui"), filepath.Join(root, "webui")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	text := `[recipes.test]
+cmd = "@webui:gen-schema"
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "invalid recipe reference @webui:gen-schema") ||
+		!strings.Contains(diagnostics[0].Message, "path is outside source") {
+		t.Fatalf("message = %q, want outside source", diagnostics[0].Message)
+	}
+}
+
 func TestDocumentDiagnosticsRejectCrossConfigInvalidArgumentValue(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "webui")

@@ -347,8 +347,19 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 	}
 	ref := recipeReferenceForCompletion(name)
 	rec, ok := recipes[ref.Name]
+	targetRecipes := recipes
+	targetSources := loaded.Sources
+	targetOpts := opts
 	if ref.Path != "" {
-		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
+		target, targetOK := crossConfigCompletionTarget(ctx, ref.Path, opts)
+		if targetOK {
+			rec, ok = target.Recipes[ref.Name]
+			targetRecipes = target.Recipes
+			targetSources = target.Loaded.Sources
+			targetOpts = completionOptions{Dir: target.Dir, ConfigPath: target.Loaded.Path}
+		} else {
+			ok = false
+		}
 	}
 	if !ok || len(rec.Arguments) == 0 {
 		return nil, true
@@ -358,10 +369,10 @@ func recipeArgumentReferenceCompletions(ctx context.Context, text, table, prefix
 		name+"[",
 		content,
 		rec,
-		recipes,
-		lspCompletionCandidateOptions(opts),
+		targetRecipes,
+		lspCompletionCandidateOptions(targetOpts),
 	)
-	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character, loaded.Sources, ref.Name, opts), true
+	return recipeArgumentCompletions(candidates, quote+len("@")+1, pos.Character, targetSources, ref.Name, targetOpts), true
 }
 
 func commandListRecipeReferenceCompletions(ctx context.Context, text string, analysis documentAnalysis, pos lspPosition, opts completionOptions) ([]completion, bool) {
@@ -428,8 +439,19 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 	}
 	ref := recipeReferenceForCompletion(name)
 	rec, ok := recipes[ref.Name]
+	targetRecipes := recipes
+	targetSources := loaded.Sources
+	targetOpts := opts
 	if ref.Path != "" {
-		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
+		target, targetOK := crossConfigCompletionTarget(ctx, ref.Path, opts)
+		if targetOK {
+			rec, ok = target.Recipes[ref.Name]
+			targetRecipes = target.Recipes
+			targetSources = target.Loaded.Sources
+			targetOpts = completionOptions{Dir: target.Dir, ConfigPath: target.Loaded.Path}
+		} else {
+			ok = false
+		}
 	}
 	if !ok || len(rec.Arguments) == 0 {
 		return nil
@@ -439,10 +461,10 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 		name+"[",
 		content,
 		rec,
-		recipes,
-		lspCompletionCandidateOptions(opts),
+		targetRecipes,
+		lspCompletionCandidateOptions(targetOpts),
 	)
-	return recipeArgumentCompletions(candidates, start+1, pos.Character, loaded.Sources, ref.Name, opts)
+	return recipeArgumentCompletions(candidates, start+1, pos.Character, targetSources, ref.Name, targetOpts)
 }
 
 func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
@@ -459,8 +481,19 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	}
 	ref := recipeReferenceForCompletion(name)
 	rec, ok := recipes[ref.Name]
+	targetRecipes := recipes
+	targetSources := loaded.Sources
+	targetOpts := opts
 	if ref.Path != "" {
-		rec, ok = crossConfigCompletionRecipe(ctx, ref, opts)
+		target, targetOK := crossConfigCompletionTarget(ctx, ref.Path, opts)
+		if targetOK {
+			rec, ok = target.Recipes[ref.Name]
+			targetRecipes = target.Recipes
+			targetSources = target.Loaded.Sources
+			targetOpts = completionOptions{Dir: target.Dir, ConfigPath: target.Loaded.Path}
+		} else {
+			ok = false
+		}
 	}
 	if !ok || len(rec.Arguments) == 0 {
 		return nil
@@ -475,9 +508,9 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	if before != "" {
 		content = strings.Join(strings.Fields(before), ", ") + ", " + active
 	}
-	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, recipes, lspCompletionCandidateOptions(opts))
+	candidates := recipecompletion.GroupedArgumentCandidates(ctx, "", content, rec, targetRecipes, lspCompletionCandidateOptions(targetOpts))
 	editStart := start + 1 + len(name) + 1 + currentStart
-	return recipeArgumentCompletions(candidates, editStart, pos.Character, loaded.Sources, ref.Name, opts)
+	return recipeArgumentCompletions(candidates, editStart, pos.Character, targetSources, ref.Name, targetOpts)
 }
 
 func recipeArgumentCompletions(candidates []recipecompletion.Candidate, editStart, editEnd int, sources configfile.SourceMap, recipeName string, opts completionOptions) []completion {
@@ -1088,33 +1121,24 @@ func completionSourceDetail(detail, source string, opts completionOptions) strin
 	return detail + " (from " + label + ")"
 }
 
-func crossConfigCompletionRecipe(ctx context.Context, ref recipe.RecipeReferenceTarget, opts completionOptions) (recipe.Recipe, bool) {
-	recipes, ok := crossConfigCompletionRecipes(ctx, ref.Path, opts)
-	if !ok {
-		return recipe.Recipe{}, false
+func crossConfigCompletionTarget(ctx context.Context, path string, opts completionOptions) (configfile.CrossConfigTarget, bool) {
+	base := completionBaseDir(opts)
+	if base == "" {
+		return configfile.CrossConfigTarget{}, false
 	}
-	rec, ok := recipes[ref.Name]
-	return rec, ok
+	target, err := configfile.ResolveCrossConfigReference(ctx, path, opts.ConfigPath, base, configfile.ResolveOptions{})
+	if err != nil {
+		return configfile.CrossConfigTarget{}, false
+	}
+	return target, true
 }
 
 func crossConfigCompletionRecipes(ctx context.Context, path string, opts completionOptions) (map[string]recipe.Recipe, bool) {
-	base := completionBaseDir(opts)
-	if base == "" {
+	target, ok := crossConfigCompletionTarget(ctx, path, opts)
+	if !ok {
 		return nil, false
 	}
-	targetDir := path
-	if !filepath.IsAbs(targetDir) {
-		targetDir = filepath.Join(base, targetDir)
-	}
-	loaded, err := configfile.Load(filepath.Join(targetDir, configfile.Names[0]))
-	if err != nil {
-		return nil, false
-	}
-	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, targetDir, configfile.ResolveOptions{})
-	if err != nil {
-		return nil, false
-	}
-	return recipes, true
+	return target.Recipes, true
 }
 
 func completionBaseDir(opts completionOptions) string {

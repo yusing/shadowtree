@@ -481,8 +481,7 @@ func cutGroupedStart(spec shellSpec, text string) (string, string, bool) {
 }
 
 func argumentNameCandidates(prefix, current string, rec recipe.Recipe, used map[string]bool) []Candidate {
-	names := mapsKeys(rec.Arguments)
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(rec.Arguments))
 	var candidates []Candidate
 	for _, name := range names {
 		if used[name] {
@@ -624,9 +623,6 @@ func pathValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts O
 	if err != nil {
 		return nil
 	}
-	slices.SortFunc(entries, func(a, b os.DirEntry) int {
-		return strings.Compare(a.Name(), b.Name())
-	})
 	var candidates []Candidate
 	showHidden := strings.HasPrefix(entryPrefix, ".")
 	for _, entry := range entries {
@@ -775,8 +771,7 @@ func helpCandidates(words []string, recipes map[string]recipe.Recipe) ([]Candida
 
 func recipeCandidates(words []string, recipes map[string]recipe.Recipe) []Candidate {
 	var candidates []Candidate
-	names := mapsKeys(recipes)
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(recipes))
 	for _, name := range names {
 		candidates = append(candidates, Candidate{Value: name, Help: recipe.Help(recipes[name])})
 	}
@@ -941,12 +936,4 @@ func filterPrefix(candidates []Candidate, prefix string) []Candidate {
 		}
 	}
 	return out
-}
-
-func mapsKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	return keys
 }

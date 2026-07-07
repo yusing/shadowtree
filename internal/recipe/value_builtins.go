@@ -199,6 +199,9 @@ func valueBuiltinInvocations(command Command) ([]valueBuiltinCall, bool, error) 
 }
 
 func scriptValueBuiltinInvocations(body string) ([]valueBuiltinCall, bool, error) {
+	if !strings.Contains(body, "@") {
+		return nil, false, nil
+	}
 	file, refs, err := scriptref.Parse("", body)
 	if err != nil {
 		return nil, false, nil

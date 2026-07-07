@@ -580,7 +580,7 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 }
 
 func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
-	usesVariadicArgs := recipeUsesVariadicArgs(rec)
+	usesVariadicArgs := RecipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
 		if len(cliArgs) == 0 {
 			return map[string]string{}, nil, nil
@@ -1199,10 +1199,6 @@ func identifierStart(ch byte) bool {
 
 func identifierPart(ch byte) bool {
 	return identifierStart(ch) || ch >= '0' && ch <= '9'
-}
-
-func recipeUsesVariadicArgs(rec Recipe) bool {
-	return RecipeUsesVariadicArgs(rec)
 }
 
 // RecipeUsesVariadicArgs reports whether rec references the leftover CLI args placeholder.

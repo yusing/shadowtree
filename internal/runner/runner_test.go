@@ -990,6 +990,47 @@ required = true
 	}
 }
 
+func TestRunRejectsCrossConfigRecipeReferenceThroughOutsideSymlink(t *testing.T) {
+	source := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, ".shadowtree.toml"), []byte(`
+[recipes.gen-schema]
+cmd = "printf shadow > out.txt"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "webui")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"@webui:gen-schema"},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"@webui:gen-schema"}}},
+		SourceDir: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "path is outside source") {
+		t.Fatalf("Run() error = %v, want outside source", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "out.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outside out.txt err = %v, want not exist", err)
+	}
+}
+
 func TestRunSameConfigRecipeReferenceExpandsGlobalEnvForTarget(t *testing.T) {
 	source := t.TempDir()
 	configEnv := map[string]string{"VALUE": "{value}"}
@@ -1058,6 +1099,32 @@ required = true
 	}
 	if output != "shadow" {
 		t.Fatalf("output = %q, want target-expanded env", output)
+	}
+}
+
+func TestCommandOutputRejectsCrossConfigRecipeReferenceThroughOutsideSymlink(t *testing.T) {
+	source := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, ".shadowtree.toml"), []byte(`
+[recipes.gen-schema]
+cmd = "printf shadow > out.txt"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "webui")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := CommandOutput(t.Context(), source, nil, recipe.Command{"@webui:gen-schema"}, CommandOutputOptions{
+		ConfigPath: filepath.Join(source, ".shadowtree.toml"),
+		SourceDir:  source,
+		Recipes:    map[string]recipe.Recipe{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "path is outside source") {
+		t.Fatalf("CommandOutput() error = %v, want outside source", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "out.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outside out.txt err = %v, want not exist", err)
 	}
 }
 
