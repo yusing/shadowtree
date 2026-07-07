@@ -11,6 +11,20 @@ Do not rely on `shadowtree` skill since you're currently working `shadowtree`.
 On significant changes, update (where applicable) README, spec, json schema,
 agent `SKILL.md`, lsp (autocomplete and diagnostic) and shell completion.
 
+Follow global duplication-control rules. In this repo, prefer these existing
+sources of truth over local copies:
+
+- supported script shells: `internal/scriptref.SupportedShell` and
+  `internal/scriptref.Parser`
+- command shape and recipe references: `recipe.ValidateCommand`,
+  `recipe.IsScriptCommand`, `recipe.ParseRecipeReference`, and
+  `scriptref.Parse`
+- profile support: `recipe.SupportsProfile`, `recipe.BuiltinNames`, and
+  `recipe.Builtins`
+- global flags: `internal/globalflag.All` and `internal/globalflag.Lookup`
+- config schema surfaces: `schemas/shadowtree.schema.json`, runtime, LSP
+  completions/diagnostics, editor docs, and agent skill docs must stay aligned
+
 ## Build, Test, and Development Commands
 
 Use the local CLI before installing a binary:

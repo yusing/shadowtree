@@ -292,7 +292,12 @@ values = "@go-packages"
 For typed recipes, positional values and known `key=value` argument values are
 consumed by typed arguments and excluded from `{@}`. Unknown identifier
 `key=value` tokens remain errors; command flags such as `-run=TestName` pass
-through. Use `--` to pass following tokens literally to `{@}`.
+through. Use `--` after typed recipe arguments to pass the following argv
+literally to `{@}`, including option values that contain `=`:
+
+```sh
+shadowtree test pkg=./internal/recipe -- --flag NAME=value
+```
 
 ## Built-In Profiles
 

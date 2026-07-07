@@ -295,6 +295,7 @@ Resolution rules:
 - With no typed `arguments`, recipe CLI args are accepted only when `cmd` includes `{@}`.
 - With typed `arguments`, defaults load first; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
 - Unknown named args, unexpected positional args, missing required args, and invalid typed values fail.
+- Use `--` after typed recipe arguments to pass following argv literally to `{@}`, especially option values that contain `=` such as `-- --cookie NAME=value`.
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.

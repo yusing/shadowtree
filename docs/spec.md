@@ -474,7 +474,8 @@ supported only in `cmd`, not in `pre`, `post`, or `sync_out`. For recipes with t
 `arguments`, positional argument values and known `key=value` argument values
 are consumed by those arguments and excluded from `{@}`. Unknown identifier
 `key=value` tokens remain errors; command flags such as `-run=TestName` pass
-through. Use `--` to pass following tokens literally to `{@}`:
+through. Use `--` after typed recipe arguments to pass the following argv
+literally to `{@}`, including option values that contain `=`:
 
 ```toml
 [recipes.test]
@@ -489,7 +490,7 @@ values = "@go-packages"
 
 ```sh
 shadowtree test ./internal/recipe -run=TestResolve -count=1
-shadowtree test pkg=./internal/recipe -- pkg=literal
+shadowtree test pkg=./internal/recipe -- --flag NAME=value
 ```
 
 ## Fan-Out Recipes
