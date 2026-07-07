@@ -235,10 +235,6 @@ func enrichAnalysisWithResolvedRecipes(ctx context.Context, text string, analysi
 	}
 }
 
-func completionsAt(ctx context.Context, text string, pos lspPosition) []completion {
-	return completionsAtWithOptions(ctx, text, pos, completionOptions{})
-}
-
 func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition, opts completionOptions) []completion {
 	analysis := analyzeDocument(text, pos.Line)
 	line := lineAt(analysis.Lines, pos.Line)

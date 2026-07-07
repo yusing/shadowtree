@@ -204,14 +204,6 @@ func completionOptionsForURI(uri string) completionOptions {
 	}
 }
 
-func lspConfigDir(uri string) (string, bool) {
-	path, ok := lspFilePath(uri)
-	if !ok {
-		return "", false
-	}
-	return filepath.Dir(path), true
-}
-
 func lspFilePath(uri string) (string, bool) {
 	parsed, err := url.Parse(uri)
 	if err != nil || parsed.Scheme != "file" {
@@ -290,10 +282,6 @@ type semanticTokensParams struct {
 	} `json:"textDocument"`
 }
 
-func completionResult(ctx context.Context, text string, position lspPosition) map[string]any {
-	return completionResultWithOptions(ctx, text, position, completionOptions{})
-}
-
 func completionResultWithOptions(ctx context.Context, text string, position lspPosition, opts completionOptions) map[string]any {
 	lines := strings.Split(text, "\n")
 	bytePosition := lspToBytePosition(lines, position)
@@ -332,11 +320,6 @@ func completionResultWithOptions(ctx context.Context, text string, position lspP
 	}
 }
 
-func recipeReferenceTextEdit(text string, position lspPosition, name string) map[string]any {
-	lines := strings.Split(text, "\n")
-	return recipeReferenceTextEditLine(lineAt(lines, position.Line), position, name)
-}
-
 func recipeReferenceTextEditLine(line string, position lspPosition, name string) map[string]any {
 	prefix := linePrefix(line, position.Character)
 	at := strings.LastIndexByte(prefix, '@')
@@ -351,11 +334,6 @@ func recipeReferenceTextEditLine(line string, position lspPosition, name string)
 	return textEdit(line, position.Line, start, end, name)
 }
 
-func keyTextEdit(text string, position lspPosition, label, insertText string) map[string]any {
-	lines := strings.Split(text, "\n")
-	return keyTextEditLine(lineAt(lines, position.Line), position, label, insertText)
-}
-
 func keyTextEditLine(line string, position lspPosition, label, insertText string) map[string]any {
 	start := wordStart(line, position.Character)
 	end := wordEnd(line, position.Character)
@@ -364,11 +342,6 @@ func keyTextEditLine(line string, position lspPosition, label, insertText string
 		newText = label
 	}
 	return textEdit(line, position.Line, start, end, newText)
-}
-
-func quotedValueTextEdit(text string, position lspPosition, value string) map[string]any {
-	lines := strings.Split(text, "\n")
-	return quotedValueTextEditLine(lineAt(lines, position.Line), position, value)
 }
 
 func quotedValueTextEditLine(line string, position lspPosition, value string) map[string]any {
@@ -421,11 +394,6 @@ func tomlBasicStringContent(value string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(quoted, `"`), `"`)
 }
 
-func placeholderTextEdit(text string, position lspPosition, label string) map[string]any {
-	lines := strings.Split(text, "\n")
-	return placeholderTextEditLine(lineAt(lines, position.Line), position, label)
-}
-
 func placeholderTextEditLine(line string, position lspPosition, label string) map[string]any {
 	prefix := linePrefix(line, position.Character)
 	open := strings.LastIndexByte(prefix, '{')
@@ -443,11 +411,6 @@ func placeholderTextEditLine(line string, position lspPosition, label string) ma
 	return textEdit(line, position.Line, start, end, newText)
 }
 
-func tableTextEdit(text string, position lspPosition, insertText string) map[string]any {
-	lines := strings.Split(text, "\n")
-	return tableTextEditLine(lineAt(lines, position.Line), position, insertText)
-}
-
 func tableTextEditLine(line string, position lspPosition, insertText string) map[string]any {
 	start := tableSegmentStart(linePrefix(line, position.Character))
 	end := position.Character
@@ -458,11 +421,6 @@ func tableTextEditLine(line string, position lspPosition, insertText string) map
 		}
 	}
 	return textEdit(line, position.Line, start, end, insertText)
-}
-
-func inTableHeader(text string, position lspPosition) bool {
-	lines := strings.Split(text, "\n")
-	return inTableHeaderLine(lineAt(lines, position.Line), position)
 }
 
 func inTableHeaderLine(line string, position lspPosition) bool {

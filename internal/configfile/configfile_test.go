@@ -85,7 +85,7 @@ func TestInitWritesNoBuiltinRecipeOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range recipe.BuiltinNames(recipe.GoProfile) {
+	for name := range recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: filepath.Dir(path)}) {
 		if _, ok := loaded.Config.Recipes[name]; ok {
 			t.Fatalf("init wrote built-in recipe override %q", name)
 		}

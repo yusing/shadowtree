@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+func applyGlobals(t *testing.T, recipes map[string]Recipe, vars map[string]string, shell, shellPrelude string) map[string]Recipe {
+	t.Helper()
+	out, err := ApplyGlobalsExpanded(recipes, vars, nil, shell, shellPrelude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:       Command{"go", "test", "{pkg}", "{@}"},
@@ -42,28 +51,28 @@ func TestResolveUntypedRecipeRejectsUnexpectedCLIArgsWithoutVariadicPlaceholder(
 }
 
 func TestRecipeReferenceSplitsNameAndArgs(t *testing.T) {
-	name, args, ok := RecipeReference(Command{"@gen-swagger", "service=api"})
+	ref, ok := ParseRecipeReference(Command{"@gen-swagger", "service=api"})
 	if !ok {
 		t.Fatal("RecipeReference did not detect @ command")
 	}
-	if name != "gen-swagger" {
-		t.Fatalf("name = %q", name)
+	if ref.Name != "gen-swagger" {
+		t.Fatalf("name = %q", ref.Name)
 	}
-	if !slices.Equal(args, []string{"service=api"}) {
-		t.Fatalf("args = %#v", args)
+	if !slices.Equal(ref.Args, []string{"service=api"}) {
+		t.Fatalf("args = %#v", ref.Args)
 	}
 }
 
 func TestRecipeReferenceSplitsBracketStyleArguments(t *testing.T) {
-	name, args, ok := RecipeReference(Command{"@build[component=godoxy, mode=dev]"})
+	ref, ok := ParseRecipeReference(Command{"@build[component=godoxy, mode=dev]"})
 	if !ok {
 		t.Fatal("RecipeReference did not detect @ command")
 	}
-	if name != "build" {
-		t.Fatalf("name = %q", name)
+	if ref.Name != "build" {
+		t.Fatalf("name = %q", ref.Name)
 	}
-	if !slices.Equal(args, []string{"component=godoxy", "mode=dev"}) {
-		t.Fatalf("args = %#v", args)
+	if !slices.Equal(ref.Args, []string{"component=godoxy", "mode=dev"}) {
+		t.Fatalf("args = %#v", ref.Args)
 	}
 }
 
@@ -1205,7 +1214,7 @@ func TestResolveRejectsVariadicArgsPlaceholderInGlobalSyncOut(t *testing.T) {
 }
 
 func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
+	rec := applyGlobals(t, map[string]Recipe{
 		"build": {
 			Cmd: Command{"go", "build", "-ldflags={go_ldflags}", "{project}", "{@}"},
 			Arguments: map[string]Argument{
@@ -1224,7 +1233,7 @@ func TestResolveExpandsGlobalVarsAndArgumentValues(t *testing.T) {
 }
 
 func TestResolveExpandsVarsInVars(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
+	rec := applyGlobals(t, map[string]Recipe{
 		"docs": {
 			Vars: map[string]string{
 				"docs_dir": "{webui_dir}/wiki",
@@ -1250,7 +1259,7 @@ func TestResolveExpandsVarsInVars(t *testing.T) {
 }
 
 func TestResolveExpandsGlobalEnv(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
+	rec := applyGlobals(t, map[string]Recipe{
 		"docs": {
 			Cmd: Command{"printf", "%s", "$DOCS_DIR"},
 		},
@@ -1356,7 +1365,7 @@ func TestResolveRejectsRecursiveVars(t *testing.T) {
 }
 
 func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
+	rec := applyGlobals(t, map[string]Recipe{
 		"script": {
 			Cmd: ScriptCommand("say_hi"),
 		},
@@ -1372,7 +1381,7 @@ func TestResolveShellScriptUsesDefaultShellAndPrelude(t *testing.T) {
 }
 
 func TestResolveShellScriptUsesConfiguredShell(t *testing.T) {
-	rec := ApplyGlobals(map[string]Recipe{
+	rec := applyGlobals(t, map[string]Recipe{
 		"script": {
 			Cmd: ScriptCommand("[[ -n ${BASH_VERSION:-} ]] && printf ok"),
 		},

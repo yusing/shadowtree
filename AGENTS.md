@@ -19,8 +19,7 @@ sources of truth over local copies:
 - command shape and recipe references: `recipe.ValidateCommand`,
   `recipe.IsScriptCommand`, `recipe.ParseRecipeReference`, and
   `scriptref.Parse`
-- profile support: `recipe.SupportsProfile`, `recipe.BuiltinNames`, and
-  `recipe.Builtins`
+- profile support: `recipe.SupportsProfile` and `recipe.Builtins`
 - global flags: `internal/globalflag.All` and `internal/globalflag.Lookup`
 - config schema surfaces: `schemas/shadowtree.schema.json`, runtime, LSP
   completions/diagnostics, editor docs, and agent skill docs must stay aligned

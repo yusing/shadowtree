@@ -401,13 +401,6 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 	return candidates, nil
 }
 
-func discoverGoPackages(baseDir, prefix string) ([]ValueCandidate, error) {
-	if !goPackagePrefixCanMatch(prefix) {
-		return nil, nil
-	}
-	return discoverGoPackagesContext(context.Background(), baseDir, prefix)
-}
-
 func discoverGoPackagesContext(parent context.Context, baseDir, prefix string) ([]ValueCandidate, error) {
 	if parent == nil {
 		parent = context.Background()
@@ -565,10 +558,6 @@ func goPackageValue(baseDir, path string) (string, error) {
 		return value, nil
 	}
 	return "./" + value, nil
-}
-
-func goPackagePrefixCanMatch(prefix string) bool {
-	return valuePrefixOverlaps(".", prefix)
 }
 
 func goModulePackagePrefix(moduleValue, prefix string) string {

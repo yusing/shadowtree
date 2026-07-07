@@ -39,10 +39,6 @@ func (server *server) publishDiagnostics(ctx context.Context, uri, text string, 
 	})
 }
 
-func documentDiagnostics(ctx context.Context, text string) []lspDiagnostic {
-	return documentDiagnosticsWithOptions(ctx, text, diagnosticOptions{})
-}
-
 type diagnosticOptions struct {
 	URI string
 }

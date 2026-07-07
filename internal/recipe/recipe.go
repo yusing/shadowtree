@@ -128,24 +128,10 @@ type RecipeReferenceTarget struct {
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var (
 	supportedProfiles = []string{GoProfile, NodeProfile}
-	goBuiltinNames    = []string{"build", "check", "fix", "fmt", "generate", "lint", "run", "test", "test-race", "tidy", "vet"}
-	nodeBuiltinNames  = []string{"install", "dev", "build", "start", "test", "lint", "fmt", "typecheck", "check"}
 )
 
 type BuiltinOptions struct {
 	Dir string
-}
-
-// BuiltinNames returns possible built-in recipe names for profile.
-func BuiltinNames(profile string) []string {
-	switch profile {
-	case GoProfile:
-		return slices.Clone(goBuiltinNames)
-	case NodeProfile:
-		return slices.Clone(nodeBuiltinNames)
-	default:
-		return nil
-	}
 }
 
 func SupportsProfile(profile string) bool {
@@ -387,19 +373,6 @@ func MergeRecipe(base, override Recipe) Recipe {
 	}
 	if override.SyncOut != nil {
 		out.SyncOut = slices.Clone(override.SyncOut)
-	}
-	return out
-}
-
-func ApplyGlobals(recipes map[string]Recipe, vars map[string]string, shell, shellPrelude string) map[string]Recipe {
-	out := maps.Clone(recipes)
-	for name, rec := range out {
-		rec.Vars = mergeStringMaps(vars, rec.Vars)
-		if rec.Shell == "" {
-			rec.Shell = shell
-		}
-		rec.ShellPrelude = joinShell(shellPrelude, rec.ShellPrelude)
-		out[name] = rec
 	}
 	return out
 }
@@ -897,14 +870,6 @@ func CommandHelpText(command Command) string {
 		parts = append(parts, arg)
 	}
 	return strings.Join(parts, " ")
-}
-
-func RecipeReference(command Command) (string, []string, bool) {
-	ref, ok := ParseRecipeReference(command)
-	if !ok {
-		return "", nil, false
-	}
-	return ref.Name, slices.Clone(ref.Args), true
 }
 
 // ParseRecipeReference parses a command whose first item starts with @.
