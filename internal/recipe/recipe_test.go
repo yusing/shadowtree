@@ -1103,6 +1103,79 @@ func TestResolveExpandsVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
 	}
 }
 
+func TestResolveEscapesQuotedPlaceholdersInScriptCommand(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf "%s\n" "{value}" '{value}' --flag="{value}"`),
+		Arguments: map[string]Argument{
+			"value": {Default: `alpha" ' beta $HOME \tail`},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `printf "%s\n" "alpha\" ' beta \$HOME \\tail" 'alpha" '\'' beta $HOME \tail' --flag="alpha\" ' beta \$HOME \\tail"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+}
+
+func TestResolveEscapesQuotedPlaceholdersInCommandSubstitution(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf "%s\n" "$(printf "{value}")"`),
+		Arguments: map[string]Argument{
+			"value": {Default: `ok"; touch injected; printf "`},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `printf "%s\n" "$(printf "ok\"; touch injected; printf \"")"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+}
+
+func TestResolveDoesNotInheritOuterQuotesInsideCommandSubstitution(t *testing.T) {
+	rec := Recipe{
+		Cmd: ScriptCommand(`printf "%s\n" "$(printf {value})"`),
+		Arguments: map[string]Argument{
+			"value": {Default: `raw"value`},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `printf "%s\n" "$(printf raw"value)"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+}
+
+func TestResolveUsesFishDoubleQuoteEscapingForFishScriptCommand(t *testing.T) {
+	rec := Recipe{
+		Shell: "fish",
+		Cmd:   ScriptCommand(`printf "%s\n" "{value}"`),
+		Arguments: map[string]Argument{
+			"value": {Default: "a`b"},
+		},
+	}
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `printf "%s\n" "a` + "`" + `b"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+}
+
 func TestResolveRejectsEmbeddedVariadicArgsPlaceholderInScriptCommand(t *testing.T) {
 	rec := Recipe{
 		Cmd: ScriptCommand(`printf prefix{@}suffix`),

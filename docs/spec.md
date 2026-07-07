@@ -461,6 +461,9 @@ expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `workdir`, and
 `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
+In shell command strings, placeholders inside single or double quotes are
+escaped for that quote context, so `"{name}"` and `'{name}'` stay one shell word
+even when the value contains quote characters.
 
 `{@}` is a variadic placeholder for leftover recipe CLI args. It must be a
 whole argument item in argv-style `cmd` values, or a whole shell word in script

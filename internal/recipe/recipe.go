@@ -14,6 +14,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yusing/shadowtree/internal/scriptref"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 const (
@@ -450,19 +453,19 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if len(rec.ForEach) > 0 {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
 	}
-	cmd, err := expandCommand(rec.Cmd, commandValues, variadicArgs)
+	cmd, err := expandCommand(rec.Cmd, commandValues, variadicArgs, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
 	cmd = CommandWithRecipeReference(cmd, rec.Shell, rec.ShellPrelude)
-	pre, err := expandCommands(rec.Pre, values, nil)
+	pre, err := expandCommands(rec.Pre, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
 	for i := range pre {
 		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, rec.ShellPrelude)
 	}
-	post, err := expandCommands(rec.Post, values, nil)
+	post, err := expandCommands(rec.Post, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
@@ -482,7 +485,7 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	}
 	var forEach Command
 	if len(rec.ForEach) > 0 {
-		forEach, err = expandCommand(rec.ForEach, values, nil)
+		forEach, err = expandCommand(rec.ForEach, values, nil, rec.Shell)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q for_each: %w", name, err)
 		}
@@ -1007,10 +1010,10 @@ func MergeArgument(base, override Argument) Argument {
 	return out
 }
 
-func expandCommands(commands []Command, values map[string]string, variadicArgs []string) ([]Command, error) {
+func expandCommands(commands []Command, values map[string]string, variadicArgs []string, shell string) ([]Command, error) {
 	out := make([]Command, len(commands))
 	for i, command := range commands {
-		expanded, err := expandCommand(command, values, variadicArgs)
+		expanded, err := expandCommand(command, values, variadicArgs, shell)
 		if err != nil {
 			return nil, fmt.Errorf("[%d]: %w", i, err)
 		}
@@ -1019,9 +1022,9 @@ func expandCommands(commands []Command, values map[string]string, variadicArgs [
 	return out, nil
 }
 
-func expandCommand(command Command, values map[string]string, variadicArgs []string) (Command, error) {
+func expandCommand(command Command, values map[string]string, variadicArgs []string, shell string) (Command, error) {
 	if IsScriptCommand(command) {
-		body, err := expandScript(ScriptBody(command), values, variadicArgs)
+		body, err := expandScript(ScriptBody(command), values, variadicArgs, scriptExpansionShell(command, shell))
 		if err != nil {
 			return nil, err
 		}
@@ -1036,7 +1039,7 @@ func expandCommand(command Command, values map[string]string, variadicArgs []str
 
 // ExpandForEachCommand expands for_each placeholders in command.
 func ExpandForEachCommand(command Command, item ValueCandidate, index int) (Command, error) {
-	return expandCommand(command, forEachPlaceholderValues(item, index), nil)
+	return expandCommand(command, forEachPlaceholderValues(item, index), nil, ScriptShell(command))
 }
 
 // ExpandForEachString expands for_each placeholders in value.
@@ -1260,8 +1263,15 @@ func expandPlaceholders(text string, values map[string]string) (string, error) {
 	return out, nil
 }
 
-func expandScript(body string, values map[string]string, variadicArgs []string) (string, error) {
-	expanded, err := expandPlaceholders(body, values)
+func scriptExpansionShell(command Command, shell string) string {
+	if commandShell := ScriptShell(command); commandShell != "" {
+		return commandShell
+	}
+	return shell
+}
+
+func expandScript(body string, values map[string]string, variadicArgs []string, shell string) (string, error) {
+	expanded, err := expandScriptPlaceholders(body, values, shell)
 	if err != nil {
 		return "", err
 	}
@@ -1287,6 +1297,175 @@ func expandScript(body string, values map[string]string, variadicArgs []string) 
 		return "", fmt.Errorf("%s must be a whole shell word in cmd", variadicArgsPlaceholder)
 	}
 	return out.String(), nil
+}
+
+func expandScriptPlaceholders(text string, values map[string]string, shell string) (string, error) {
+	if !strings.Contains(text, "{") {
+		return text, nil
+	}
+	contexts, err := scriptPlaceholderQuoteContexts(text, shell)
+	if err != nil {
+		return "", err
+	}
+	var missing string
+	var out strings.Builder
+	out.Grow(len(text))
+	for i := 0; i < len(text); {
+		if text[i] == '{' && (i == 0 || text[i-1] != '$') {
+			end := strings.IndexByte(text[i:], '}')
+			if end >= 0 {
+				end += i
+				match := text[i : end+1]
+				name := text[i+1 : end]
+				if validPlaceholderName(name) {
+					value, ok := values[name]
+					if !ok {
+						missing = name
+						out.WriteString(match)
+					} else {
+						quote := contexts[i]
+						if quote == 0 {
+							quote = placeholderSurroundingQuote(text, i, end)
+						}
+						out.WriteString(scriptPlaceholderReplacement(value, quote, shell))
+					}
+					i = end + 1
+					continue
+				}
+			}
+		}
+		out.WriteByte(text[i])
+		i++
+	}
+	if missing != "" {
+		return "", fmt.Errorf("missing value for {%s}", missing)
+	}
+	return out.String(), nil
+}
+
+func scriptPlaceholderQuoteContexts(text, shell string) (map[int]byte, error) {
+	contexts := map[int]byte{}
+	if scriptref.SupportedShell(defaultShell(shell)) {
+		parser, err := scriptref.Parser(shell)
+		if err != nil {
+			return nil, err
+		}
+		file, err := parser.Parse(strings.NewReader(text), "shadowtree")
+		if err != nil {
+			return nil, err
+		}
+		recordShellPlaceholderContexts(text, file, 0, contexts)
+		return contexts, nil
+	}
+	recordSimplePlaceholderContexts(text, contexts)
+	return contexts, nil
+}
+
+func placeholderSurroundingQuote(text string, start, end int) byte {
+	if start == 0 || end+1 >= len(text) {
+		return 0
+	}
+	quote := text[start-1]
+	if quote != '\'' && quote != '"' || text[end+1] != quote {
+		return 0
+	}
+	return quote
+}
+
+func recordShellPlaceholderContexts(text string, node syntax.Node, quote byte, contexts map[int]byte) {
+	syntax.Walk(node, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case nil:
+			return true
+		case *syntax.CmdSubst:
+			for _, stmt := range node.Stmts {
+				recordShellPlaceholderContexts(text, stmt, 0, contexts)
+			}
+			return false
+		case *syntax.SglQuoted:
+			recordPlaceholderContexts(text, int(node.Pos().Offset())+1, int(node.End().Offset())-1, '\'', contexts)
+			return false
+		case *syntax.Lit:
+			recordPlaceholderContexts(text, int(node.Pos().Offset()), int(node.End().Offset()), quote, contexts)
+			return false
+		case *syntax.DblQuoted:
+			for _, part := range node.Parts {
+				recordShellPlaceholderContexts(text, part, '"', contexts)
+			}
+			return false
+		default:
+			return true
+		}
+	})
+}
+
+func recordSimplePlaceholderContexts(text string, contexts map[int]byte) {
+	quote := byte(0)
+	for i := 0; i < len(text); i++ {
+		if text[i] == '{' {
+			recordPlaceholderContexts(text, i, len(text), quote, contexts)
+		}
+		switch quote {
+		case 0:
+			if text[i] == '\'' || text[i] == '"' {
+				quote = text[i]
+			}
+		case '\'':
+			if text[i] == '\'' {
+				quote = 0
+			}
+		case '"':
+			if text[i] == '"' {
+				quote = 0
+			}
+		}
+	}
+}
+
+func recordPlaceholderContexts(text string, start, end int, quote byte, contexts map[int]byte) {
+	start = max(start, 0)
+	end = min(end, len(text))
+	for i := start; i < end; i++ {
+		if text[i] != '{' || (i > 0 && text[i-1] == '$') {
+			continue
+		}
+		close := strings.IndexByte(text[i:end], '}')
+		if close < 0 {
+			continue
+		}
+		close += i
+		if validPlaceholderName(text[i+1 : close]) {
+			contexts[i] = quote
+		}
+		i = close
+	}
+}
+
+func scriptPlaceholderReplacement(value string, quote byte, shell string) string {
+	switch quote {
+	case '\'':
+		return shellSingleQuoteEscaped(value)
+	case '"':
+		return shellDoubleQuoteEscaped(value, shell)
+	default:
+		return value
+	}
+}
+
+func shellSingleQuoteEscaped(value string) string {
+	return strings.ReplaceAll(value, "'", "'\\''")
+}
+
+func shellDoubleQuoteEscaped(value, shell string) string {
+	replacements := []string{
+		"\\", "\\\\",
+		`"`, `\"`,
+		`$`, `\$`,
+	}
+	if defaultShell(shell) != "fish" {
+		replacements = append(replacements, "`", "\\`")
+	}
+	return strings.NewReplacer(replacements...).Replace(value)
 }
 
 func scriptVariadicPlaceholder(text string, offset int) (int, int, bool) {
