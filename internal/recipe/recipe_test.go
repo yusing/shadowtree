@@ -1148,6 +1148,96 @@ func TestResolveEscapesQuotedPlaceholdersInCommandSubstitution(t *testing.T) {
 	}
 }
 
+func TestResolveExpandsShellPreludePlaceholders(t *testing.T) {
+	rec := applyGlobals(t, map[string]Recipe{
+		"script": {
+			ShellPrelude: `NAME="{name}"`,
+			Cmd:          ScriptCommand(`printf '%s/%s\n' "$ROOT" "$NAME"`),
+			Arguments: map[string]Argument{
+				"name": {Default: `alpha" $HOME`},
+			},
+		},
+	}, map[string]string{
+		"root": "src path",
+	}, "sh", `set_root() { ROOT='{root}'; }
+set_root`)["script"]
+
+	got, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `set_root() { ROOT='src path'; }
+set_root
+NAME="alpha\" \$HOME"
+printf '%s/%s\n' "$ROOT" "$NAME"`
+	if ScriptBody(got.Main) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got.Main), want)
+	}
+	if got.Recipe.ShellPrelude != `set_root() { ROOT='src path'; }
+set_root
+NAME="alpha\" \$HOME"` {
+		t.Fatalf("ShellPrelude = %q", got.Recipe.ShellPrelude)
+	}
+}
+
+func TestResolveRejectsMissingShellPreludePlaceholder(t *testing.T) {
+	rec := Recipe{
+		ShellPrelude: "VALUE={missing}",
+		Cmd:          ScriptCommand("true"),
+	}
+
+	_, err := Resolve("script", rec, nil, nil, nil, "", GoProfile)
+	if err == nil || !strings.Contains(err.Error(), "recipe \"script\" shell_prelude: missing value for {missing}") {
+		t.Fatalf("Resolve error = %v", err)
+	}
+}
+
+func TestResolveLeavesUnusedShellPreludePlaceholders(t *testing.T) {
+	rec := Recipe{
+		ShellPrelude: "VALUE={missing}",
+		Cmd:          Command{"go", "test"},
+	}
+
+	got, err := Resolve("test", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "test"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+	if got.Recipe.ShellPrelude != "VALUE={missing}" {
+		t.Fatalf("ShellPrelude = %q", got.Recipe.ShellPrelude)
+	}
+}
+
+func TestCommandWithRecipeReferenceExpandedPrelude(t *testing.T) {
+	prelude := `project_values() { printf '%s\n' "{project}"; }`
+	if !containsPlaceholderName(prelude) {
+		t.Fatal("containsPlaceholderName = false, want true")
+	}
+	expanded, err := expandScriptPlaceholders(prelude, map[string]string{"project": "cmd/api"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expanded != `project_values() { printf '%s\n' "cmd/api"; }` {
+		t.Fatalf("expanded prelude = %q", expanded)
+	}
+	got, err := CommandWithRecipeReferenceExpandedPrelude(
+		ScriptCommand("project_values"),
+		"",
+		prelude,
+		map[string]string{"project": "cmd/api"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `project_values() { printf '%s\n' "cmd/api"; }
+project_values`
+	if ScriptBody(got) != want {
+		t.Fatalf("script body = %q, want %q", ScriptBody(got), want)
+	}
+}
+
 func TestResolveDoesNotInheritOuterQuotesInsideCommandSubstitution(t *testing.T) {
 	rec := Recipe{
 		Cmd: ScriptCommand(`printf "%s\n" "$(printf {value})"`),

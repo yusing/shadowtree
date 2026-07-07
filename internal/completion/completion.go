@@ -544,7 +544,10 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 	if opts.DisableCommandBackedValues {
 		return nil
 	}
-	command := recipe.CommandWithRecipeReference(arg.Values, rec.Shell, rec.ShellPrelude)
+	command, err := recipe.CommandWithRecipeReferenceExpandedPrelude(arg.Values, rec.Shell, rec.ShellPrelude, rec.Vars)
+	if err != nil {
+		return nil
+	}
 	env := maps.Clone(opts.Env)
 	if env == nil {
 		env = map[string]string{}

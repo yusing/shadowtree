@@ -324,7 +324,9 @@ and the result becomes a shared placeholder value. Recipe-level `vars` override
 top-level vars. Static vars may reference other static or dynamic vars with the
 same `{name}` placeholder syntax.
 Top-level and recipe-specific `env` values are expanded with the same
-placeholders when a recipe is resolved.
+placeholders when a recipe is resolved. `shell_prelude` is expanded with the
+same shell-aware placeholder escaping before it is prepended to script
+commands.
 
 `help`
 : Short human-facing help text. Used by `shadowtree help`, `shadowtree recipes`,
@@ -479,8 +481,8 @@ Bracket-style syntax is preferred for shell completion, especially in fish.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
-expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `workdir`, and
-`sync_out`.
+expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `shell_prelude`,
+`workdir`, and `sync_out`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 In shell command strings, placeholders inside single or double quotes are

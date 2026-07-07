@@ -29,7 +29,7 @@
     },
     "shell_prelude": {
       "$ref": "#/definitions/shellScript",
-      "description": "Shell code prepended to every script command. In sh/bash, a literal command-position @recipe invokes that recipe directly."
+      "description": "Shell code prepended to every script command after placeholder expansion. In sh/bash, a literal command-position @recipe invokes that recipe directly."
     },
     "sync_out": {
       "$ref": "#/definitions/syncOut"
@@ -57,7 +57,7 @@
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, workdir, and sync_out.",
+      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, shell_prelude, workdir, and sync_out.",
       "additionalProperties": false,
       "patternProperties": {
         "^[A-Za-z_][A-Za-z0-9_]*$": {
@@ -107,7 +107,7 @@
         },
         "shell_prelude": {
           "$ref": "#/definitions/shellScript",
-          "description": "Recipe-local shell code appended after the top-level shell_prelude."
+          "description": "Recipe-local shell code appended after the top-level shell_prelude and expanded with recipe placeholders."
         },
         "sandboxed": {
           "type": "boolean",

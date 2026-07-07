@@ -431,20 +431,13 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
-	cmd = CommandWithRecipeReference(cmd, rec.Shell, rec.ShellPrelude)
 	pre, err := expandCommands(rec.Pre, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
-	for i := range pre {
-		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, rec.ShellPrelude)
-	}
 	post, err := expandCommands(rec.Post, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
-	}
-	for i := range post {
-		post[i] = CommandWithRecipeReference(post[i], rec.Shell, rec.ShellPrelude)
 	}
 	if containsVariadicArgsPlaceholder(globalSyncOut) || containsVariadicArgsPlaceholder(rec.SyncOut) {
 		return Resolved{}, fmt.Errorf("recipe %q sync_out: %s is not supported in sync_out", name, variadicArgsPlaceholder)
@@ -463,6 +456,20 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q for_each: %w", name, err)
 		}
+	}
+	shellPrelude := rec.ShellPrelude
+	if containsPlaceholderName(shellPrelude) && commandsUseShellPrelude(cmd, pre, post, forEach, rec.Shell, shellPrelude) {
+		shellPrelude, err = expandScriptPlaceholders(shellPrelude, values, rec.Shell)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q shell_prelude: %w", name, err)
+		}
+	}
+	cmd = CommandWithRecipeReference(cmd, rec.Shell, shellPrelude)
+	for i := range pre {
+		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, shellPrelude)
+	}
+	for i := range post {
+		post[i] = CommandWithRecipeReference(post[i], rec.Shell, shellPrelude)
 	}
 	workdir := rec.Workdir
 	if workdir != "" {
@@ -500,6 +507,7 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 	}
 	resolvedRecipe := rec
 	resolvedRecipe.Vars = vars
+	resolvedRecipe.ShellPrelude = shellPrelude
 	resolvedRecipe.ForEach = forEach
 	resolvedRecipe.Workdir = workdir
 	resolvedRecipe.Pre = pre
@@ -515,6 +523,52 @@ func Resolve(name string, rec Recipe, cliArgs, globalSyncOut []string, globalEnv
 		ConfigPath: configPath,
 		Profile:    profile,
 	}, nil
+}
+
+func commandsUseShellPrelude(cmd Command, pre, post []Command, forEach Command, shell, shellPrelude string) bool {
+	if commandUsesShellPrelude(cmd, shell, shellPrelude) || forEachUsesShellPrelude(forEach, shell, shellPrelude) {
+		return true
+	}
+	for _, command := range pre {
+		if commandUsesShellPrelude(command, shell, shellPrelude) {
+			return true
+		}
+	}
+	for _, command := range post {
+		if commandUsesShellPrelude(command, shell, shellPrelude) {
+			return true
+		}
+	}
+	return false
+}
+
+func forEachUsesShellPrelude(command Command, shell, shellPrelude string) bool {
+	if len(command) == 0 {
+		return false
+	}
+	if _, ok, _ := ValidateValueBuiltin(command); ok {
+		return false
+	}
+	return commandUsesShellPrelude(command, shell, shellPrelude)
+}
+
+func commandUsesShellPrelude(command Command, shell, shellPrelude string) bool {
+	_, usesPrelude := commandWithRecipeReference(command, shell, shellPrelude)
+	return usesPrelude
+}
+
+// CommandWithRecipeReferenceExpandedPrelude expands placeholders in shellPrelude
+// only when command will consume the prelude, then applies recipe-reference and
+// shell wrapping.
+func CommandWithRecipeReferenceExpandedPrelude(command Command, shell, shellPrelude string, values map[string]string) (Command, error) {
+	if containsPlaceholderName(shellPrelude) && commandUsesShellPrelude(command, shell, shellPrelude) {
+		expanded, err := expandScriptPlaceholders(shellPrelude, values, shell)
+		if err != nil {
+			return nil, err
+		}
+		shellPrelude = expanded
+	}
+	return CommandWithRecipeReference(command, shell, shellPrelude), nil
 }
 
 func RecipeSandboxed(rec Recipe) bool {
@@ -1139,6 +1193,15 @@ func mapContainsPlaceholder(values map[string]string) bool {
 	return false
 }
 
+func containsPlaceholderName(text string) bool {
+	found := false
+	_, _ = expandPlaceholderNames(text, func(_, match string) (string, error) {
+		found = true
+		return match, nil
+	})
+	return found
+}
+
 func expandVarValue(text string, value func(string) (string, error)) (string, error) {
 	return expandPlaceholderNames(text, func(name, _ string) (string, error) {
 		return value(name)
@@ -1167,8 +1230,8 @@ func expandPlaceholderNames(text string, replace func(name, match string) (strin
 		match := text[i : end+1]
 		name := text[i+1 : end]
 		if !validPlaceholderName(name) {
-			b.WriteString(match)
-			i = end + 1
+			b.WriteByte(text[i])
+			i++
 			continue
 		}
 		replacement, err := replace(name, match)
@@ -1477,26 +1540,37 @@ func shellQuotedWords(words []string) string {
 }
 
 func CommandWithShell(command Command, shell, shellPrelude string) Command {
-	shell = defaultShell(shell)
-	if IsScriptCommand(command) {
-		if len(command) >= 4 {
-			return command
-		}
-		return Command{scriptCommand, shell, JoinShell(shellPrelude, command[1]), scriptArg0}
-	}
-	if strings.TrimSpace(shellPrelude) == "" || !isShellScriptCommand(command) {
-		return command
-	}
-	out := slices.Clone(command)
-	out[2] = JoinShell(shellPrelude, out[2])
+	out, _ := commandWithShell(command, shell, shellPrelude)
 	return out
 }
 
-func CommandWithRecipeReference(command Command, shell, shellPrelude string) Command {
-	if IsScriptCommand(command) && IsRecipeReferenceString(command[1]) {
-		return Command{command[1]}
+func commandWithShell(command Command, shell, shellPrelude string) (Command, bool) {
+	shell = defaultShell(shell)
+	usesPrelude := strings.TrimSpace(shellPrelude) != ""
+	if IsScriptCommand(command) {
+		if len(command) >= 4 {
+			return command, false
+		}
+		return Command{scriptCommand, shell, JoinShell(shellPrelude, command[1]), scriptArg0}, usesPrelude
 	}
-	return CommandWithShell(command, shell, shellPrelude)
+	if !usesPrelude || !isShellScriptCommand(command) {
+		return command, false
+	}
+	out := slices.Clone(command)
+	out[2] = JoinShell(shellPrelude, out[2])
+	return out, true
+}
+
+func CommandWithRecipeReference(command Command, shell, shellPrelude string) Command {
+	out, _ := commandWithRecipeReference(command, shell, shellPrelude)
+	return out
+}
+
+func commandWithRecipeReference(command Command, shell, shellPrelude string) (Command, bool) {
+	if IsScriptCommand(command) && IsRecipeReferenceString(command[1]) {
+		return Command{command[1]}, false
+	}
+	return commandWithShell(command, shell, shellPrelude)
 }
 
 func IsScriptCommand(command Command) bool {

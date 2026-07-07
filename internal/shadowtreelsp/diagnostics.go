@@ -460,7 +460,7 @@ func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) 
 
 func placeholderDiagnosticKey(key string) bool {
 	switch key {
-	case "cmd", "pre", "post", "for_each", "workdir", "sync_out":
+	case "cmd", "pre", "post", "for_each", "workdir", "sync_out", "shell_prelude":
 		return true
 	default:
 		return false

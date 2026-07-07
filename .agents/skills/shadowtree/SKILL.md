@@ -245,7 +245,7 @@ scalar `values` recipe references.
 
 ## Placeholders And Vars
 
-`{NAME}` placeholders expand in `cmd`, `pre`, `post`, `for_each`, `workdir`, and `sync_out`.
+`{NAME}` placeholders expand in `cmd`, `pre`, `post`, `for_each`, `shell_prelude`, `workdir`, and `sync_out`.
 
 Value sources:
 

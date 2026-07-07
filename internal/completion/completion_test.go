@@ -278,6 +278,26 @@ func TestCandidatesCompleteDynamicArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteDynamicArgumentValuesExpandPreludePlaceholders(t *testing.T) {
+	candidates := complete(t, []string{"shadowtree", "build[project=c"}, map[string]recipe.Recipe{
+		"build": {
+			Cmd:          recipe.Command{"go", "build"},
+			ShellPrelude: "project_values() { printf '%s\\tfrom command\\n' \"{project}\"; }",
+			Vars:         map[string]string{"project": "cmd/api"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("project_values"),
+				},
+			},
+		},
+	})
+
+	if len(candidates) != 1 || candidates[0].Value != "build[project=cmd/api" || candidates[0].Help != "from command" {
+		t.Fatalf("candidates = %#v, want cmd/api value", candidates)
+	}
+}
+
 func TestCandidatesCompleteEnumArgumentValues(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build", "project=a"}, map[string]recipe.Recipe{
 		"build": {

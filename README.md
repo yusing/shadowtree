@@ -217,7 +217,8 @@ Placeholders inside single or double quotes are escaped for that quote context,
 so `"{name}"` and `'{name}'` stay one shell word even when values contain quote
 characters.
 Environment values under `[env]` and `[recipes.<name>.env]` use the same
-placeholder expansion.
+placeholder expansion. `shell_prelude` also uses placeholder expansion before
+it is prepended to script commands.
 
 Use a recipe reference from `cmd`, `pre`, or `post`:
 

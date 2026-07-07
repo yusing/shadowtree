@@ -919,6 +919,16 @@ cmd = "echo {item}"
 			end:   len(`for_each = "@enum {non_existent}`),
 		},
 		{
+			name: "recipe shell_prelude",
+			text: `[recipes.test]
+shell_prelude = "echo {non_existent}"
+cmd = "true"
+`,
+			line:  1,
+			start: len(`shell_prelude = "echo `),
+			end:   len(`shell_prelude = "echo {non_existent}`),
+		},
+		{
 			name: "sync_out",
 			text: `[recipes.test]
 cmd = "true"
@@ -981,7 +991,9 @@ cmd = "true"
 }
 
 func TestDocumentDiagnosticsAcceptKnownPlaceholders(t *testing.T) {
-	diagnostics := documentDiagnostics(t.Context(), `[vars]
+	diagnostics := documentDiagnostics(t.Context(), `shell_prelude = "echo {PROJECT} {GENERATED}"
+
+[vars]
 PROJECT = "./cmd/shadowtree"
 DOCS = "{PROJECT}/docs"
 
@@ -1002,12 +1014,27 @@ TARGET = "{target}/{pkg}"
 default = "."
 
 [recipes.test]
+shell_prelude = "echo {PROJECT} {GENERATED} {local} {pkg}"
 for_each = "@enum one two"
 workdir = "{item}"
 pre = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
 cmd = "go test {PROJECT} {GENERATED} {local} {pkg} {item} {item_help} {item_index} {@}"
 post = ["echo {PROJECT} {GENERATED} {local} {pkg}"]
 sync_out = ["out/{PROJECT}/{GENERATED}/{local}/{pkg}"]
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAllowRecipePlaceholdersInTopShellPrelude(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `shell_prelude = "echo {pkg}"
+
+[recipes.test.arguments.pkg]
+default = "."
+
+[recipes.test]
+cmd = "true"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -1031,7 +1058,6 @@ cmd = "go build {pkg}"
 
 func TestDocumentDiagnosticsIgnoreNonShadowtreePlaceholders(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
-shell_prelude = "echo {non_existent}"
 cmd = "echo ${HOME}"
 `)
 	if len(diagnostics) != 0 {
