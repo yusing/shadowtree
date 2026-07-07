@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2040,6 +2041,80 @@ func TestValidateArgumentsRejectsEmptyArgvValues(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "target values: values must be a shell string") {
 		t.Fatalf("ValidateArguments() error = %v, want shell string error", err)
+	}
+}
+
+func TestValidateConfigErrorIncludesPath(t *testing.T) {
+	err := ValidateConfig(Config{Recipes: map[string]Recipe{
+		"benchmark": {
+			Cmd: Command{"bench"},
+			Arguments: map[string]Argument{
+				"duration": {Type: "duration", Default: "1000"},
+			},
+		},
+	}})
+	var pathErr *ConfigPathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+	}
+	if !slices.Equal(pathErr.ConfigPath(), []string{"recipes", "benchmark", "arguments", "duration", "default"}) {
+		t.Fatalf("path = %#v", pathErr.ConfigPath())
+	}
+	if pathErr.Target() != ConfigErrorTargetValue {
+		t.Fatalf("target = %q, want value", pathErr.Target())
+	}
+	if got := pathErr.Error(); got != `recipe "benchmark" arguments: duration default: duration: want duration, got "1000"` {
+		t.Fatalf("Error() = %q", got)
+	}
+	if unwrapped := pathErr.Unwrap(); unwrapped == nil || unwrapped.Error() != `recipe "benchmark" arguments: duration default: duration: want duration, got "1000"` {
+		t.Fatalf("Unwrap() = %v", unwrapped)
+	}
+
+	path := pathErr.ConfigPath()
+	path[0] = "mutated"
+	if pathErr.ConfigPath()[0] != "recipes" {
+		t.Fatalf("ConfigPath returned mutable internal slice: %#v", pathErr.ConfigPath())
+	}
+}
+
+func TestValidateConfigProfileErrorsIncludeKeyAndTableTargets(t *testing.T) {
+	err := ValidateConfig(Config{Recipes: map[string]Recipe{
+		"benchmark": {
+			Cmd:       Command{"bench"},
+			Arguments: map[string]Argument{"connections": {Type: "int"}},
+			Profiles: map[string]RecipeProfile{
+				"stable": {Arguments: map[string]any{"requests": 20000}},
+			},
+		},
+	}})
+	var pathErr *ConfigPathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+	}
+	want := []string{"recipes", "benchmark", "profiles", "stable", "arguments", "requests"}
+	if !slices.Equal(pathErr.ConfigPath(), want) {
+		t.Fatalf("path = %#v, want %#v", pathErr.ConfigPath(), want)
+	}
+	if pathErr.Target() != ConfigErrorTargetKey {
+		t.Fatalf("target = %q, want key", pathErr.Target())
+	}
+
+	err = ValidateConfig(Config{Recipes: map[string]Recipe{
+		"benchmark": {
+			Cmd:       Command{"bench"},
+			Arguments: map[string]Argument{ProfileArgumentName: {Type: "string"}},
+			Profiles:  map[string]RecipeProfile{"stable": {}},
+		},
+	}})
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+	}
+	want = []string{"recipes", "benchmark", "arguments", ProfileArgumentName}
+	if !slices.Equal(pathErr.ConfigPath(), want) {
+		t.Fatalf("path = %#v, want %#v", pathErr.ConfigPath(), want)
+	}
+	if pathErr.Target() != ConfigErrorTargetTable {
+		t.Fatalf("target = %q, want table", pathErr.Target())
 	}
 }
 

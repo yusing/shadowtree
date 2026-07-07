@@ -149,6 +149,40 @@ type ResolveOptions struct {
 	RunID string
 }
 
+type ConfigErrorTarget string
+
+const (
+	ConfigErrorTargetValue ConfigErrorTarget = "value"
+	ConfigErrorTargetKey   ConfigErrorTarget = "key"
+	ConfigErrorTargetTable ConfigErrorTarget = "table"
+)
+
+// ConfigPathError reports the TOML config path associated with a validation error.
+type ConfigPathError struct {
+	path   []string
+	target ConfigErrorTarget
+	err    error
+}
+
+func (err *ConfigPathError) Error() string {
+	return err.err.Error()
+}
+
+func (err *ConfigPathError) Unwrap() error {
+	return err.err
+}
+
+func (err *ConfigPathError) ConfigPath() []string {
+	return slices.Clone(err.path)
+}
+
+func (err *ConfigPathError) Target() ConfigErrorTarget {
+	if err.target == "" {
+		return ConfigErrorTargetValue
+	}
+	return err.target
+}
+
 // RecipeReferenceTarget is a parsed @recipe or @path:recipe command target.
 type RecipeReferenceTarget struct {
 	Path string
@@ -685,28 +719,32 @@ func RecipeSandboxed(rec Recipe) bool {
 
 func ValidateConfig(cfg Config) error {
 	if !scriptref.SupportedShell(cfg.Shell) {
-		return fmt.Errorf("shell must be sh or bash, got %q", cfg.Shell)
+		return configValuePathError(fmt.Errorf("shell must be sh or bash, got %q", cfg.Shell), "shell")
 	}
-	if err := ValidateVarsMap("vars", cfg.Vars); err != nil {
+	if err := validateVarsMapAt("vars", []string{"vars"}, cfg.Vars); err != nil {
 		return err
 	}
-	if err := ValidateCommandsMap("var_commands", cfg.VarCommands); err != nil {
+	if err := validateCommandsMapAt("var_commands", []string{"var_commands"}, cfg.VarCommands); err != nil {
 		return err
 	}
 	for name, rec := range cfg.Recipes {
 		if IsReservedRecipeName(name) {
-			return fmt.Errorf("recipe name %q is reserved", name)
+			return configTablePathError(fmt.Errorf("recipe name %q is reserved", name), "recipes", name)
 		}
 		if !scriptref.SupportedShell(rec.Shell) {
-			return fmt.Errorf("recipe %q shell must be sh or bash, got %q", name, rec.Shell)
+			return configValuePathError(fmt.Errorf("recipe %q shell must be sh or bash, got %q", name, rec.Shell), "recipes", name, "shell")
 		}
 		if err := ValidateArguments(rec.Arguments); err != nil {
-			return fmt.Errorf("recipe %q arguments: %w", name, err)
+			return prefixConfigPath(fmt.Errorf("recipe %q arguments: %w", name, err), err, "recipes", name)
 		}
 		if err := validateProfiles(rec.Arguments, rec.Profiles); err != nil {
-			return fmt.Errorf("recipe %q profiles: %w", name, err)
+			wrapped := fmt.Errorf("recipe %q profiles: %w", name, err)
+			if pathErr, ok := errors.AsType[*ConfigPathError](err); ok && len(pathErr.path) > 0 && pathErr.path[0] == "arguments" {
+				return prefixConfigPath(wrapped, err, "recipes", name)
+			}
+			return prefixConfigPath(wrapped, err, "recipes", name, "profiles")
 		}
-		if err := ValidateVarsMap(fmt.Sprintf("recipe %q vars", name), rec.Vars); err != nil {
+		if err := validateVarsMapAt(fmt.Sprintf("recipe %q vars", name), []string{"recipes", name, "vars"}, rec.Vars); err != nil {
 			return err
 		}
 		if err := ValidateLogSettings(name, rec); err != nil {
@@ -714,12 +752,12 @@ func ValidateConfig(cfg Config) error {
 		}
 		if len(rec.Cmd) > 0 {
 			if err := ValidateCommand(rec.Cmd); err != nil {
-				return fmt.Errorf("recipe %q cmd: %w", name, err)
+				return configValuePathError(fmt.Errorf("recipe %q cmd: %w", name, err), "recipes", name, "cmd")
 			}
 		}
 		if len(rec.ForEach) > 0 {
 			if err := validateValueCommand("for_each", rec.ForEach); err != nil {
-				return fmt.Errorf("recipe %q for_each: %w", name, err)
+				return configValuePathError(fmt.Errorf("recipe %q for_each: %w", name, err), "recipes", name, "for_each")
 			}
 		}
 		for i, command := range rec.Pre {
@@ -937,38 +975,38 @@ func ValidateArguments(args map[string]Argument) error {
 	positions := map[int]string{}
 	for name, arg := range args {
 		if name == RunIDPlaceholder {
-			return fmt.Errorf("argument name %q is reserved", name)
+			return configTablePathError(fmt.Errorf("argument name %q is reserved", name), "arguments", name)
 		}
 		if strings.TrimSpace(name) == "" {
-			return errors.New("empty argument name")
+			return configTablePathError(errors.New("empty argument name"), "arguments", name)
 		}
 		if strings.ContainsAny(name, "=()[], \t\r\n") {
-			return fmt.Errorf("invalid argument name %q", name)
+			return configTablePathError(fmt.Errorf("invalid argument name %q", name), "arguments", name)
 		}
 		if err := validateArgumentType(arg.Type); err != nil {
-			return fmt.Errorf("%s: %w", name, err)
+			return configValuePathError(fmt.Errorf("%s: %w", name, err), "arguments", name, "type")
 		}
 		if err := validateArgumentPathKind(name, arg); err != nil {
-			return err
+			return configValuePathError(err, "arguments", name, "path_kind")
 		}
 		if arg.Position < 0 {
-			return fmt.Errorf("%s: position must be positive", name)
+			return configValuePathError(fmt.Errorf("%s: position must be positive", name), "arguments", name, "position")
 		}
 		if arg.Position > 0 {
 			if existing, ok := positions[arg.Position]; ok {
-				return fmt.Errorf("%s: position %d already used by %s", name, arg.Position, existing)
+				return configValuePathError(fmt.Errorf("%s: position %d already used by %s", name, arg.Position, existing), "arguments", name, "position")
 			}
 			positions[arg.Position] = name
 		}
 		if arg.Default != nil {
 			_, err := argumentValueString(name, arg, arg.Default)
 			if err != nil {
-				return fmt.Errorf("%s default: %w", name, err)
+				return configValuePathError(fmt.Errorf("%s default: %w", name, err), "arguments", name, "default")
 			}
 		}
 		if arg.Values != nil {
 			if err := validateValueCommand("values", arg.Values); err != nil {
-				return fmt.Errorf("%s values: %w", name, err)
+				return configValuePathError(fmt.Errorf("%s values: %w", name, err), "arguments", name, "values")
 			}
 		}
 	}
@@ -980,7 +1018,7 @@ func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfil
 		return nil
 	}
 	if _, ok := args[ProfileArgumentName]; ok {
-		return fmt.Errorf("argument name %q is reserved when profiles are configured", ProfileArgumentName)
+		return configTablePathError(fmt.Errorf("argument name %q is reserved when profiles are configured", ProfileArgumentName), "arguments", ProfileArgumentName)
 	}
 	for name, profile := range profiles {
 		if err := validateIdentifierKey("profiles", name); err != nil {
@@ -992,14 +1030,46 @@ func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfil
 		for argName, raw := range profile.Arguments {
 			arg, ok := args[argName]
 			if !ok {
-				return fmt.Errorf("%s: unknown argument %q", name, argName)
+				return configKeyPathError(fmt.Errorf("%s: unknown argument %q", name, argName), name, "arguments", argName)
 			}
 			if _, err := argumentValueString(argName, arg, raw); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
+				return configValuePathError(fmt.Errorf("%s: %w", name, err), name, "arguments", argName)
 			}
 		}
 	}
 	return nil
+}
+
+func configValuePathError(err error, path ...string) error {
+	return configPathError(err, ConfigErrorTargetValue, path...)
+}
+
+func configKeyPathError(err error, path ...string) error {
+	return configPathError(err, ConfigErrorTargetKey, path...)
+}
+
+func configTablePathError(err error, path ...string) error {
+	return configPathError(err, ConfigErrorTargetTable, path...)
+}
+
+func configPathError(err error, target ConfigErrorTarget, path ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &ConfigPathError{path: slices.Clone(path), target: target, err: err}
+}
+
+func prefixConfigPath(err, source error, prefix ...string) error {
+	if err == nil {
+		return nil
+	}
+	if pathErr, ok := errors.AsType[*ConfigPathError](source); ok {
+		path := make([]string, 0, len(prefix)+len(pathErr.path))
+		path = append(path, prefix...)
+		path = append(path, pathErr.path...)
+		return &ConfigPathError{path: path, target: pathErr.Target(), err: err}
+	}
+	return configValuePathError(err, prefix...)
 }
 
 func validateValueCommand(field string, command Command) error {
@@ -1013,24 +1083,38 @@ func validateValueCommand(field string, command Command) error {
 }
 
 func ValidateCommandsMap(name string, commands map[string]Command) error {
+	return validateCommandsMapAt(name, []string{name}, commands)
+}
+
+func validateCommandsMapAt(name string, pathPrefix []string, commands map[string]Command) error {
 	for key, command := range commands {
 		if err := validateIdentifierKey(name, key); err != nil {
-			return err
+			return configKeyPathError(err, appendConfigPath(pathPrefix, key)...)
 		}
 		if err := ValidateCommand(command); err != nil {
-			return fmt.Errorf("%s.%s: %w", name, key, err)
+			return configValuePathError(fmt.Errorf("%s.%s: %w", name, key, err), appendConfigPath(pathPrefix, key)...)
 		}
 	}
 	return nil
 }
 
 func ValidateVarsMap(name string, vars map[string]string) error {
+	return validateVarsMapAt(name, []string{name}, vars)
+}
+
+func validateVarsMapAt(name string, pathPrefix []string, vars map[string]string) error {
 	for key := range vars {
 		if err := validateIdentifierKey(name, key); err != nil {
-			return err
+			return configKeyPathError(err, appendConfigPath(pathPrefix, key)...)
 		}
 	}
 	return nil
+}
+
+func appendConfigPath(path []string, item string) []string {
+	out := make([]string, 0, len(path)+1)
+	out = append(out, path...)
+	return append(out, item)
 }
 
 func validateIdentifierKey(section, key string) error {

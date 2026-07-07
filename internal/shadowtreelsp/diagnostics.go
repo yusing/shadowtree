@@ -67,9 +67,10 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, &resolver)...)
 	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg, &resolver)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
-	if len(diagnostics) == 0 {
-		if err := recipe.ValidateConfig(cfg); err != nil {
-			diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
+	if err := recipe.ValidateConfig(cfg); err != nil {
+		diagnostic := configValidationDiagnostic(text, err)
+		if !overlapsErrorDiagnostic(diagnostics, diagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
 		}
 	}
 	if len(diagnostics) == 0 {
@@ -817,6 +818,381 @@ func documentDiagnostic(text, message string) lspDiagnostic {
 		Source:   "shadowtree",
 		Message:  message,
 	}
+}
+
+func configValidationDiagnostic(text string, err error) lspDiagnostic {
+	message := err.Error()
+	if pathErr, ok := errors.AsType[*recipe.ConfigPathError](err); ok {
+		index := newTOMLRangeIndex(text)
+		if diagnostic, ok := configPathDiagnostic(index, pathErr.ConfigPath(), pathErr.Target(), message); ok {
+			return diagnostic
+		}
+	}
+	return documentDiagnostic(text, message)
+}
+
+func overlapsErrorDiagnostic(diagnostics []lspDiagnostic, candidate lspDiagnostic) bool {
+	if candidate.Severity != diagnosticSeverityError {
+		return false
+	}
+	candidateRange, ok := diagnosticRange(candidate)
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(diagnostics, func(existing lspDiagnostic) bool {
+		if existing.Severity != diagnosticSeverityError {
+			return false
+		}
+		existingRange, ok := diagnosticRange(existing)
+		return ok && existingRange.overlaps(candidateRange)
+	})
+}
+
+type diagnosticTextRange struct {
+	line  int
+	start int
+	end   int
+}
+
+func (r diagnosticTextRange) overlaps(other diagnosticTextRange) bool {
+	return r.line == other.line && r.start < other.end && other.start < r.end
+}
+
+func diagnosticRange(diagnostic lspDiagnostic) (diagnosticTextRange, bool) {
+	start, ok := diagnostic.Range["start"].(lspPosition)
+	if !ok {
+		return diagnosticTextRange{}, false
+	}
+	end, ok := diagnostic.Range["end"].(lspPosition)
+	if !ok || start.Line != end.Line {
+		return diagnosticTextRange{}, false
+	}
+	return diagnosticTextRange{line: start.Line, start: start.Character, end: end.Character}, true
+}
+
+func configPathDiagnostic(index tomlRangeIndex, path []string, target recipe.ConfigErrorTarget, message string) (lspDiagnostic, bool) {
+	key := tomlPathKey(path)
+	switch target {
+	case recipe.ConfigErrorTargetKey:
+		if item, ok := index.fields[key]; ok {
+			return item.diagnostic(item.key, message), true
+		}
+	case recipe.ConfigErrorTargetTable:
+		if item, ok := index.tables[key]; ok {
+			return item.diagnostic(item.header, message), true
+		}
+	default:
+		if item, ok := index.fields[key]; ok {
+			return item.diagnostic(item.valueOrKey(), message), true
+		}
+	}
+	if item, ok := index.tables[key]; ok {
+		return item.diagnostic(item.header, message), true
+	}
+	if target == recipe.ConfigErrorTargetValue && len(path) > 0 {
+		if item, ok := index.tables[tomlPathKey(path[:len(path)-1])]; ok {
+			return item.diagnostic(item.header, message), true
+		}
+	}
+	return lspDiagnostic{}, false
+}
+
+type tomlRangeIndex struct {
+	fields map[string]tomlFieldRange
+	tables map[string]tomlTableRange
+}
+
+type tomlTextRange struct {
+	line  int
+	start int
+	end   int
+}
+
+type tomlFieldRange struct {
+	lineText string
+	key      tomlTextRange
+	value    tomlTextRange
+}
+
+func (field tomlFieldRange) valueOrKey() tomlTextRange {
+	if field.value.end > field.value.start {
+		return field.value
+	}
+	return field.key
+}
+
+func (field tomlFieldRange) diagnostic(r tomlTextRange, message string) lspDiagnostic {
+	return lspDiagnostic{
+		Range:    lspRange(field.lineText, r.line, r.start, r.end),
+		Severity: diagnosticSeverityError,
+		Source:   "shadowtree",
+		Message:  message,
+	}
+}
+
+type tomlTableRange struct {
+	lineText string
+	header   tomlTextRange
+}
+
+func (table tomlTableRange) diagnostic(r tomlTextRange, message string) lspDiagnostic {
+	return lspDiagnostic{
+		Range:    lspRange(table.lineText, r.line, r.start, r.end),
+		Severity: diagnosticSeverityError,
+		Source:   "shadowtree",
+		Message:  message,
+	}
+}
+
+func newTOMLRangeIndex(text string) tomlRangeIndex {
+	lines := strings.Split(text, "\n")
+	index := tomlRangeIndex{
+		fields: map[string]tomlFieldRange{},
+		tables: map[string]tomlTableRange{},
+	}
+	var tablePath []string
+	inMultiline := ""
+	for lineNo, line := range lines {
+		if inMultiline != "" {
+			if strings.Contains(line, inMultiline) {
+				inMultiline = ""
+			}
+			continue
+		}
+		if path, start, end, ok := tomlTableHeaderPath(line); ok {
+			tablePath = path
+			index.tables[tomlPathKey(path)] = tomlTableRange{
+				lineText: line,
+				header:   tomlTextRange{line: lineNo, start: start, end: end},
+			}
+			continue
+		}
+		keyPath, keyStart, keyEnd, valueStart, valueEnd, ok := tomlKeyValueSpan(line)
+		if !ok {
+			continue
+		}
+		path := slices.Concat(tablePath, keyPath)
+		index.fields[tomlPathKey(path)] = tomlFieldRange{
+			lineText: line,
+			key:      tomlTextRange{line: lineNo, start: keyStart, end: keyEnd},
+			value:    tomlTextRange{line: lineNo, start: valueStart, end: valueEnd},
+		}
+		inMultiline = openedMultilineDelimiter(line[valueStart:valueEnd])
+	}
+	return index
+}
+
+func tomlPathKey(path []string) string {
+	return strings.Join(path, "\x00")
+}
+
+func tomlTableHeaderPath(line string) ([]string, int, int, bool) {
+	trimmed := strings.TrimSpace(stripTOMLComment(line))
+	if strings.HasPrefix(trimmed, "[[") {
+		return nil, 0, 0, false
+	}
+	if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+		return nil, 0, 0, false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]"))
+	path, ok := parseTOMLPath(body)
+	if !ok {
+		return nil, 0, 0, false
+	}
+	start := strings.Index(line, body)
+	if start < 0 {
+		return nil, 0, 0, false
+	}
+	return path, start, start + len(body), true
+}
+
+func tomlKeyValueSpan(line string) ([]string, int, int, int, int, bool) {
+	eq := tomlEqualsIndex(line)
+	if eq < 0 {
+		return nil, 0, 0, 0, 0, false
+	}
+	keyText := strings.TrimSpace(line[:eq])
+	keyPath, ok := parseTOMLPath(keyText)
+	if !ok || len(keyPath) == 0 {
+		return nil, 0, 0, 0, 0, false
+	}
+	keyStart := strings.Index(line, keyText)
+	if keyStart < 0 {
+		return nil, 0, 0, 0, 0, false
+	}
+	valueStart, valueEnd, ok := tomlValueSpan(line, eq+1)
+	return keyPath, keyStart, keyStart + len(keyText), valueStart, valueEnd, ok
+}
+
+func tomlEqualsIndex(line string) int {
+	quote := byte(0)
+	escape := false
+	for i := range len(line) {
+		ch := line[i]
+		if quote != 0 {
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				quote = 0
+			}
+			escape = false
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '=':
+			return i
+		case '#':
+			return -1
+		}
+	}
+	return -1
+}
+
+func tomlValueSpan(line string, start int) (int, int, bool) {
+	for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+		start++
+	}
+	if start >= len(line) {
+		return 0, 0, false
+	}
+	if strings.HasPrefix(line[start:], `"""`) || strings.HasPrefix(line[start:], `'''`) {
+		delimiter := line[start : start+3]
+		if end := strings.Index(line[start+3:], delimiter); end >= 0 {
+			return start, start + 3 + end + 3, true
+		}
+		return start, len(line), true
+	}
+	switch line[start] {
+	case '"', '\'':
+		quote := line[start]
+		escape := false
+		for end := start + 1; end < len(line); end++ {
+			ch := line[end]
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				return start, end + 1, true
+			}
+			escape = false
+		}
+		return start, len(line), true
+	default:
+		end := start
+		for end < len(line) {
+			switch line[end] {
+			case ' ', '\t', '\r', '#':
+				return start, end, end > start
+			default:
+				end++
+			}
+		}
+		return start, end, end > start
+	}
+}
+
+func stripTOMLComment(line string) string {
+	quote := byte(0)
+	escape := false
+	for i := range len(line) {
+		ch := line[i]
+		if quote != 0 {
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				quote = 0
+			}
+			escape = false
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '#':
+			return line[:i]
+		}
+	}
+	return line
+}
+
+func parseTOMLPath(text string) ([]string, bool) {
+	var path []string
+	for {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return path, len(path) > 0
+		}
+		var part string
+		switch text[0] {
+		case '"', '\'':
+			value, rest, ok := cutQuotedTOMLKey(text)
+			if !ok {
+				return nil, false
+			}
+			part = value
+			text = rest
+		default:
+			idx := strings.IndexByte(text, '.')
+			if idx < 0 {
+				part = strings.TrimSpace(text)
+				text = ""
+			} else {
+				part = strings.TrimSpace(text[:idx])
+				text = text[idx:]
+			}
+		}
+		if part == "" {
+			return nil, false
+		}
+		path = append(path, part)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return path, true
+		}
+		if text[0] != '.' {
+			return nil, false
+		}
+		text = text[1:]
+	}
+}
+
+func cutQuotedTOMLKey(text string) (string, string, bool) {
+	quote := text[0]
+	escape := false
+	for end := 1; end < len(text); end++ {
+		ch := text[end]
+		if quote == '"' && ch == '\\' && !escape {
+			escape = true
+			continue
+		}
+		if ch == quote && !escape {
+			raw := text[:end+1]
+			if quote == '\'' {
+				return raw[1 : len(raw)-1], text[end+1:], true
+			}
+			value, err := strconv.Unquote(raw)
+			return value, text[end+1:], err == nil
+		}
+		escape = false
+	}
+	return "", "", false
+}
+
+func openedMultilineDelimiter(value string) string {
+	value = strings.TrimSpace(value)
+	for _, delimiter := range []string{`"""`, `'''`} {
+		if strings.HasPrefix(value, delimiter) && strings.Count(value, delimiter)%2 == 1 {
+			return delimiter
+		}
+	}
+	return ""
 }
 
 func positionDiagnostics(text string) []lspDiagnostic {

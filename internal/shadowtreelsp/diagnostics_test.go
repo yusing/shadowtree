@@ -40,6 +40,22 @@ func TestDocumentDiagnosticsRejectUnsupportedShell(t *testing.T) {
 cmd = "true"
 `)
 	assertOneDiagnostic(t, diagnostics, `shell must be sh or bash, got "fish"`)
+	assertDiagnosticRange(t, diagnostics[0], 0, len(`shell = `), len(`shell = "fish"`))
+}
+
+func TestDocumentDiagnosticsRangesQuotedInvalidShellValue(t *testing.T) {
+	for _, value := range []string{`"fish shell"`, `"fi#sh"`} {
+		t.Run(value, func(t *testing.T) {
+			line := `shell = ` + value
+			diagnostics := documentDiagnostics(t.Context(), line+`
+
+[recipes.test]
+cmd = "true"
+`)
+			assertOneDiagnostic(t, diagnostics, `shell must be sh or bash, got `+value)
+			assertDiagnosticRange(t, diagnostics[0], 0, len(`shell = `), len(line))
+		})
+	}
 }
 
 func TestDocumentDiagnosticsRejectInvalidDurationDefault(t *testing.T) {
@@ -54,16 +70,98 @@ func TestDocumentDiagnosticsRejectInvalidDurationDefault(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			line := `default = "` + tc.value + `"`
 			diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.duration]
 type = "`+tc.typ+`"
-default = "`+tc.value+`"
+`+line+`
 
 [recipes.benchmark]
 cmd = "bench {duration}"
 `)
 			assertOneDiagnostic(t, diagnostics, tc.message)
+			assertDiagnosticRange(t, diagnostics[0], 2, len(`default = `), len(line))
 		})
 	}
+}
+
+func TestDocumentDiagnosticsReportInvalidDurationDefaultWithWarnings(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.host]
+type = "string"
+
+[recipes.benchmark.arguments.duration]
+type = "duration"
+default = "1000"
+
+[recipes.benchmark]
+cmd = '''bench {host} {duration}'''
+`)
+	message := `recipe "benchmark" arguments: duration default: duration: want duration, got "1000"`
+	if !hasDiagnosticMessage(diagnostics, message) {
+		t.Fatalf("diagnostics = %#v, want invalid duration default", diagnostics)
+	}
+	if len(diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want duration error and unsafe placeholder warning", diagnostics)
+	}
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Message == message {
+			assertDiagnosticRange(t, diagnostic, 5, len(`default = `), len(`default = "1000"`))
+			return
+		}
+	}
+	t.Fatal("duration diagnostic not found")
+}
+
+func TestDocumentDiagnosticsReportInvalidDurationDefaultWithUnrelatedError(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.duration]
+type = "duration"
+default = "1000"
+
+[recipes.benchmark]
+cmd = "bench {duration}"
+typo = true
+`)
+	messages := []string{
+		`unknown field recipes.benchmark.typo`,
+		`recipe "benchmark" arguments: duration default: duration: want duration, got "1000"`,
+	}
+	for _, message := range messages {
+		if !hasDiagnosticMessage(diagnostics, message) {
+			t.Fatalf("diagnostics = %#v, want %q", diagnostics, message)
+		}
+	}
+	if len(diagnostics) != len(messages) {
+		t.Fatalf("diagnostics = %#v, want %d diagnostics", diagnostics, len(messages))
+	}
+}
+
+func TestDocumentDiagnosticsRangeIgnoresFakeTOMLInMultilineString(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.fake]
+cmd = '''
+[recipes.benchmark.arguments.duration]
+default = "not-real"
+'''
+
+[recipes.benchmark.arguments.duration]
+type = "duration"
+default = "1000"
+
+[recipes.benchmark]
+cmd = "bench {duration}"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" arguments: duration default: duration: want duration, got "1000"`)
+	assertDiagnosticRange(t, diagnostics[0], 8, len(`default = `), len(`default = "1000"`))
+}
+
+func TestDocumentDiagnosticsRangeQuotedDottedArgumentPath(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes."go.test".arguments."duration.value"]
+type = "duration"
+default = "1000"
+
+[recipes."go.test"]
+cmd = "bench {duration.value}"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "go.test" arguments: duration.value default: duration.value: want duration, got "1000"`)
+	assertDiagnosticRange(t, diagnostics[0], 2, len(`default = `), len(`default = "1000"`))
 }
 
 func TestServerPublishesDiagnosticsOnOpen(t *testing.T) {
@@ -752,6 +850,18 @@ type = "int"
 requests = 20000
 `)
 	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" profiles: stable: unknown argument "requests"`)
+	assertDiagnosticRange(t, diagnostics[0], 4, 0, len("requests"))
+}
+
+func TestDocumentDiagnosticsRejectProfileArgumentNameAtArgumentTable(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.profile]
+type = "string"
+
+[recipes.benchmark.profiles.stable.arguments]
+profile = "fast"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" profiles: argument name "profile" is reserved when profiles are configured`)
+	assertDiagnosticRange(t, diagnostics[0], 0, 1, len(`[recipes.benchmark.arguments.profile`))
 }
 
 func TestDocumentDiagnosticsRejectUnknownRecipeReferenceProfile(t *testing.T) {
