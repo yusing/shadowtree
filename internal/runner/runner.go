@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
@@ -146,7 +147,7 @@ func (sandbox *sandboxWorkspace) SyncRoot(paths []string) (string, func(), error
 		return sandbox.root, cleanup, nil
 	}
 	root := filepath.Join(sandbox.workDir, "sync")
-	if err := sandbox.materialize(root); err != nil {
+	if err := sandbox.materializePaths(root, paths); err != nil {
 		return "", cleanup, fmt.Errorf("materialize workspace: %w", err)
 	}
 	return root, func() { _ = os.RemoveAll(root) }, nil
@@ -201,6 +202,36 @@ func (sandbox *sandboxWorkspace) materialize(dst string) error {
 		return err
 	}
 	return applyOverlayUpper(sandbox.upper, dst, nil)
+}
+
+func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) error {
+	cleaned, err := cleanSyncOutPaths(paths)
+	if err != nil {
+		return err
+	}
+	if err := clearHostDir(dst); err != nil {
+		return err
+	}
+	srcRoot, err := os.OpenRoot(sandbox.source)
+	if err != nil {
+		return err
+	}
+	defer srcRoot.Close()
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer dstRoot.Close()
+	excludedLower, err := overlayLowerExclusions(sandbox.upper, cleaned)
+	if err != nil {
+		return err
+	}
+	for _, name := range cleaned {
+		if err := copySourcePathToRoot(srcRoot, name, dstRoot, excludedLower); err != nil {
+			return fmt.Errorf("copy %s: %w", name, err)
+		}
+	}
+	return applyOverlayUpperPaths(sandbox.upper, dst, cleaned)
 }
 
 func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
@@ -266,20 +297,18 @@ func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, en
 		}
 		builtinDir := dir
 		cleanup := func() {}
-		if usesFilesystem {
+		if usesFilesystem && (sandbox == nil || !sandbox.overlay) {
 			builtinDir, cleanup, err = forEachBuiltinDir(sandbox, dir)
 			if err != nil {
 				return nil, err
 			}
 		}
 		defer cleanup()
-		values, _, err := recipe.BuiltinValues(command, recipe.ValueBuiltinOptions{
-			Context: ctx,
-			Dir:     builtinDir,
-			Recipe:  options.Resolved.Recipe,
-			Recipes: options.Recipes,
-		})
-		return values, err
+		values, err := builtinValues(ctx, sandbox, builtinDir, env, command, options, stderr)
+		if err != nil {
+			return nil, err
+		}
+		return values, nil
 	}
 	command = recipe.CommandWithRecipeReference(command, options.Resolved.Recipe.Shell, options.Resolved.Recipe.ShellPrelude)
 	var stdout bytes.Buffer
@@ -289,20 +318,25 @@ func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, en
 	return recipe.ParseValueCandidates(stdout.String()), nil
 }
 
+func builtinValues(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, options Options, stderr io.Writer) ([]recipe.ValueCandidate, error) {
+	if sandbox != nil && sandbox.overlay {
+		return sandbox.runNamespaceValueBuiltinCommand(ctx, env, dir, command, stderr, options)
+	}
+	values, _, err := recipe.BuiltinValues(command, recipe.ValueBuiltinOptions{
+		Context: ctx,
+		Dir:     dir,
+		Recipe:  options.Resolved.Recipe,
+		Recipes: options.Recipes,
+	})
+	return values, err
+}
+
 func forEachBuiltinDir(sandbox *sandboxWorkspace, dir string) (string, func(), error) {
 	cleanup := func() {}
 	if sandbox == nil || !sandbox.overlay {
 		return dir, cleanup, nil
 	}
-	rel, ok := sandbox.relInsideOverlayView(dir)
-	if !ok {
-		return dir, cleanup, nil
-	}
-	root := filepath.Join(sandbox.workDir, "for-each-values")
-	if err := sandbox.materialize(root); err != nil {
-		return "", cleanup, fmt.Errorf("materialize workspace: %w", err)
-	}
-	return filepath.Join(root, rel), func() { _ = os.RemoveAll(root) }, nil
+	return "", cleanup, errors.New("overlay filesystem builtins must run in namespace")
 }
 
 func recipeWorkdir(root, value string) (string, error) {
@@ -651,13 +685,121 @@ func CopyTree(srcRoot, dstRoot string) error {
 	})
 }
 
-func SyncPath(workspace, source, requested string) error {
+func cleanSyncOutPath(requested string) (string, error) {
 	cleaned := filepath.Clean(requested)
 	if cleaned == "." || filepath.IsAbs(cleaned) || !filepath.IsLocal(cleaned) {
-		return fmt.Errorf("sync_out path must stay under workspace: %s", requested)
+		return "", fmt.Errorf("sync_out path must stay under workspace: %s", requested)
 	}
-	src := filepath.Join(workspace, cleaned)
-	info, statErr := os.Lstat(src)
+	return filepath.ToSlash(cleaned), nil
+}
+
+func cleanSyncOutPaths(paths []string) ([]string, error) {
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		name, err := cleanSyncOutPath(path)
+		if err != nil {
+			return nil, err
+		}
+		cleaned = append(cleaned, name)
+	}
+	return cleaned, nil
+}
+
+type overlayLowerExclude struct {
+	replaced       map[string]struct{}
+	hiddenChildren map[string]struct{}
+}
+
+func newOverlayLowerExclude() *overlayLowerExclude {
+	return &overlayLowerExclude{
+		replaced:       map[string]struct{}{},
+		hiddenChildren: map[string]struct{}{},
+	}
+}
+
+func (excluded *overlayLowerExclude) replace(name string) {
+	excluded.replaced[name] = struct{}{}
+}
+
+func (excluded *overlayLowerExclude) hideChildren(name string) {
+	excluded.hiddenChildren[name] = struct{}{}
+}
+
+func (excluded *overlayLowerExclude) contains(name string) bool {
+	if excluded == nil {
+		return false
+	}
+	for hidden := range excluded.replaced {
+		if sameOrDescendant(name, hidden) {
+			return true
+		}
+	}
+	for hidden := range excluded.hiddenChildren {
+		if name != hidden && sameOrDescendant(name, hidden) {
+			return true
+		}
+	}
+	return false
+}
+
+func overlayLowerExclusions(upperRoot string, paths []string) (*overlayLowerExclude, error) {
+	excluded := newOverlayLowerExclude()
+	if upperRoot == "" {
+		return excluded, nil
+	}
+	err := walkSelectedUpperEntries(upperRoot, paths, func(name, path string, info fs.FileInfo) error {
+		if isOverlayWhiteout(path, info) {
+			excluded.replace(name)
+			return nil
+		}
+		mode := info.Mode()
+		switch {
+		case mode.IsDir():
+			if isOverlayOpaqueDir(path) {
+				excluded.hideChildren(name)
+			}
+		case mode.Type() == 0 || mode.Type() == os.ModeSymlink:
+			excluded.replace(name)
+		default:
+			excluded.replace(name)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return excluded, nil
+}
+
+func copySourcePathToRoot(srcRoot *os.Root, name string, dstRoot *os.Root, excluded *overlayLowerExclude) error {
+	if excluded.contains(name) {
+		return nil
+	}
+	info, err := srcRoot.Lstat(name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if shouldSkip(name, fileInfoDirEntry{info: info}) {
+		return nil
+	}
+	_, err = copyRootPathToRoot(srcRoot, name, info, dstRoot, name, excluded)
+	return err
+}
+
+func SyncPath(workspace, source, requested string) error {
+	cleaned, err := cleanSyncOutPath(requested)
+	if err != nil {
+		return err
+	}
+	srcRoot, err := os.OpenRoot(workspace)
+	if err != nil {
+		return err
+	}
+	defer srcRoot.Close()
+	info, statErr := srcRoot.Lstat(cleaned)
 	dstRoot, err := os.OpenRoot(source)
 	if err != nil {
 		return err
@@ -669,33 +811,17 @@ func SyncPath(workspace, source, requested string) error {
 		}
 		return statErr
 	}
-	mode := info.Mode()
-	switch {
-	case mode.IsDir():
-		if err := removeRootPath(dstRoot, cleaned); err != nil {
-			return err
-		}
-		return copyTreeToRoot(src, dstRoot, cleaned)
-	case mode.Type() == 0:
-		if err := removeRootPath(dstRoot, cleaned); err != nil {
-			return err
-		}
-		return copyRegularFileToRoot(dstRoot, cleaned, src, mode.Perm())
-	case mode.Type() == os.ModeSymlink:
-		target, err := os.Readlink(src)
-		if err != nil {
-			return err
-		}
-		if err := ensureRootParent(dstRoot, cleaned); err != nil {
-			return err
-		}
-		if err := removeRootPath(dstRoot, cleaned); err != nil {
-			return err
-		}
-		return dstRoot.Symlink(target, cleaned)
-	default:
+	if info.IsDir() && shouldSkip(cleaned, fileInfoDirEntry{info: info}) {
+		return removeRootPath(dstRoot, cleaned)
+	}
+	supported, err := copyRootPathToRoot(srcRoot, cleaned, info, dstRoot, cleaned, nil)
+	if err != nil {
+		return err
+	}
+	if !supported {
 		return fmt.Errorf("unsupported sync_out file type: %s", requested)
 	}
+	return nil
 }
 
 func replaceDirContents(src, dst string) error {
@@ -720,6 +846,24 @@ func replaceDirContents(src, dst string) error {
 }
 
 func applyOverlayUpper(upperRoot, dstRoot string, excluded map[string]struct{}) error {
+	return applyOverlayUpperFiltered(upperRoot, dstRoot, excluded, func(string) bool { return true })
+}
+
+func applyOverlayUpperPaths(upperRoot, dstRoot string, paths []string) error {
+	if upperRoot == "" {
+		return nil
+	}
+	dst, err := os.OpenRoot(dstRoot)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	return walkSelectedUpperEntries(upperRoot, paths, func(name, path string, info fs.FileInfo) error {
+		return applyOverlayUpperEntry(dst, name, path, info)
+	})
+}
+
+func applyOverlayUpperFiltered(upperRoot, dstRoot string, excluded map[string]struct{}, include func(string) bool) error {
 	if upperRoot == "" {
 		return nil
 	}
@@ -743,6 +887,12 @@ func applyOverlayUpper(upperRoot, dstRoot string, excluded map[string]struct{}) 
 		if !filepath.IsLocal(rel) {
 			return fmt.Errorf("overlay path escapes root: %s", rel)
 		}
+		if !include(name) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if isExcludedPath(name, excluded) {
 			if entry.IsDir() {
 				return filepath.SkipDir
@@ -753,51 +903,232 @@ func applyOverlayUpper(upperRoot, dstRoot string, excluded map[string]struct{}) 
 		if err != nil {
 			return err
 		}
-		if isOverlayWhiteout(src, info) {
-			if err := removeRootPath(dst, name); err != nil {
+		return applyOverlayUpperEntry(dst, name, src, info)
+	})
+}
+
+func walkSelectedUpperEntries(upperRoot string, selected []string, visit func(name, path string, info fs.FileInfo) error) error {
+	seen := map[string]struct{}{}
+	for _, selectedName := range selected {
+		prefixes := pathPrefixes(selectedName)
+		for index, name := range prefixes {
+			path := filepath.Join(upperRoot, filepath.FromSlash(name))
+			info, err := os.Lstat(path)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+					break
+				}
 				return err
 			}
-			return nil
-		}
-		mode := info.Mode()
-		switch {
-		case mode.IsDir():
-			if err := mkdirAllRootReplacingLeaf(dst, name, mode.Perm()); err != nil {
-				return err
+			if _, ok := seen[name]; !ok {
+				if err := visit(name, path, info); err != nil {
+					return err
+				}
+				seen[name] = struct{}{}
 			}
-			if err := dst.Chmod(name, mode.Perm()); err != nil {
-				return err
+			if isOverlayWhiteout(path, info) || !info.IsDir() {
+				break
 			}
-			if isOverlayOpaqueDir(src) {
-				if err := clearRootDir(dst, name); err != nil {
+			if index == len(prefixes)-1 {
+				if err := walkUpperSubtree(path, name, seen, visit); err != nil {
 					return err
 				}
 			}
-			return nil
-		case mode.Type() == os.ModeSymlink:
-			target, err := os.Readlink(src)
-			if err != nil {
-				return err
-			}
-			if err := removeRootPath(dst, name); err != nil {
-				return err
-			}
-			return dst.Symlink(target, name)
-		case mode.Type() == 0:
-			if err := removeRootPath(dst, name); err != nil {
-				return err
-			}
-			return copyRegularFileToRoot(dst, name, src, mode.Perm())
-		default:
-			if err := removeRootPath(dst, name); err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
+		}
+	}
+	return nil
+}
+
+func walkUpperSubtree(rootPath, rootName string, seen map[string]struct{}, visit func(name, path string, info fs.FileInfo) error) error {
+	return filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(rootPath, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
 			return nil
 		}
+		name := pathJoinSlash(rootName, rel)
+		if _, ok := seen[name]; ok {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if err := visit(name, path, info); err != nil {
+			return err
+		}
+		seen[name] = struct{}{}
+		return nil
 	})
+}
+
+func pathPrefixes(name string) []string {
+	parts := strings.Split(filepath.ToSlash(name), "/")
+	prefixes := make([]string, 0, len(parts))
+	current := ""
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if current == "" {
+			current = part
+		} else {
+			current += "/" + part
+		}
+		prefixes = append(prefixes, current)
+	}
+	return prefixes
+}
+
+func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo) error {
+	if isOverlayWhiteout(src, info) {
+		return removeRootPath(dst, name)
+	}
+	mode := info.Mode()
+	switch {
+	case mode.IsDir():
+		if err := mkdirAllRootReplacingLeaf(dst, name, mode.Perm()); err != nil {
+			return err
+		}
+		if err := dst.Chmod(name, mode.Perm()); err != nil {
+			return err
+		}
+		if isOverlayOpaqueDir(src) {
+			if err := clearRootDir(dst, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	case mode.Type() == os.ModeSymlink:
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if err := removeRootPath(dst, name); err != nil {
+			return err
+		}
+		return dst.Symlink(target, name)
+	case mode.Type() == 0:
+		if err := removeRootPath(dst, name); err != nil {
+			return err
+		}
+		return copyRegularFileToRoot(dst, name, src, mode.Perm())
+	default:
+		return removeRootPath(dst, name)
+	}
+}
+
+func copyRootPathToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude) (bool, error) {
+	mode := info.Mode()
+	switch {
+	case mode.IsDir():
+		return true, copyRootTreeToRoot(srcRoot, srcName, info, dstRoot, dstName, excluded)
+	case mode.Type() == 0:
+		if err := removeRootPath(dstRoot, dstName); err != nil {
+			return true, err
+		}
+		return true, copyRootRegularFileToRoot(srcRoot, srcName, dstRoot, dstName, mode.Perm())
+	case mode.Type() == os.ModeSymlink:
+		target, err := srcRoot.Readlink(srcName)
+		if err != nil {
+			return true, err
+		}
+		if err := ensureRootParent(dstRoot, dstName); err != nil {
+			return true, err
+		}
+		if err := removeRootPath(dstRoot, dstName); err != nil {
+			return true, err
+		}
+		return true, dstRoot.Symlink(target, dstName)
+	default:
+		return false, nil
+	}
+}
+
+func copyRootTreeToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude) error {
+	if err := mkdirAllRootReplacingLeaf(dstRoot, dstName, info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := dstRoot.Chmod(dstName, info.Mode().Perm()); err != nil {
+		return err
+	}
+	dir, err := srcRoot.Open(srcName)
+	if err != nil {
+		return err
+	}
+	entries, readErr := dir.ReadDir(-1)
+	closeErr := dir.Close()
+	if readErr != nil {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	for _, entry := range entries {
+		childSrc := pathJoinSlash(srcName, entry.Name())
+		if excluded.contains(childSrc) || shouldSkip(childSrc, entry) {
+			continue
+		}
+		childInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		childDst := pathJoinSlash(dstName, entry.Name())
+		if _, err := copyRootPathToRoot(srcRoot, childSrc, childInfo, dstRoot, childDst, excluded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyRootRegularFileToRoot(srcRoot *os.Root, srcName string, dstRoot *os.Root, dstName string, perm os.FileMode) error {
+	if err := ensureRootParent(dstRoot, dstName); err != nil {
+		return err
+	}
+	in, err := srcRoot.Open(srcName)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := dstRoot.OpenFile(dstName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	chmodErr := out.Chmod(perm)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if chmodErr != nil {
+		return chmodErr
+	}
+	return closeErr
+}
+
+type fileInfoDirEntry struct {
+	info fs.FileInfo
+}
+
+func (entry fileInfoDirEntry) Name() string {
+	return entry.info.Name()
+}
+
+func (entry fileInfoDirEntry) IsDir() bool {
+	return entry.info.IsDir()
+}
+
+func (entry fileInfoDirEntry) Type() fs.FileMode {
+	return entry.info.Mode().Type()
+}
+
+func (entry fileInfoDirEntry) Info() (fs.FileInfo, error) {
+	return entry.info, nil
 }
 
 func copyTreeToRoot(srcRoot string, dstRoot *os.Root, dstName string) error {
@@ -1043,6 +1374,10 @@ func clearRootDir(root *os.Root, dirName string) error {
 	return nil
 }
 
+func pathJoinSlash(elem ...string) string {
+	return filepath.ToSlash(filepath.Join(elem...))
+}
+
 func pathDirSlash(name string) string {
 	dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(name)))
 	if dir == "." {
@@ -1057,11 +1392,15 @@ func isExcludedPath(name string, excluded map[string]struct{}) bool {
 	}
 	name = filepath.ToSlash(name)
 	for excludedName := range excluded {
-		if name == excludedName || strings.HasPrefix(name, excludedName+"/") {
+		if sameOrDescendant(name, excludedName) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameOrDescendant(name, parent string) bool {
+	return name == parent || strings.HasPrefix(name, parent+"/")
 }
 
 func copyRegularFile(src, dst string, perm os.FileMode) error {

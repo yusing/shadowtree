@@ -133,6 +133,62 @@ func TestNamespaceOverlayPreservesGoTestCache(t *testing.T) {
 	}
 }
 
+func TestOverlayForEachFilesystemBuiltinRunsInNamespace(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "cmd", "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "cmd", "app", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "dev-data", "certs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := filepath.Join(source, "dev-data", "certs", "debian-12.pve:8890.zip")
+	if err := os.WriteFile(unreadable, []byte("fixture"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	workDir := t.TempDir()
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, filepath.Join(workDir, "workspace"))
+	if err != nil {
+		t.Skipf("overlayfs unavailable: %v", err)
+	}
+	defer func() {
+		if err := sandbox.Close(); err != nil {
+			t.Fatalf("close overlay workspace: %v", err)
+		}
+	}()
+	resolved, err := recipe.Resolve("deadcode", recipe.Recipe{
+		ForEach: recipe.ScriptCommand("@go-main-packages"),
+		Workdir: "{item}",
+		Cmd:     recipe.Command{"true"},
+	}, nil, nil, nil, "", recipe.GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values, err := forEachItems(t.Context(), sandbox, sandbox.root, os.Environ(), Options{Resolved: resolved, SourceDir: source}, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, value := range values {
+		if value.Value == "./cmd/app" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("values = %#v, want ./cmd/app", values)
+	}
+}
+
 func TestApplyOverlayUpperAppliesWhiteoutAndOpaqueDir(t *testing.T) {
 	upper := t.TempDir()
 	dst := t.TempDir()
@@ -231,6 +287,69 @@ func TestApplyOverlayUpperSkipsUnsupportedFileType(t *testing.T) {
 	_, err := os.Stat(filepath.Join(dst, "pipe"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pipe err = %v, want not exist", err)
+	}
+}
+
+func TestOverlaySyncRootMaterializesRequestedWhiteout(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	lower := filepath.Join(source, "deleted.txt")
+	if err := os.WriteFile(lower, []byte("host"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lower, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "kept.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	whiteout := filepath.Join(upper, "deleted.txt")
+	if err := os.WriteFile(whiteout, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setOverlayXattr(t, whiteout, "whiteout")
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"deleted.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(syncRoot, "deleted.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted.txt err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(syncRoot, "kept.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("kept.txt err = %v, want not exist", err)
+	}
+}
+
+func TestOverlaySyncRootMaterializesRequestedOpaqueAncestor(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hidden := filepath.Join(source, "dir", "hidden.txt")
+	if err := os.WriteFile(hidden, []byte("host"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hidden, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	upperDir := filepath.Join(upper, "dir")
+	if err := os.Mkdir(upperDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setOverlayXattr(t, upperDir, "opaque")
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"dir/hidden.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(filepath.Join(syncRoot, "dir", "hidden.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dir/hidden.txt err = %v, want not exist", err)
 	}
 }
 

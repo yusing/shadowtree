@@ -70,17 +70,34 @@ func TestRunWarnsAndFallsBackWhenOverlayUnavailable(t *testing.T) {
 	}
 }
 
+func newOverlaySandboxForTest(t *testing.T, source, upper string) *sandboxWorkspace {
+	t.Helper()
+	workDir := t.TempDir()
+	return &sandboxWorkspace{
+		source:  source,
+		root:    filepath.Join(workDir, "workspace"),
+		upper:   upper,
+		workDir: workDir,
+		overlay: true,
+	}
+}
+
 func TestOverlaySyncRootMaterializesRequestedPaths(t *testing.T) {
 	source := t.TempDir()
 	upper := t.TempDir()
-	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "file.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "other.txt"), []byte("host other"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(upper, "file.txt"), []byte("shadow"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sandbox := &sandboxWorkspace{source: source, root: filepath.Join(workDir, "workspace"), upper: upper, workDir: workDir, overlay: true}
+	if err := os.WriteFile(filepath.Join(upper, "other.txt"), []byte("shadow other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := newOverlaySandboxForTest(t, source, upper)
 
 	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"file.txt"})
 	if err != nil {
@@ -93,6 +110,163 @@ func TestOverlaySyncRootMaterializesRequestedPaths(t *testing.T) {
 	}
 	if string(data) != "shadow" {
 		t.Fatalf("materialized data = %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(syncRoot, "other.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("other.txt err = %v, want not exist", err)
+	}
+}
+
+func TestOverlaySyncRootMaterializesRequestedDirectory(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "host.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(upper, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "dir", "shadow.txt"), []byte("shadow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "outside.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"dir"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, name := range []string{"host.txt", "shadow.txt"} {
+		if _, err := os.Stat(filepath.Join(syncRoot, "dir", name)); err != nil {
+			t.Fatalf("dir/%s err = %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(syncRoot, "outside.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outside.txt err = %v, want not exist", err)
+	}
+}
+
+func TestOverlaySyncRootMaterializesRequestedSymlink(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.Symlink("target.txt", filepath.Join(upper, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"link.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	target, err := os.Readlink(filepath.Join(syncRoot, "link.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "target.txt" {
+		t.Fatalf("link target = %q, want target.txt", target)
+	}
+}
+
+func TestOverlaySyncRootSkipsUnreadableLowerFileReplacedByUpper(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	lower := filepath.Join(source, "file.txt")
+	if err := os.WriteFile(lower, []byte("host"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lower, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "file.txt"), []byte("shadow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	data, err := os.ReadFile(filepath.Join(syncRoot, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "shadow" {
+		t.Fatalf("file.txt = %q, want shadow", data)
+	}
+}
+
+func TestOverlaySyncRootSkipsUnrelatedUnreadableUpperDirectory(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "file.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(upper, "unrelated")
+	if err := os.Mkdir(unrelated, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unrelated, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(unrelated, 0o700)
+	})
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	data, err := os.ReadFile(filepath.Join(syncRoot, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "host" {
+		t.Fatalf("file.txt = %q, want host", data)
+	}
+}
+
+func TestOverlaySyncRootRejectsSourceParentSymlinkEscape(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "file.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"link/file.txt"})
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err == nil {
+		t.Fatalf("SyncRoot succeeded with %q, want symlink escape error", syncRoot)
+	}
+}
+
+func TestCopiedWorkspaceSyncRootUsesWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	sandbox := &sandboxWorkspace{root: workspace, source: source}
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if syncRoot != workspace {
+		t.Fatalf("sync root = %q, want workspace %q", syncRoot, workspace)
 	}
 }
 
@@ -583,42 +757,6 @@ func TestRunForEachUsesCommandBackedValues(t *testing.T) {
 	want := "a:alpha\nb:beta\n"
 	if string(data) != want {
 		t.Fatalf("out.txt = %q, want %q", data, want)
-	}
-}
-
-func TestForEachBuiltinDirMaterializesOverlayTargetPath(t *testing.T) {
-	source := t.TempDir()
-	target := filepath.Join(source, "webui")
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	upper := filepath.Join(t.TempDir(), "upper")
-	if err := os.MkdirAll(filepath.Join(upper, "webui", "generated"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(upper, "webui", "generated", "go.mod"), []byte("module example.com/generated\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sandbox := &sandboxWorkspace{
-		root:    filepath.Join(t.TempDir(), "workspace"),
-		source:  source,
-		target:  source,
-		workDir: t.TempDir(),
-		upper:   upper,
-		overlay: true,
-	}
-
-	dir, cleanup, err := forEachBuiltinDir(sandbox, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	data, err := os.ReadFile(filepath.Join(dir, "generated", "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "module example.com/generated\n" {
-		t.Fatalf("go.mod = %q", data)
 	}
 }
 
@@ -1287,6 +1425,35 @@ func TestSyncPathReplacesLeafSymlink(t *testing.T) {
 	}
 	if string(victimData) != "victim" {
 		t.Fatalf("victim data = %q", victimData)
+	}
+}
+
+func TestSyncPathRejectsWorkspaceParentSymlinkEscape(t *testing.T) {
+	workspace := t.TempDir()
+	source := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "file.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "out", "file.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SyncPath(workspace, source, "out/file.txt"); err == nil {
+		t.Fatal("SyncPath succeeded, want symlink escape error")
+	}
+	data, err := os.ReadFile(filepath.Join(source, "out", "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "host" {
+		t.Fatalf("source data = %q, want host", data)
 	}
 }
 

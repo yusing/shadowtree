@@ -97,6 +97,12 @@ type namespaceScriptPayload struct {
 	Stack     []string
 }
 
+type namespaceValueBuiltinPayload struct {
+	Command recipe.Command
+	Recipe  recipe.Recipe
+	Recipes map[string]recipe.Recipe
+}
+
 func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, env []string, dir string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
 	payload := namespaceScriptPayload{
 		Command:   command,
@@ -132,6 +138,46 @@ func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, 
 		path,
 	}
 	return runNamespaceHelper(ctx, env, args, stdin, stdout, stderr)
+}
+
+func (sandbox *sandboxWorkspace) runNamespaceValueBuiltinCommand(ctx context.Context, env []string, dir string, command recipe.Command, stderr io.Writer, options Options) ([]recipe.ValueCandidate, error) {
+	payload := namespaceValueBuiltinPayload{
+		Command: command,
+		Recipe:  options.Resolved.Recipe,
+		Recipes: options.Recipes,
+	}
+	file, err := os.CreateTemp(sandbox.workDir, "values-*.json")
+	if err != nil {
+		return nil, err
+	}
+	path := file.Name()
+	defer func() { _ = os.Remove(path) }()
+	if err := json.NewEncoder(file).Encode(payload); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	args := []string{
+		OverlayHelperCommand,
+		sandbox.source,
+		sandbox.upper,
+		sandbox.work,
+		sandbox.target,
+		sandbox.namespaceDir(dir),
+		"--values",
+		path,
+	}
+	var stdout bytes.Buffer
+	if err := runNamespaceHelper(ctx, env, args, nil, &stdout, stderr); err != nil {
+		return nil, err
+	}
+	var values []recipe.ValueCandidate
+	if err := json.Unmarshal(stdout.Bytes(), &values); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func runNamespaceHelper(ctx context.Context, env, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -170,7 +216,7 @@ func runNamespaceHelper(ctx context.Context, env, args []string, stdin io.Reader
 }
 
 func OverlayHelperMain(ctx context.Context, argv []string) int {
-	if len(argv) < 7 || (argv[5] != "--" && argv[5] != "--script") {
+	if len(argv) < 7 || (argv[5] != "--" && argv[5] != "--script" && argv[5] != "--values") {
 		fmt.Fprintln(os.Stderr, "shadowtree overlay helper: missing command")
 		return 125
 	}
@@ -196,6 +242,9 @@ func OverlayHelperMain(ctx context.Context, argv []string) int {
 	if argv[5] == "--script" {
 		return overlayHelperScriptMain(ctx, dir, argv[6])
 	}
+	if argv[5] == "--values" {
+		return overlayHelperValuesMain(ctx, dir, argv[6])
+	}
 	executable := command[0]
 	if !strings.Contains(executable, "/") {
 		path, err := exec.LookPath(executable)
@@ -210,6 +259,35 @@ func OverlayHelperMain(ctx context.Context, argv []string) int {
 		return 127
 	}
 	return 127
+}
+
+func overlayHelperValuesMain(ctx context.Context, dir, path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: open values payload: %v\n", err)
+		return 125
+	}
+	defer file.Close()
+	var payload namespaceValueBuiltinPayload
+	if err := json.NewDecoder(file).Decode(&payload); err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: decode values payload: %v\n", err)
+		return 125
+	}
+	values, _, err := recipe.BuiltinValues(payload.Command, recipe.ValueBuiltinOptions{
+		Context: ctx,
+		Dir:     dir,
+		Recipe:  payload.Recipe,
+		Recipes: payload.Recipes,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: values: %v\n", err)
+		return 125
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(values); err != nil {
+		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: encode values: %v\n", err)
+		return 125
+	}
+	return 0
 }
 
 func overlayHelperScriptMain(ctx context.Context, dir, path string) int {
