@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shell to Shadowtree"
+  short_description: "Migrate shell scripts into Shadowtree recipes"
+  default_prompt: "Use $shell-to-shadowtree to migrate this shell script into a typed Shadowtree recipe."

@@ -1006,7 +1006,7 @@ fix            Update Go source with go fix.
 fmt            Format Go source files.
 generate       Run go generate.
 install        Install the Shadowtree CLI and language server.
-install-skill  Install the Shadowtree agent skill.
+install-skill  Install local agent skills.
 lint           Run Go lint checks.
 run            Run a Go command.
 test           Run the test suite.

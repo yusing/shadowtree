@@ -486,5 +486,5 @@ The `install` recipe uses default `go install`, honors `FISH_CONFIG_DIR` and
 installs fish completion when `fish` is available, and appends single guarded
 eval lines to `~/.bashrc` and `~/.zshrc` when those shells are available.
 
-The `install-skill` recipe installs the local Shadowtree agent skill to
-`${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}/shadowtree`.
+The `install-skill` recipe installs every local agent skill from
+`.agents/skills/` to `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}`.

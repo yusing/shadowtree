@@ -54,21 +54,36 @@ fi
 ''']
 
 [recipes.install-skill]
-help = "Install the Shadowtree agent skill."
+help = "Install local agent skills."
 cmd = '''
 set -eu
-skill_src=.agents/skills/shadowtree
-skill_dest=${AGENTS_SKILLS_DIR:-"$HOME/.agents/skills"}/shadowtree
+skills_src=.agents/skills
+skills_dest=${AGENTS_SKILLS_DIR:-"$HOME/.agents/skills"}
 
-if [ ! -f "$skill_src/SKILL.md" ]; then
-	echo "missing skill source: $skill_src" >&2
+if [ ! -d "$skills_src" ]; then
+	echo "missing skills source: $skills_src" >&2
 	exit 1
 fi
 
-rm -rf "$skill_dest"
-mkdir -p "$(dirname "$skill_dest")"
-cp -R "$skill_src" "$skill_dest"
-echo "installed shadowtree skill to $skill_dest"
+installed=0
+for skill_src in "$skills_src"/*; do
+	if [ ! -f "$skill_src/SKILL.md" ]; then
+		continue
+	fi
+
+	skill_name=$(basename "$skill_src")
+	skill_dest=$skills_dest/$skill_name
+	rm -rf "$skill_dest"
+	mkdir -p "$skills_dest"
+	cp -R "$skill_src" "$skill_dest"
+	echo "installed $skill_name skill to $skill_dest"
+	installed=$((installed + 1))
+done
+
+if [ "$installed" -eq 0 ]; then
+	echo "no skills found in $skills_src" >&2
+	exit 1
+fi
 '''
 
 # Below are same as defaults
