@@ -9,7 +9,7 @@ Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point 
 Do not rely on `shadowtree` skill since you're currently working `shadowtree`.
 
 On significant changes, update (where applicable) README, spec, json schema,
-agent `SKILL.md`, lsp (autocomplete and diagnostic) and shell completion.
+agent `SKILL.md`, lsp (syntax highlighting, autocomplete and diagnostic) and shell completion.
 
 Follow global duplication-control rules. In this repo, prefer these existing
 sources of truth over local copies:
