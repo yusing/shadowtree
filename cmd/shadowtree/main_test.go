@@ -204,6 +204,40 @@ func TestPrintRecipeHelpColorsWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpColorsProfilesWhenEnabled(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
+		Help: "Run benchmark.",
+		Cmd:  recipe.Command{"benchmark"},
+		Profiles: map[string]recipe.RecipeProfile{
+			"full": {
+				Arguments: map[string]any{
+					"enabled": false,
+				},
+			},
+			"smoke": {
+				Arguments: map[string]any{
+					"enabled": true,
+				},
+			},
+		},
+	}, recipeHelpOptions{Color: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"\x1b[1;33m- Profiles:\x1b[0m",
+		"    \x1b[1;32mfull\x1b[0m  \x1b[36menabled=\x1b[0m\x1b[32mfalse\x1b[0m",
+		"    \x1b[1;32msmoke\x1b[0m \x1b[36menabled=\x1b[0m\x1b[32mtrue\x1b[0m",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("colored recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpShowsBareRecipeReferences(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "check", recipe.Recipe{
@@ -319,6 +353,12 @@ func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
 			"requests":    {Type: "int", Default: 1000},
 		},
 		Profiles: map[string]recipe.RecipeProfile{
+			"full": {
+				Arguments: map[string]any{
+					"connections": int64(128),
+					"requests":    int64(50000),
+				},
+			},
 			"stable": {
 				Arguments: map[string]any{
 					"connections": int64(64),
@@ -334,7 +374,33 @@ func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		"- Profiles:",
+		"    full   connections=128 requests=50000",
 		"    stable connections=64 requests=20000",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrintRecipeHelpIncludesArgumentBounds(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
+		Help: "Run benchmark.",
+		Cmd:  recipe.Command{"benchmark"},
+		Arguments: map[string]recipe.Argument{
+			"retries": {Type: "int", Default: 2, Min: 1, Max: 5},
+			"timeout": {Type: "duration", Default: "2s", Min: "100ms", Max: "10s"},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"info: type=int default=2 min=1 max=5",
+		`info: type=duration default="2s" min="100ms" max="10s"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recipe help output missing %q:\n%s", want, text)

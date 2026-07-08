@@ -469,11 +469,15 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 	if len(profileNames) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Profiles:"))
 	}
+	profileNameWidth := 0
 	for _, profileName := range profileNames {
-		fmt.Fprintf(w, "    %s", colors.argument(profileName))
+		profileNameWidth = max(profileNameWidth, len(profileName))
+	}
+	for _, profileName := range profileNames {
+		fmt.Fprintf(w, "    %s%s", colors.argument(profileName), strings.Repeat(" ", profileNameWidth-len(profileName)))
 		argNames := slices.Sorted(maps.Keys(rec.Profiles[profileName].Arguments))
 		for _, argName := range argNames {
-			fmt.Fprintf(w, " %s", colors.literal(argName+"="+profileArgumentDisplayValue(rec.Profiles[profileName].Arguments[argName])))
+			fmt.Fprintf(w, " %s%s", colors.label(argName+"="), colors.literal(profileArgumentDisplayValue(rec.Profiles[profileName].Arguments[argName])))
 		}
 		fmt.Fprintln(w)
 	}
@@ -535,15 +539,21 @@ func printArgumentInfo(w io.Writer, arg recipe.Argument, colors helpColors) {
 		fmt.Fprintf(w, " %s", colors.literal("required"))
 	}
 	if arg.Default != nil {
-		if value, ok := arg.Default.(string); ok {
-			fmt.Fprintf(w, " default=%s", colors.literal(strconv.Quote(value)))
-		} else {
-			fmt.Fprintf(w, " default=%s", colors.literal(fmt.Sprint(arg.Default)))
-		}
+		fmt.Fprintf(w, " default=%s", colors.literal(argumentScalarDisplayValue(arg.Default)))
+	}
+	if arg.Min != nil {
+		fmt.Fprintf(w, " min=%s", colors.literal(argumentScalarDisplayValue(arg.Min)))
+	}
+	if arg.Max != nil {
+		fmt.Fprintf(w, " max=%s", colors.literal(argumentScalarDisplayValue(arg.Max)))
 	}
 }
 
 func profileArgumentDisplayValue(value any) string {
+	return argumentScalarDisplayValue(value)
+}
+
+func argumentScalarDisplayValue(value any) string {
 	if text, err := recipe.ScalarValueString(value); err == nil {
 		if _, ok := value.(string); ok {
 			return strconv.Quote(text)
