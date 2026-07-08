@@ -204,12 +204,12 @@ func TestPrintRecipeHelpColorsWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestPrintRecipeHelpColorsProfilesWhenEnabled(t *testing.T) {
+func TestPrintRecipeHelpColorsPresetsWhenEnabled(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
 		Help: "Run benchmark.",
 		Cmd:  recipe.Command{"benchmark"},
-		Profiles: map[string]recipe.RecipeProfile{
+		Presets: map[string]recipe.RecipePreset{
 			"full": {
 				Arguments: map[string]any{
 					"enabled": false,
@@ -228,7 +228,7 @@ func TestPrintRecipeHelpColorsProfilesWhenEnabled(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"\x1b[1;33m- Profiles:\x1b[0m",
+		"\x1b[1;33m- Presets:\x1b[0m",
 		"    \x1b[1;32mfull\x1b[0m  \x1b[36menabled=\x1b[0m\x1b[32mfalse\x1b[0m",
 		"    \x1b[1;32msmoke\x1b[0m \x1b[36menabled=\x1b[0m\x1b[32mtrue\x1b[0m",
 	} {
@@ -343,7 +343,7 @@ func TestPrintRecipeHelpIncludesDynamicArgumentValues(t *testing.T) {
 	}
 }
 
-func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
+func TestPrintRecipeHelpIncludesPresets(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
 		Help: "Run benchmark.",
@@ -352,7 +352,7 @@ func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
 			"connections": {Type: "int", Default: 32},
 			"requests":    {Type: "int", Default: 1000},
 		},
-		Profiles: map[string]recipe.RecipeProfile{
+		Presets: map[string]recipe.RecipePreset{
 			"full": {
 				Arguments: map[string]any{
 					"connections": int64(128),
@@ -373,7 +373,7 @@ func TestPrintRecipeHelpIncludesProfiles(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		"- Profiles:",
+		"- Presets:",
 		"    full   connections=128 requests=50000",
 		"    stable connections=64 requests=20000",
 	} {

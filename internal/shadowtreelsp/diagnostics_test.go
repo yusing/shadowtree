@@ -788,7 +788,7 @@ cmd = "go test"
 	}
 }
 
-func TestDocumentDiagnosticsAcceptDiscoveryArgumentValues(t *testing.T) {
+func TestDocumentDiagnosticsAcceptDefaultedGoModuleArgumentValues(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.target]
 values = "@go-modules"
 
@@ -838,10 +838,13 @@ cmd = '''
 	}
 }
 
-func TestDocumentDiagnosticsAcceptDiscoveryArgumentValuesWithoutRecipeCommand(t *testing.T) {
+func TestDocumentDiagnosticsAcceptDiscoveryArgumentValues(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test.arguments.pkg]
 values = "@go-modules"
 default = "."
+
+[recipes.test]
+cmd = 'go test "{pkg}"'
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -854,6 +857,9 @@ values = '''
 @go-modules
 '''
 default = "."
+
+[recipes.test]
+cmd = 'go test "{pkg}"'
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -865,10 +871,14 @@ func TestDocumentDiagnosticsAcceptGoModulesAfterTripleQuotedCommandList(t *testi
 post = ['''
 echo installed
 ''']
+cmd = "true"
 
 [recipes.test.arguments.pkg]
 values = "@go-modules"
 default = "."
+
+[recipes.test]
+cmd = 'go test "{pkg}"'
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diagnostics)
@@ -1011,20 +1021,55 @@ type = "string"
 values = '''
 @minify component=foo
 '''
+
+[recipes.test]
+cmd = "true"
 `)
 	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
 	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify `), len(`@minify component=foo`))
 }
 
-func TestDocumentDiagnosticsRejectUnknownRecipeProfileArgument(t *testing.T) {
+func TestDocumentDiagnosticsRejectUnknownRecipePresetArgument(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
 type = "int"
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 requests = 20000
 `)
-	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" profiles: stable: unknown argument "requests"`)
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" presets: stable: unknown argument "requests"`)
 	assertDiagnosticRange(t, diagnostics[0], 4, 0, len("requests"))
+}
+
+func TestDocumentDiagnosticsRejectRecipeWithoutCommand(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.broken]
+help = "Missing command."
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "broken" has no cmd`)
+}
+
+func TestDocumentDiagnosticsRejectRecipeWithoutCommandAndHelp(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.broken]
+sync_out = ["generated.txt"]
+
+[recipes.broken.arguments.target]
+default = "api"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "broken" has no cmd`)
+}
+
+func TestDocumentDiagnosticsRejectIncludedRecipeWithoutCommand(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "common.shadowtree.toml"), []byte(`
+[recipes.broken.arguments.target]
+default = "api"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `include = ["./common.shadowtree.toml"]
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, `recipe "broken" has no cmd`)
 }
 
 func TestDocumentDiagnosticsRejectInvalidArgumentRange(t *testing.T) {
@@ -1040,31 +1085,31 @@ cmd = "true"
 	assertDiagnosticRange(t, diagnostics[0], 3, len("max = "), len("max = 1"))
 }
 
-func TestDocumentDiagnosticsRejectProfileArgumentNameAtArgumentTable(t *testing.T) {
-	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.profile]
+func TestDocumentDiagnosticsRejectPresetArgumentNameAtArgumentTable(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.preset]
 type = "string"
 
-[recipes.benchmark.profiles.stable.arguments]
-profile = "fast"
+[recipes.benchmark.presets.stable.arguments]
+preset = "fast"
 `)
-	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" profiles: argument name "profile" is reserved when profiles are configured`)
-	assertDiagnosticRange(t, diagnostics[0], 0, 1, len(`[recipes.benchmark.arguments.profile`))
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" presets: argument name "preset" is reserved when presets are configured`)
+	assertDiagnosticRange(t, diagnostics[0], 0, 1, len(`[recipes.benchmark.arguments.preset`))
 }
 
-func TestDocumentDiagnosticsRejectUnknownRecipeReferenceProfile(t *testing.T) {
+func TestDocumentDiagnosticsRejectUnknownRecipeReferencePreset(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
 type = "int"
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 connections = 64
 
 [recipes.benchmark]
 cmd = "true"
 
 [recipes.check]
-cmd = "@benchmark[profile=stress]"
+cmd = "@benchmark[preset=stress]"
 `)
-	assertOneDiagnostic(t, diagnostics, `unknown profile "stress"`)
+	assertOneDiagnostic(t, diagnostics, `unknown preset "stress"`)
 }
 
 func TestDocumentDiagnosticsRejectInvalidValuesScriptRecipeReferenceEnumBracketArgumentValue(t *testing.T) {
@@ -1080,6 +1125,9 @@ type = "string"
 values = '''
 @minify[component=foo]
 '''
+
+[recipes.test]
+cmd = "true"
 `)
 	assertOneDiagnostic(t, diagnostics, `component: invalid value "foo"`)
 	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify[`), len(`@minify[component=foo`))

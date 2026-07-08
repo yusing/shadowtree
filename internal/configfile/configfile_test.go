@@ -44,7 +44,7 @@ help = "Repeat count."
 type = "int"
 default = 1
 
-[recipes.test.profiles.stable.arguments]
+[recipes.test.presets.stable.arguments]
 count = 5
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ count = 5
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")
 	}
-	resolved, err := recipe.Resolve("test", loaded.Config.Recipes["test"], []string{"profile=stable"}, nil, nil, path, "")
+	resolved, err := recipe.Resolve("test", loaded.Config.Recipes["test"], []string{"preset=stable"}, nil, nil, path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +284,48 @@ func TestLoadRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsTopLevelSyncOut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+sync_out = ["generated"]
+
+[recipes.generate]
+cmd = "go generate ./..."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "top-level sync_out is no longer supported") {
+		t.Fatalf("Load() error = %v, want top-level sync_out rejection", err)
+	}
+}
+
+func TestLoadRejectsRecipeProfiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.benchmark]
+cmd = "go test -bench . -count {count}"
+
+[recipes.benchmark.arguments.count]
+type = "int"
+default = 1
+
+[recipes.benchmark.profiles.stable.arguments]
+count = 5
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil ||
+		!strings.Contains(err.Error(), `recipe "benchmark" profiles are no longer supported`) ||
+		!strings.Contains(err.Error(), `[recipes.benchmark.presets.<preset>.arguments]`) ||
+		!strings.Contains(err.Error(), `preset=<preset>`) {
+		t.Fatalf("Load() error = %v, want recipe profiles rejection", err)
+	}
+}
+
 func TestLoadMergesIncludesBeforeCurrentConfig(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.shadowtree.toml")
@@ -293,7 +335,6 @@ func TestLoadMergesIncludesBeforeCurrentConfig(t *testing.T) {
 profile = "node"
 shell = "sh"
 shell_prelude = "base_prelude"
-sync_out = ["base.out"]
 
 [vars]
 shared = "base"
@@ -346,7 +387,6 @@ commands = ["node"]
 include = ["./base.shadowtree.toml", "./extra.shadowtree.toml"]
 profile = "go"
 shell_prelude = "current_prelude"
-sync_out = ["current.out"]
 
 [vars]
 current_only = "current"
@@ -384,9 +424,6 @@ default = "dev"
 	}
 	if cfg.ShellPrelude != "base_prelude\ncurrent_prelude" {
 		t.Fatalf("shell_prelude = %q", cfg.ShellPrelude)
-	}
-	if got := strings.Join(cfg.SyncOut, ","); got != "base.out,current.out" {
-		t.Fatalf("sync_out = %q", got)
 	}
 	if cfg.Vars["shared"] != "extra" || cfg.Vars["base_only"] != "base" || cfg.Vars["current_only"] != "current" {
 		t.Fatalf("vars = %#v", cfg.Vars)
@@ -654,6 +691,17 @@ cmd = "npm test"
 	}
 	if _, ok := recipes["test"]; ok {
 		t.Fatalf("recipes include Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesRejectsRecipeWithoutCommand(t *testing.T) {
+	loaded := Loaded{Config: recipe.Config{Recipes: map[string]recipe.Recipe{
+		"broken": {Help: "Missing command."},
+	}}}
+
+	_, _, err := ResolveRecipes(t.Context(), loaded, t.TempDir(), ResolveOptions{})
+	if err == nil || !strings.Contains(err.Error(), `recipe "broken" has no cmd`) {
+		t.Fatalf("ResolveRecipes() error = %v, want missing cmd", err)
 	}
 }
 

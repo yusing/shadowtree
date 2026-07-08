@@ -86,6 +86,7 @@ func nestedSource(sources map[string]map[string]string, first, second string) st
 type ResolveOptions struct {
 	Profile         string
 	EvalDynamicVars bool
+	AllowMissingCmd bool
 }
 
 // CrossConfigTarget is a resolved @path:recipe target config.
@@ -129,6 +130,9 @@ func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack
 		}
 	}
 	if err := validateIncludes(cfg.Include); err != nil {
+		return Loaded{}, err
+	}
+	if err := validateRemovedFields(md); err != nil {
 		return Loaded{}, err
 	}
 	if err := recipe.ValidateConfig(cfg); err != nil {
@@ -189,6 +193,18 @@ func validateIncludes(includes []string) error {
 	return nil
 }
 
+func validateRemovedFields(md toml.MetaData) error {
+	if md.IsDefined("sync_out") {
+		return errors.New("top-level sync_out is no longer supported; move sync_out under the recipe that writes those paths")
+	}
+	for _, key := range md.Undecoded() {
+		if len(key) >= 3 && key[0] == "recipes" && key[2] == "profiles" {
+			return fmt.Errorf("recipe %q profiles are no longer supported; use [recipes.%s.presets.<preset>.arguments] and preset=<preset>", key[1], key[1])
+		}
+	}
+	return nil
+}
+
 func CleanAbs(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -224,7 +240,6 @@ func mergeConfigs(base, override recipe.Config, explicitFields map[string]explic
 		out.Shell = override.Shell
 	}
 	out.ShellPrelude = recipe.JoinShell(out.ShellPrelude, override.ShellPrelude)
-	out.SyncOut = append(slices.Clone(out.SyncOut), override.SyncOut...)
 	out.Recipes = mergeRecipeMaps(out.Recipes, override.Recipes, explicitFields)
 	return out
 }
@@ -477,6 +492,11 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 	recipes, err = recipe.ApplyGlobalsExpanded(recipes, vars, dynamicVars, loaded.Config.Shell, loaded.Config.ShellPrelude)
 	if err != nil {
 		return nil, "", err
+	}
+	if !opts.AllowMissingCmd {
+		if err := recipe.ValidateResolvedRecipes(recipes); err != nil {
+			return nil, "", err
+		}
 	}
 	return recipes, profile, nil
 }

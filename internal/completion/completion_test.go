@@ -161,34 +161,34 @@ func TestCandidatesCompleteSpacedRecipeArguments(t *testing.T) {
 	}
 }
 
-func TestCandidatesCompleteRecipeProfileArgument(t *testing.T) {
+func TestCandidatesCompleteRecipePresetArgument(t *testing.T) {
 	rec := recipe.Recipe{
 		Cmd: recipe.Command{"benchmark"},
 		Arguments: map[string]recipe.Argument{
 			"connections": {Type: "int"},
 		},
-		Profiles: map[string]recipe.RecipeProfile{
+		Presets: map[string]recipe.RecipePreset{
 			"stable": {},
 			"stress": {},
 		},
 	}
 
 	candidates := complete(t, []string{"shadowtree", "benchmark", ""}, map[string]recipe.Recipe{"benchmark": rec})
-	if !hasCandidate(candidates, "profile=") || !hasCandidate(candidates, "connections=") {
-		t.Fatalf("candidates = %#v, want profile and typed argument names", candidates)
+	if !hasCandidate(candidates, "preset=") || !hasCandidate(candidates, "connections=") {
+		t.Fatalf("candidates = %#v, want preset and typed argument names", candidates)
 	}
-	if got := helpFor(candidates, "profile="); got != "recipe profile" {
-		t.Fatalf("profile help = %q", got)
-	}
-
-	candidates = complete(t, []string{"shadowtree", "benchmark", "profile=st"}, map[string]recipe.Recipe{"benchmark": rec})
-	if len(candidates) != 2 || candidates[0].Value != "profile=stable" || candidates[1].Value != "profile=stress" {
-		t.Fatalf("candidates = %#v, want profile values", candidates)
+	if got := helpFor(candidates, "preset="); got != "recipe preset" {
+		t.Fatalf("preset help = %q", got)
 	}
 
-	candidates = complete(t, []string{"shadowtree", "benchmark[profile=st"}, map[string]recipe.Recipe{"benchmark": rec})
-	if len(candidates) != 2 || candidates[0].Value != "benchmark[profile=stable" || candidates[1].Value != "benchmark[profile=stress" {
-		t.Fatalf("candidates = %#v, want bracket profile values", candidates)
+	candidates = complete(t, []string{"shadowtree", "benchmark", "preset=st"}, map[string]recipe.Recipe{"benchmark": rec})
+	if len(candidates) != 2 || candidates[0].Value != "preset=stable" || candidates[1].Value != "preset=stress" {
+		t.Fatalf("candidates = %#v, want preset values", candidates)
+	}
+
+	candidates = complete(t, []string{"shadowtree", "benchmark[preset=st"}, map[string]recipe.Recipe{"benchmark": rec})
+	if len(candidates) != 2 || candidates[0].Value != "benchmark[preset=stable" || candidates[1].Value != "benchmark[preset=stress" {
+		t.Fatalf("candidates = %#v, want bracket preset values", candidates)
 	}
 }
 

@@ -465,19 +465,19 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 			return fmt.Errorf("arg %s values: %w", argName, err)
 		}
 	}
-	profileNames := slices.Sorted(maps.Keys(rec.Profiles))
-	if len(profileNames) > 0 {
-		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Profiles:"))
+	presetNames := slices.Sorted(maps.Keys(rec.Presets))
+	if len(presetNames) > 0 {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Presets:"))
 	}
-	profileNameWidth := 0
-	for _, profileName := range profileNames {
-		profileNameWidth = max(profileNameWidth, len(profileName))
+	presetNameWidth := 0
+	for _, presetName := range presetNames {
+		presetNameWidth = max(presetNameWidth, len(presetName))
 	}
-	for _, profileName := range profileNames {
-		fmt.Fprintf(w, "    %s%s", colors.argument(profileName), strings.Repeat(" ", profileNameWidth-len(profileName)))
-		argNames := slices.Sorted(maps.Keys(rec.Profiles[profileName].Arguments))
+	for _, presetName := range presetNames {
+		fmt.Fprintf(w, "    %s%s", colors.argument(presetName), strings.Repeat(" ", presetNameWidth-len(presetName)))
+		argNames := slices.Sorted(maps.Keys(rec.Presets[presetName].Arguments))
 		for _, argName := range argNames {
-			fmt.Fprintf(w, " %s%s", colors.label(argName+"="), colors.literal(profileArgumentDisplayValue(rec.Profiles[profileName].Arguments[argName])))
+			fmt.Fprintf(w, " %s%s", colors.label(argName+"="), colors.literal(argumentScalarDisplayValue(rec.Presets[presetName].Arguments[argName])))
 		}
 		fmt.Fprintln(w)
 	}
@@ -547,10 +547,6 @@ func printArgumentInfo(w io.Writer, arg recipe.Argument, colors helpColors) {
 	if arg.Max != nil {
 		fmt.Fprintf(w, " max=%s", colors.literal(argumentScalarDisplayValue(arg.Max)))
 	}
-}
-
-func profileArgumentDisplayValue(value any) string {
-	return argumentScalarDisplayValue(value)
 }
 
 func argumentScalarDisplayValue(value any) string {

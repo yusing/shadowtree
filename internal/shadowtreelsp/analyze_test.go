@@ -349,40 +349,40 @@ func TestCompletionsIncludeMergedBuiltinArgumentTables(t *testing.T) {
 	assertLabels(t, items, "pkg")
 }
 
-func TestCompletionsIncludeRecipeProfileTables(t *testing.T) {
+func TestCompletionsIncludeRecipePresetTables(t *testing.T) {
 	text := `[recipes.benchmark.arguments.connections]
 type = "int"
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 connections = 64
 
-[recipes.benchmark.profiles.
+[recipes.benchmark.presets.
 `
-	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`[recipes.benchmark.profiles.`)})
+	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: len(`[recipes.benchmark.presets.`)})
 	assertLabels(t, items, "stable")
 
-	items = completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`[recipes.benchmark.profiles.stable.`)})
+	items = completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`[recipes.benchmark.presets.stable.`)})
 	assertLabels(t, items, "arguments")
 }
 
-func TestCompletionsIncludeRecipeProfileArgumentKeys(t *testing.T) {
+func TestCompletionsIncludeRecipePresetArgumentKeys(t *testing.T) {
 	text := `[recipes.benchmark.arguments.connections]
 type = "int"
 
 [recipes.benchmark.arguments.requests]
 type = "int"
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 6, Character: 0})
 	assertLabels(t, items, "connections", "requests")
 }
 
-func TestCompletionsIncludeRecipeProfileArgumentValues(t *testing.T) {
+func TestCompletionsIncludeRecipePresetArgumentValues(t *testing.T) {
 	text := `[recipes.test.arguments.race]
 type = "bool"
 
-[recipes.test.profiles.stable.arguments]
+[recipes.test.presets.stable.arguments]
 race = ` + "\n"
 	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`race = `)})
 	assertLabels(t, items, "true", "false")

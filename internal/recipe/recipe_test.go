@@ -1234,7 +1234,7 @@ func TestResolveTypedArgumentsUsesDefaults(t *testing.T) {
 	}
 }
 
-func TestResolveTypedArgumentsAppliesProfileDefaults(t *testing.T) {
+func TestResolveTypedArgumentsAppliesPresetDefaults(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"vegeta", "-connections", "{connections}", "-requests", "{requests}", "-runs", "{runs}", "{@}"},
 		Arguments: map[string]Argument{
@@ -1242,7 +1242,7 @@ func TestResolveTypedArgumentsAppliesProfileDefaults(t *testing.T) {
 			"requests":    {Type: "int", Default: 1000},
 			"runs":        {Type: "int", Default: 1},
 		},
-		Profiles: map[string]RecipeProfile{
+		Presets: map[string]RecipePreset{
 			"stable": {
 				Arguments: map[string]any{
 					"connections": int64(64),
@@ -1253,7 +1253,7 @@ func TestResolveTypedArgumentsAppliesProfileDefaults(t *testing.T) {
 		},
 	}
 
-	got, err := Resolve("benchmark", rec, []string{"profile=stable", "runs=7", "--", "-label=stable"}, nil, nil, "", "")
+	got, err := Resolve("benchmark", rec, []string{"preset=stable", "runs=7", "--", "-label=stable"}, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1263,19 +1263,19 @@ func TestResolveTypedArgumentsAppliesProfileDefaults(t *testing.T) {
 	}
 }
 
-func TestResolveTypedArgumentsRejectsUnknownProfile(t *testing.T) {
+func TestResolveTypedArgumentsRejectsUnknownPreset(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"run", "{connections}"},
 		Arguments: map[string]Argument{
 			"connections": {Type: "int", Default: 32},
 		},
-		Profiles: map[string]RecipeProfile{
+		Presets: map[string]RecipePreset{
 			"stable": {},
 		},
 	}
 
-	_, err := Resolve("benchmark", rec, []string{"profile=smoke"}, nil, nil, "", "")
-	if err == nil || !strings.Contains(err.Error(), `unknown profile "smoke"`) {
+	_, err := Resolve("benchmark", rec, []string{"preset=smoke"}, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `unknown preset "smoke"`) {
 		t.Fatalf("Resolve error = %v", err)
 	}
 }
@@ -2202,14 +2202,14 @@ func TestResolveDurationArguments(t *testing.T) {
 	}
 }
 
-func TestResolveDurationProfileArguments(t *testing.T) {
+func TestResolveDurationPresetArguments(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"bench", "{duration}", "{timeout}"},
 		Arguments: map[string]Argument{
 			"duration": {Type: "duration", Default: "10s", Min: "1s", Max: "2m"},
 			"timeout":  {Type: "duration:seconds", Default: "30s", Min: "1s", Max: "3m"},
 		},
-		Profiles: map[string]RecipeProfile{
+		Presets: map[string]RecipePreset{
 			"stable": {
 				Arguments: map[string]any{
 					"duration": "1m",
@@ -2219,7 +2219,7 @@ func TestResolveDurationProfileArguments(t *testing.T) {
 		},
 	}
 
-	got, err := Resolve("bench", rec, []string{"profile=stable"}, nil, nil, "", "")
+	got, err := Resolve("bench", rec, []string{"preset=stable"}, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2391,12 +2391,12 @@ func TestValidateConfigErrorIncludesPath(t *testing.T) {
 	}
 }
 
-func TestValidateConfigProfileErrorsIncludeKeyAndTableTargets(t *testing.T) {
+func TestValidateConfigPresetErrorsIncludeKeyAndTableTargets(t *testing.T) {
 	err := ValidateConfig(Config{Recipes: map[string]Recipe{
 		"benchmark": {
 			Cmd:       Command{"bench"},
 			Arguments: map[string]Argument{"connections": {Type: "int"}},
-			Profiles: map[string]RecipeProfile{
+			Presets: map[string]RecipePreset{
 				"stable": {Arguments: map[string]any{"requests": 20000}},
 			},
 		},
@@ -2405,7 +2405,7 @@ func TestValidateConfigProfileErrorsIncludeKeyAndTableTargets(t *testing.T) {
 	if !errors.As(err, &pathErr) {
 		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
 	}
-	want := []string{"recipes", "benchmark", "profiles", "stable", "arguments", "requests"}
+	want := []string{"recipes", "benchmark", "presets", "stable", "arguments", "requests"}
 	if !slices.Equal(pathErr.ConfigPath(), want) {
 		t.Fatalf("path = %#v, want %#v", pathErr.ConfigPath(), want)
 	}
@@ -2416,14 +2416,14 @@ func TestValidateConfigProfileErrorsIncludeKeyAndTableTargets(t *testing.T) {
 	err = ValidateConfig(Config{Recipes: map[string]Recipe{
 		"benchmark": {
 			Cmd:       Command{"bench"},
-			Arguments: map[string]Argument{ProfileArgumentName: {Type: "string"}},
-			Profiles:  map[string]RecipeProfile{"stable": {}},
+			Arguments: map[string]Argument{PresetArgumentName: {Type: "string"}},
+			Presets:   map[string]RecipePreset{"stable": {}},
 		},
 	}})
 	if !errors.As(err, &pathErr) {
 		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
 	}
-	want = []string{"recipes", "benchmark", "arguments", ProfileArgumentName}
+	want = []string{"recipes", "benchmark", "arguments", PresetArgumentName}
 	if !slices.Equal(pathErr.ConfigPath(), want) {
 		t.Fatalf("path = %#v, want %#v", pathErr.ConfigPath(), want)
 	}
@@ -2530,8 +2530,9 @@ func TestNodeInstallCommandUsesDetectedPackageManager(t *testing.T) {
 				}
 			}
 
-			if got := NodeInstallCommand(dir, "eslint@^9"); got != tt.want {
-				t.Fatalf("NodeInstallCommand() = %q, want %q", got, tt.want)
+			pm := NodePackageManager(dir)
+			if got := NodeInstallCommandForPackageManager(pm, "eslint@^9"); got != tt.want {
+				t.Fatalf("NodeInstallCommandForPackageManager(%q) = %q, want %q", pm, got, tt.want)
 			}
 		})
 	}

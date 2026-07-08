@@ -74,6 +74,7 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 			diagnostics = append(diagnostics, diagnostic)
 		}
 	}
+	diagnostics = append(diagnostics, resolvedRecipeCommandDiagnostics(text, &resolver, diagnostics)...)
 	if len(diagnostics) == 0 {
 		if err := resolver.Err(); err != nil {
 			diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
@@ -83,6 +84,22 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 		return []lspDiagnostic{}
 	}
 	return diagnostics
+}
+
+func resolvedRecipeCommandDiagnostics(text string, resolver *diagnosticRecipeResolver, existing []lspDiagnostic) []lspDiagnostic {
+	_, recipes, ok := resolver.Loaded()
+	if !ok {
+		return nil
+	}
+	err := recipe.ValidateResolvedRecipes(recipes)
+	if err == nil {
+		return nil
+	}
+	diagnostic := configValidationDiagnostic(text, err)
+	if overlapsErrorDiagnostic(existing, diagnostic) {
+		return nil
+	}
+	return []lspDiagnostic{diagnostic}
 }
 
 func inlineStageCommandFieldDiagnostics(text string) []lspDiagnostic {
@@ -244,7 +261,7 @@ func (resolver *diagnosticRecipeResolver) Loaded() (configfile.Loaded, map[strin
 		return resolver.loaded, resolver.recipes, false
 	}
 	resolver.loaded = loaded
-	resolver.recipes, _, resolver.err = configfile.ResolveRecipes(resolver.ctx, loaded, completionBaseDir(resolver.opts), configfile.ResolveOptions{})
+	resolver.recipes, _, resolver.err = configfile.ResolveRecipes(resolver.ctx, loaded, completionBaseDir(resolver.opts), configfile.ResolveOptions{AllowMissingCmd: true})
 	resolver.ok = resolver.err == nil
 	resolver.resolved = true
 	return resolver.loaded, resolver.recipes, resolver.ok
@@ -359,13 +376,13 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 }
 
 func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
-	if len(ref.Args) == 0 || len(rec.Arguments) == 0 && len(rec.Profiles) == 0 {
+	if len(ref.Args) == 0 || len(rec.Arguments) == 0 && len(rec.Presets) == 0 {
 		return nil
 	}
 	usesVariadicArgs := recipe.RecipeUsesVariadicArgs(rec)
 	positionals := recipe.PositionalArguments(rec.Arguments)
 	nextPositional := 0
-	selectedProfile := ""
+	selectedPreset := ""
 	var diagnostics []lspDiagnostic
 	for _, argSpan := range ref.Args {
 		text := strings.TrimSpace(argSpan.Text)
@@ -397,17 +414,17 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 		} else if usesShellExpansion && shellExpansionInArgumentName(name) {
 			continue
 		}
-		if name == recipe.ProfileArgumentName && len(rec.Profiles) > 0 {
+		if name == recipe.PresetArgumentName && len(rec.Presets) > 0 {
 			if usesShellExpansion {
-				selectedProfile = value
+				selectedPreset = value
 				continue
 			}
 			value = unquoteRecipeReferenceArgumentValue(value)
-			if err := recipe.ValidateProfileSelection(rec, selectedProfile, value); err != nil {
+			if err := recipe.ValidatePresetSelection(rec, selectedPreset, value); err != nil {
 				diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
 				continue
 			}
-			selectedProfile = value
+			selectedPreset = value
 			continue
 		}
 		arg, exists := rec.Arguments[name]
@@ -736,7 +753,7 @@ func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) 
 		if !ok || !placeholderDiagnosticValueKey(table, key) {
 			continue
 		}
-		if key == "sync_out" {
+		if key == "sync_out" && recipeTable(table) {
 			listRegions, endLine := commandListStringRegions(lines, lineNo, table, key, "", func(string) bool {
 				return true
 			})
@@ -769,7 +786,7 @@ func placeholderDiagnosticValueKey(table, key string) bool {
 	if varsTable(table) {
 		return true
 	}
-	return key == "workdir" || key == "sync_out" || key == "log"
+	return key == "workdir" || key == "log" || key == "sync_out" && recipeTable(table)
 }
 
 func envTable(table string) bool {
@@ -941,7 +958,7 @@ func diagnosticCrossConfigRecipes(ctx context.Context, path string, opts complet
 	if result, ok := cache[key]; ok {
 		return result.recipes, result.opts, result.err
 	}
-	target, err := configfile.ResolveCrossConfigReference(ctx, path, opts.ConfigPath, base, configfile.ResolveOptions{})
+	target, err := configfile.ResolveCrossConfigReference(ctx, path, opts.ConfigPath, base, configfile.ResolveOptions{AllowMissingCmd: true})
 	if err != nil {
 		cache[key] = diagnosticCrossConfigResult{err: err}
 		return nil, completionOptions{}, err

@@ -8,6 +8,14 @@ Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point 
 
 Do not rely on `shadowtree` skill since you're currently working `shadowtree`.
 
+Shadowtree should follow Go's product philosophy: a small set of orthogonal
+features, one obvious way to express each idea, explicit behavior over magic,
+and flows that can be read top-to-bottom. Prefer deleting overlapping syntax or
+scope before adding new configuration. When a feature needs power, put that
+power behind existing concepts such as shell strings, typed arguments,
+placeholders, lifecycle stages, sandboxing, and inspection output instead of
+adding a parallel mini-language.
+
 On significant changes, update (where applicable) README, spec, json schema,
 agent `SKILL.md`, lsp (syntax highlighting, autocomplete and diagnostic), shell
 completion, and the reference configs under `examples/all-features*.shadowtree.toml`.
@@ -20,7 +28,9 @@ sources of truth over local copies:
 - command shape and recipe references: `recipe.ValidateCommand`,
   `recipe.IsScriptCommand`, `recipe.ParseRecipeReference`, and
   `scriptref.Parse`
-- profile support: `recipe.SupportsProfile` and `recipe.Builtins`
+- language profile support: `recipe.SupportsProfile` and `recipe.Builtins`
+- recipe preset support: `recipe.PresetArgumentName`, `recipe.RecipePreset`,
+  and `recipe.ValidatePresetSelection`
 - global flags: `internal/globalflag.All` and `internal/globalflag.Lookup`
 - config schema surfaces: `schemas/shadowtree.schema.json`, runtime, LSP
   completions/diagnostics, editor docs, agent skill docs, and the all-features
@@ -65,6 +75,6 @@ Schema changes should be checked with a representative Shadowtree TOML file thro
 
 Sandboxed recipes isolate writes by default. On Linux, namespace overlayfs runs commands at the source checkout path inside the namespace so Go test caching remains stable; writes land in the overlay upperdir unless explicitly synced. When namespace overlayfs is unavailable, Shadowtree warns and falls back to a copied workspace.
 
-Use `sync_out` or `--sync-out` when a sandboxed recipe should mirror selected paths back to the host checkout. A missing selected path is mirrored as a deletion. Use `--sync-out-all` only when the whole sandbox should be applied back. Recipes that intentionally edit the checkout directly should set `sandboxed = false`.
+Use recipe `sync_out` or CLI `--sync-out` when a sandboxed recipe should mirror selected paths back to the host checkout. A missing selected path is mirrored as a deletion. Use `--sync-out-all` only when the whole sandbox should be applied back. There is no top-level `sync_out`; copy-back must be recipe-local or invocation-local. Recipes that intentionally edit the checkout directly should set `sandboxed = false`.
 
 Do not overwrite host checkout files unless the requested recipe, explicit sync-out, or edit requires it. Prefer existing utilities and patterns, avoid unrelated refactors, and verify the specific surface changed.

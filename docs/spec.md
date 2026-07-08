@@ -1,9 +1,10 @@
 # Shadowtree Spec
 
-Shadowtree is a small development recipe runner that executes commands in a
-disposable sandbox workspace for the current project. Its primary goal is to let
-codegen, tests, builds, linting, and cleanup run without mutating the host
-checkout by default.
+Shadowtree is a small project-local development task runner for repeatable
+checks, builds, generation, cleanup, install workflows, and other project
+commands that benefit from one inspectable recipe interface. Sandboxed recipes
+run in a disposable workspace so commands do not mutate the host checkout unless
+the recipe or invocation explicitly asks for that.
 
 This document describes the behavior currently implemented by the project.
 
@@ -134,7 +135,6 @@ shared_function() {
 	echo ok
 }
 '''
-sync_out = ["path/from/project/root"]
 
 [env]
 KEY = "value"
@@ -183,8 +183,8 @@ values = "cmd arg"
 file that contains them. Included files are merged before the including file;
 later includes override earlier includes, and the including file overrides all
 included files. Includes are global mixins: top-level `profile`, `shell`,
-`shell_prelude`, `vars`, `var_commands`, `env`, `sync_out`, and `recipes` all
-participate in the effective config.
+`shell_prelude`, `vars`, `var_commands`, `env`, and `recipes` all participate
+in the effective config.
 
 When multiple files define `shell_prelude`, Shadowtree concatenates included
 preludes first, then the including file's prelude. If `a.shadowtree.toml`
@@ -579,7 +579,6 @@ Example:
 ```toml
 [recipes.build]
 help = "Build a Go package."
-cmd = "go build"
 cmd = 'go build -o "bin/{binary}" "{project}" {@}'
 sync_out = ["bin/{binary}"]
 
@@ -616,21 +615,21 @@ shadowtree 'build[project=./cmd/shadowtree,binary=shadowtree-dev]'
 
 Bracket-style syntax is preferred for shell completion, especially in fish.
 
-Recipe-local profiles can set multiple typed argument defaults. They are
+Recipe-local presets can set multiple typed argument defaults. They are
 declared under:
 
 ```toml
-[recipes.<name>.profiles.<profile-name>.arguments]
+[recipes.<name>.presets.<preset-name>.arguments]
 <arg-name> = <scalar>
 ```
 
-Profile names use identifier syntax (`[A-Za-z_][A-Za-z0-9_]*`). Profile
+Preset names use identifier syntax (`[A-Za-z_][A-Za-z0-9_]*`). Preset
 argument keys must name typed arguments declared by the same recipe, and values
 are converted and type-checked the same way as argument `default` values. A
-recipe with `profiles` reserves the `profile` recipe argument name for profile
+recipe with `presets` reserves the `preset` recipe argument name for preset
 selection.
 
-Select a profile with `profile=<profile-name>` after the recipe name:
+Select a preset with `preset=<preset-name>` after the recipe name:
 
 ```toml
 [recipes.benchmark]
@@ -648,20 +647,20 @@ default = 1000
 type = "int"
 default = 1
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 connections = 64
 requests = 20000
 runs = 5
 ```
 
 ```sh
-shadowtree benchmark profile=stable runs=3
+shadowtree benchmark preset=stable runs=3
 ```
 
 Argument values are resolved in this order: typed argument defaults, selected
-recipe profile defaults, then explicit positional or `key=value` CLI arguments.
-The `profile=<name>` selector is consumed like a typed argument and is excluded
-from `{@}`. Tokens after `--` are not profile selectors.
+recipe preset defaults, then explicit positional or `key=value` CLI arguments.
+The `preset=<name>` selector is consumed like a typed argument and is excluded
+from `{@}`. Tokens after `--` are not preset selectors.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
@@ -1128,7 +1127,7 @@ Supported completion behavior:
 - `shadowtree --profile <TAB>` completes `go` and `node`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.
-- `shadowtree benchmark profile=<TAB>` completes recipe-local profile names
+- `shadowtree benchmark preset=<TAB>` completes recipe-local preset names
   such as `stable` and `stress`.
 - `shadowtree build[<TAB>` completes bracket-style arguments such as
   `build[project=`.

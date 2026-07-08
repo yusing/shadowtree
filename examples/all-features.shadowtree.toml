@@ -10,7 +10,6 @@
 include = ["./all-features-base.shadowtree.toml"]
 profile = "go"
 shell = "bash"
-sync_out = ["out/shared-{project_slug}.txt"]
 
 [vars]
 project_slug = "shadowtree-all-features"
@@ -196,7 +195,7 @@ type = "string"
 default = "api"
 values = "@lines all-features-values.txt"
 
-[recipes.kitchen-sink.profiles.smoke.arguments]
+[recipes.kitchen-sink.presets.smoke.arguments]
 target = "api"
 retries = 1
 ratio = 0.25
@@ -204,7 +203,7 @@ enabled = true
 timeout = "1s"
 seconds = "2s"
 
-[recipes.kitchen-sink.profiles.full.arguments]
+[recipes.kitchen-sink.presets.full.arguments]
 target = "worker"
 retries = 5
 ratio = 1.0

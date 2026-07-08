@@ -49,7 +49,7 @@ const (
 	ForEachItemIndexPlaceholder = "item_index"
 	RunIDPlaceholder            = "run_id"
 	StatusPlaceholder           = "status"
-	ProfileArgumentName         = "profile"
+	PresetArgumentName          = "preset"
 )
 
 const (
@@ -127,29 +127,28 @@ type Config struct {
 	VarCommands  map[string]Command `toml:"var_commands"`
 	Shell        string             `toml:"shell"`
 	ShellPrelude string             `toml:"shell_prelude"`
-	SyncOut      []string           `toml:"sync_out"`
 	Recipes      map[string]Recipe  `toml:"recipes"`
 }
 
 type Recipe struct {
-	Help         string                   `toml:"help"`
-	Arguments    map[string]Argument      `toml:"arguments"`
-	Profiles     map[string]RecipeProfile `toml:"profiles"`
-	Requires     Requirements             `toml:"requires"`
-	Vars         map[string]string        `toml:"vars"`
-	Shell        string                   `toml:"shell"`
-	ShellPrelude string                   `toml:"shell_prelude"`
-	Sandboxed    *bool                    `toml:"sandboxed"`
-	ForEach      Command                  `toml:"for_each"`
-	Workdir      string                   `toml:"workdir"`
-	Cmd          Command                  `toml:"cmd"`
-	Pre          StageCommands            `toml:"pre"`
-	Post         StageCommands            `toml:"post"`
-	Env          map[string]string        `toml:"env"`
-	SyncOut      []string                 `toml:"sync_out"`
-	Log          string                   `toml:"log"`
-	LogStages    []string                 `toml:"log_stages"`
-	LogTee       *bool                    `toml:"log_tee"`
+	Help         string                  `toml:"help"`
+	Arguments    map[string]Argument     `toml:"arguments"`
+	Presets      map[string]RecipePreset `toml:"presets"`
+	Requires     Requirements            `toml:"requires"`
+	Vars         map[string]string       `toml:"vars"`
+	Shell        string                  `toml:"shell"`
+	ShellPrelude string                  `toml:"shell_prelude"`
+	Sandboxed    *bool                   `toml:"sandboxed"`
+	ForEach      Command                 `toml:"for_each"`
+	Workdir      string                  `toml:"workdir"`
+	Cmd          Command                 `toml:"cmd"`
+	Pre          StageCommands           `toml:"pre"`
+	Post         StageCommands           `toml:"post"`
+	Env          map[string]string       `toml:"env"`
+	SyncOut      []string                `toml:"sync_out"`
+	Log          string                  `toml:"log"`
+	LogStages    []string                `toml:"log_stages"`
+	LogTee       *bool                   `toml:"log_tee"`
 	varsExpanded bool
 }
 
@@ -173,8 +172,8 @@ type Argument struct {
 	Values   Command `toml:"values"`
 }
 
-// RecipeProfile sets argument defaults selected with profile=<name>.
-type RecipeProfile struct {
+// RecipePreset sets argument defaults selected with preset=<name>.
+type RecipePreset struct {
 	Arguments map[string]any `toml:"arguments"`
 }
 
@@ -258,9 +257,7 @@ type Placeholder struct {
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var (
-	supportedProfiles = []string{GoProfile, NodeProfile}
-)
+var supportedProfiles = []string{GoProfile, NodeProfile}
 
 type BuiltinOptions struct {
 	Dir string
@@ -478,8 +475,8 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.Arguments != nil {
 		out.Arguments = mergeArguments(out.Arguments, override.Arguments)
 	}
-	if override.Profiles != nil {
-		out.Profiles = mergeProfiles(out.Profiles, override.Profiles)
+	if override.Presets != nil {
+		out.Presets = mergePresets(out.Presets, override.Presets)
 	}
 	if !override.Requires.Empty() {
 		out.Requires = cloneRequirements(override.Requires)
@@ -810,12 +807,12 @@ func ValidateConfig(cfg Config) error {
 		if err := ValidateArguments(rec.Arguments); err != nil {
 			return prefixConfigPath(fmt.Errorf("recipe %q arguments: %w", name, err), err, "recipes", name)
 		}
-		if err := validateProfiles(rec.Arguments, rec.Profiles); err != nil {
-			wrapped := fmt.Errorf("recipe %q profiles: %w", name, err)
+		if err := validatePresets(rec.Arguments, rec.Presets); err != nil {
+			wrapped := fmt.Errorf("recipe %q presets: %w", name, err)
 			if pathErr, ok := errors.AsType[*ConfigPathError](err); ok && len(pathErr.path) > 0 && pathErr.path[0] == "arguments" {
 				return prefixConfigPath(wrapped, err, "recipes", name)
 			}
-			return prefixConfigPath(wrapped, err, "recipes", name, "profiles")
+			return prefixConfigPath(wrapped, err, "recipes", name, "presets")
 		}
 		if err := validateRequirements(rec.Requires); err != nil {
 			return prefixConfigPath(fmt.Errorf("recipe %q requires: %w", name, err), err, "recipes", name, "requires")
@@ -851,6 +848,15 @@ func ValidateConfig(cfg Config) error {
 			if err := ValidateStageCommand(command); err != nil {
 				return fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 			}
+		}
+	}
+	return nil
+}
+
+func ValidateResolvedRecipes(recipes map[string]Recipe) error {
+	for name, rec := range recipes {
+		if len(rec.Cmd) == 0 {
+			return fmt.Errorf("recipe %q has no cmd", name)
 		}
 	}
 	return nil
@@ -932,11 +938,11 @@ func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 	return values, variadicArgs, err
 }
 
-func extractRecipeProfile(rec Recipe, cliArgs []string) (string, []string, error) {
-	if len(rec.Profiles) == 0 || len(cliArgs) == 0 {
+func extractRecipePreset(rec Recipe, cliArgs []string) (string, []string, error) {
+	if len(rec.Presets) == 0 || len(cliArgs) == 0 {
 		return "", cliArgs, nil
 	}
-	profile := ""
+	preset := ""
 	selectorIndex := -1
 	passthrough := false
 	for i, token := range cliArgs {
@@ -948,16 +954,16 @@ func extractRecipeProfile(rec Recipe, cliArgs []string) (string, []string, error
 			continue
 		}
 		key, value, ok := strings.Cut(token, "=")
-		if !ok || key != ProfileArgumentName {
+		if !ok || key != PresetArgumentName {
 			continue
 		}
-		if err := ValidateProfileSelection(rec, profile, value); err != nil {
+		if err := ValidatePresetSelection(rec, preset, value); err != nil {
 			return "", nil, err
 		}
 		if selectorIndex < 0 {
 			selectorIndex = i
 		}
-		profile = value
+		preset = value
 	}
 	if selectorIndex < 0 {
 		return "", cliArgs, nil
@@ -975,30 +981,30 @@ func extractRecipeProfile(rec Recipe, cliArgs []string) (string, []string, error
 			continue
 		}
 		key, _, ok := strings.Cut(token, "=")
-		if ok && key == ProfileArgumentName {
+		if ok && key == PresetArgumentName {
 			continue
 		}
 		out = append(out, token)
 	}
-	return profile, out, nil
+	return preset, out, nil
 }
 
-// ValidateProfileSelection validates a profile=<name> selector against a recipe.
-func ValidateProfileSelection(rec Recipe, selectedProfile, value string) error {
-	if selectedProfile != "" {
-		return errors.New("profile specified multiple times")
+// ValidatePresetSelection validates a preset=<name> selector against a recipe.
+func ValidatePresetSelection(rec Recipe, selectedPreset, value string) error {
+	if selectedPreset != "" {
+		return errors.New("preset specified multiple times")
 	}
 	if value == "" {
-		return errors.New("profile must not be empty")
+		return errors.New("preset must not be empty")
 	}
-	if _, ok := rec.Profiles[value]; !ok {
-		return fmt.Errorf("unknown profile %q", value)
+	if _, ok := rec.Presets[value]; !ok {
+		return fmt.Errorf("unknown preset %q", value)
 	}
 	return nil
 }
 
 func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
-	profileName, cliArgs, err := extractRecipeProfile(rec, cliArgs)
+	presetName, cliArgs, err := extractRecipePreset(rec, cliArgs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1029,13 +1035,13 @@ func resolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string
 			values[name] = value
 		}
 	}
-	if profileName != "" {
-		profile := rec.Profiles[profileName]
-		for name, raw := range profile.Arguments {
+	if presetName != "" {
+		preset := rec.Presets[presetName]
+		for name, raw := range preset.Arguments {
 			arg := rec.Arguments[name]
 			value, err := resolvedArgumentValueString(name, arg, raw)
 			if err != nil {
-				return nil, nil, fmt.Errorf("profile %q: %w", profileName, err)
+				return nil, nil, fmt.Errorf("preset %q: %w", presetName, err)
 			}
 			values[name] = value
 		}
@@ -1168,8 +1174,8 @@ func ValidateArguments(args map[string]Argument) error {
 	return nil
 }
 
-func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfile) error {
-	if len(profiles) == 0 {
+func validatePresets(args map[string]Argument, presets map[string]RecipePreset) error {
+	if len(presets) == 0 {
 		return nil
 	}
 	ranges := map[string]argumentRange{}
@@ -1180,17 +1186,17 @@ func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfil
 		}
 		ranges[argName] = argRange
 	}
-	if _, ok := args[ProfileArgumentName]; ok {
-		return configTablePathError(fmt.Errorf("argument name %q is reserved when profiles are configured", ProfileArgumentName), "arguments", ProfileArgumentName)
+	if _, ok := args[PresetArgumentName]; ok {
+		return configTablePathError(fmt.Errorf("argument name %q is reserved when presets are configured", PresetArgumentName), "arguments", PresetArgumentName)
 	}
-	for name, profile := range profiles {
-		if err := validateIdentifierKey("profiles", name); err != nil {
+	for name, preset := range presets {
+		if err := validateIdentifierKey("presets", name); err != nil {
 			return err
 		}
-		if len(profile.Arguments) == 0 {
+		if len(preset.Arguments) == 0 {
 			continue
 		}
-		for argName, raw := range profile.Arguments {
+		for argName, raw := range preset.Arguments {
 			arg, ok := args[argName]
 			if !ok {
 				return configKeyPathError(fmt.Errorf("%s: unknown argument %q", name, argName), name, "arguments", argName)
@@ -1520,18 +1526,18 @@ func mergeArguments(base, override map[string]Argument) map[string]Argument {
 	return out
 }
 
-func mergeProfiles(base, override map[string]RecipeProfile) map[string]RecipeProfile {
+func mergePresets(base, override map[string]RecipePreset) map[string]RecipePreset {
 	out := maps.Clone(base)
 	if out == nil {
-		out = map[string]RecipeProfile{}
+		out = map[string]RecipePreset{}
 	}
-	for name, profile := range override {
-		out[name] = mergeRecipeProfile(out[name], profile)
+	for name, preset := range override {
+		out[name] = mergeRecipePreset(out[name], preset)
 	}
 	return out
 }
 
-func mergeRecipeProfile(base, override RecipeProfile) RecipeProfile {
+func mergeRecipePreset(base, override RecipePreset) RecipePreset {
 	out := base
 	if override.Arguments != nil {
 		out.Arguments = maps.Clone(base.Arguments)

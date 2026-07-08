@@ -1,9 +1,9 @@
 # Shadowtree
 
-Shadowtree runs development recipes in a disposable workspace for the current
-project. It is meant for tests, builds, linting, code generation, and cleanup
-commands that should not mutate the host checkout unless you explicitly ask for
-that.
+Shadowtree is a project-local development task runner for repeatable checks,
+builds, generation, cleanup, and install workflows. It gives teams one small
+recipe interface for commands that should be inspectable, composable,
+editor-completable, and sandboxed unless they intentionally edit the checkout.
 
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
@@ -201,9 +201,8 @@ include = ["./tools.shadowtree.toml", "./ci.shadowtree.toml"]
 Includes are mixins, not isolated imports. Included recipes appear in
 `shadowtree help`, `shadowtree recipes`, shell completion, and editor
 completion as if they were defined in the current config. Top-level `vars`,
-`var_commands`, `env`, `sync_out`, `profile`, `shell`, and `shell_prelude` also
-merge into the effective config. Included preludes run before the current
-file's prelude.
+`var_commands`, `env`, `profile`, `shell`, and `shell_prelude` also merge into
+the effective config. Included preludes run before the current file's prelude.
 
 Use shell strings for process execution:
 
@@ -418,8 +417,8 @@ literally to `{@}`, including option values that contain `=`:
 shadowtree test pkg=./internal/recipe -- --flag NAME=value
 ```
 
-Recipe-local profiles can set several argument defaults at once. Select them
-with `profile=<name>` after the recipe name; explicit CLI arguments still win:
+Recipe-local presets can set several argument defaults at once. Select them
+with `preset=<name>` after the recipe name; explicit CLI arguments still win:
 
 ```toml
 [recipes.benchmark]
@@ -437,14 +436,14 @@ default = 1000
 type = "int"
 default = 1
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 connections = 64
 requests = 20000
 runs = 5
 ```
 
 ```sh
-shadowtree benchmark profile=stable runs=3
+shadowtree benchmark preset=stable runs=3
 ```
 
 ## Built-In Profiles

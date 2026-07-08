@@ -1,5 +1,5 @@
 # Open this file in your editor to test Shadowtree LSP behavior for recipe-local
-# profiles. The filename intentionally ends with .shadowtree.toml so editor
+# presets. The filename intentionally ends with .shadowtree.toml so editor
 # schema bindings recognize it as a Shadowtree config.
 
 [recipes.benchmark]
@@ -29,32 +29,32 @@ help = "HTTP/2 streams per connection."
 type = "int"
 default = 1
 
-[recipes.benchmark.profiles.smoke.arguments]
+[recipes.benchmark.presets.smoke.arguments]
 connections = 8
 requests = 500
 runs = 1
 
-[recipes.benchmark.profiles.stable.arguments]
+[recipes.benchmark.presets.stable.arguments]
 connections = 64
 requests = 20000
 runs = 5
 
-[recipes.benchmark.profiles.stress.arguments]
+[recipes.benchmark.presets.stress.arguments]
 connections = 100
 streams = 100
 requests = 50000
 
 [recipes.check-benchmark]
-help = "Exercise profile completion and diagnostics in recipe references."
-cmd = "@benchmark[profile=stable,runs=2]"
+help = "Exercise preset completion and diagnostics in recipe references."
+cmd = "@benchmark[preset=stable,runs=2]"
 
 # LSP checks to try:
-# - In the command above, put the cursor after profile= and request completion.
+# - In the command above, put the cursor after preset= and request completion.
 #   You should see smoke, stable, and stress.
 # - Add a new table header:
-#     [recipes.benchmark.profiles.<TAB>
+#     [recipes.benchmark.presets.<TAB>
 #   You should see smoke, stable, and stress.
-# - Add a new key inside a profile arguments table and request completion.
+# - Add a new key inside a preset arguments table and request completion.
 #   You should see connections, requests, runs, and streams.
-# - Uncomment this line to verify diagnostics for unknown profiles:
-# cmd = "@benchmark[profile=missing]"
+# - Uncomment this line to verify diagnostics for unknown presets:
+# cmd = "@benchmark[preset=missing]"

@@ -31,9 +31,6 @@
       "$ref": "#/definitions/shellScript",
       "description": "Shell code prepended to every script command after placeholder expansion. In sh/bash, a literal command-position @recipe invokes that recipe directly."
     },
-    "sync_out": {
-      "$ref": "#/definitions/syncOut"
-    },
     "env": {
       "$ref": "#/definitions/env"
     },
@@ -98,8 +95,8 @@
         "arguments": {
           "$ref": "#/definitions/arguments"
         },
-        "profiles": {
-          "$ref": "#/definitions/recipeProfiles"
+        "presets": {
+          "$ref": "#/definitions/recipePresets"
         },
         "requires": {
           "$ref": "#/definitions/requirements"
@@ -226,31 +223,31 @@
         }
       }
     },
-    "recipeProfiles": {
+    "recipePresets": {
       "type": "object",
-      "description": "Recipe-local profiles selected with profile=<name>. A profile sets typed argument defaults before explicit CLI arguments are applied.",
+      "description": "Recipe-local presets selected with preset=<name>. A preset sets typed argument defaults before explicit CLI arguments are applied.",
       "additionalProperties": false,
       "patternProperties": {
         "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
-          "$ref": "#/definitions/recipeProfile"
+          "$ref": "#/definitions/recipePreset"
         }
       }
     },
-    "recipeProfile": {
+    "recipePreset": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "arguments": {
-          "$ref": "#/definitions/profileArguments"
+          "$ref": "#/definitions/presetArguments"
         }
       },
       "x-taplo": {
         "initKeys": ["arguments"]
       }
     },
-    "profileArguments": {
+    "presetArguments": {
       "type": "object",
-      "description": "Argument defaults applied by this recipe profile. Keys must name arguments declared under the recipe's arguments table.",
+      "description": "Argument defaults applied by this recipe preset. Keys must name arguments declared under the recipe's arguments table.",
       "additionalProperties": false,
       "patternProperties": {
         "^(?!run_id$)[^=()\\[\\], \\t\\r\\n]+$": {

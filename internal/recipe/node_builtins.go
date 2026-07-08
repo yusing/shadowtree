@@ -117,12 +117,6 @@ func NodeInstallCommandForPackageManager(pm, pkg string) string {
 	}
 }
 
-// NodeInstallCommand returns package-manager-specific guidance for installing a
-// recipe-required Node CLI package from dir.
-func NodeInstallCommand(dir, pkg string) string {
-	return NodeInstallCommandForPackageManager(NodePackageManager(dir), pkg)
-}
-
 func nodePackageManagerName(packageManager string) (string, bool) {
 	name, _, _ := strings.Cut(strings.ToLower(packageManager), "@")
 	switch name {

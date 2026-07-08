@@ -7,6 +7,12 @@ description: Use and configure the Shadowtree development recipe runner. Use whe
 
 Use Shadowtree to run project tasks through named recipes while keeping command writes isolated by default. Read live state first; do not guess recipe names, resolved commands, profile, sandbox mode, or sync-out.
 
+Design bias: keep Shadowtree Go-like. Prefer a small set of orthogonal features,
+one obvious way to express each idea, explicit behavior over magic, and flows
+that read top-to-bottom. Extend existing concepts such as shell strings, typed
+arguments, placeholders, lifecycle stages, sandboxing, and inspection output
+before adding a new mini-language or parallel config shape.
+
 ## Evidence First
 
 Inspect before acting:
@@ -139,7 +145,6 @@ Use these fields at config root:
 - `profile`: `go` or `node`.
 - `shell`: shell for script commands; defaults to `sh`.
 - `shell_prelude`: shell code prepended to every script command.
-- `sync_out`: sandboxed paths copied back after successful runs for every recipe unless unsandboxed.
 - `env`: environment variables for recipe commands and top-level `var_commands`.
 - `vars`: static placeholders usable as `{NAME}`.
 - `var_commands`: commands evaluated from the source checkout to produce placeholder values.
@@ -148,9 +153,9 @@ Use these fields at config root:
 Includes are global mixins, not isolated imports. Later includes override
 earlier includes, and the including file overrides all included files. Included
 recipes appear in help, `recipes`, shell completion, and LSP completion.
-Top-level `vars`, `var_commands`, `env`, `sync_out`, `profile`, `shell`, and
-`shell_prelude` also merge into the effective config. Included preludes run
-before the including file's prelude.
+Top-level `vars`, `var_commands`, `env`, `profile`, `shell`, and `shell_prelude`
+also merge into the effective config. Included preludes run before the including
+file's prelude.
 
 Valid `vars` and `var_commands` keys match `[A-Za-z_][A-Za-z0-9_]*`.
 
@@ -177,7 +182,7 @@ Use these fields under `[recipes.<name>]`:
 - `shell`: recipe shell override.
 - `shell_prelude`: recipe shell code appended after the top-level prelude.
 - `arguments`: typed argument definitions.
-- `profiles`: recipe-local argument default sets selected by `profile=<name>`.
+- `presets`: recipe-local argument default sets selected by `preset=<name>`.
 
 Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `retry`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
@@ -374,14 +379,14 @@ shadowtree 'build[project=./cmd/tool,binary=tool-dev]'
 Resolution rules:
 
 - With no typed `arguments`, recipe CLI args are accepted only when `cmd` includes `{@}`.
-- With typed `arguments`, defaults load first; selected recipe profile defaults apply next; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
-- Recipe profiles live under `[recipes.<name>.profiles.<profile>.arguments]`. Select with `profile=<profile>` after the recipe name. Profile argument keys must match typed arguments, values use the same scalar conversion and validation as `default`, and explicit CLI args override profile values.
+- With typed `arguments`, defaults load first; selected recipe preset defaults apply next; `key=value` args set named values; positional tokens fill arguments by increasing `position`; leftover args are forwarded only when `cmd` includes `{@}`.
+- Recipe presets live under `[recipes.<name>.presets.<preset>.arguments]`. Select with `preset=<preset>` after the recipe name. Preset argument keys must match typed arguments, values use the same scalar conversion and validation as `default`, and explicit CLI args override preset values.
 - Unknown named args, unexpected positional args, missing required args, and invalid typed values fail.
 - Use `--` after typed recipe arguments to pass following argv literally to `{@}`, especially option values that contain `=` such as `-- --cookie NAME=value`.
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - `duration` accepts Go duration strings such as `10s`, `1500ms`, and `1m30s`; `duration:seconds` accepts exact whole-second Go durations and expands them as base-10 integer seconds.
-- `min` and `max` validate defaults, profile argument values, explicit CLI args, and recipe-reference args for rangeable argument types.
+- `min` and `max` validate defaults, preset argument values, explicit CLI args, and recipe-reference args for rangeable argument types.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
 - Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, `@go-packages`, and `@go-main-packages` for editor-safe completions.
 
@@ -410,7 +415,7 @@ sync_out = ["internal/generated"]
 Rules:
 
 - `--sync-out` may repeat or contain comma-separated paths.
-- Top-level `sync_out`, recipe `sync_out`, and command-level `--sync-out` combine for sandboxed runs.
+- Recipe `sync_out` and command-level `--sync-out` combine for sandboxed runs.
 - Missing selected paths in the sandbox are mirrored as deletions on the host.
 - Sync-out paths must stay under the workspace.
 - Prefer narrow paths over `--sync-out-all`.
