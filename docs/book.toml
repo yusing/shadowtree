@@ -1,0 +1,18 @@
+[book]
+title = "Shadowtree"
+description = "Shadowtree user guide and reference"
+authors = ["yusing"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/yusing/shadowtree"
+edit-url-template = "https://github.com/yusing/shadowtree/edit/main/docs/{path}"
+site-url = "/shadowtree/"
+
+[output.html.search]
+enable = true

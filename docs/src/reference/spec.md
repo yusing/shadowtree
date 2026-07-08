@@ -789,6 +789,7 @@ cmd = 'go test "{pkg}" {@}'
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
+position = 1
 required = true
 values = "@go-packages"
 ```

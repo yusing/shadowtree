@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point lives in `cmd/shadowtree/`. Internal packages live under `internal/`: `recipe` resolves configured recipes and Go profile defaults, `runner` manages sandboxed execution with Linux namespace overlayfs or copied-workspace fallback plus sync-out, `configfile` loads project config, `completion` emits shell completion, `shadowtreelsp` implements editor completion/semantic tokens, and `detect` handles profile detection. Design notes and behavioral spec live in `docs/spec.md`. Editor integrations live under `editors/`: `zed-shadowtree` is a Zed extension with a nested Rust crate and Tree-sitter queries, and `vscode-shadowtree` is a VS Code schema-binding manifest. The shared Shadowtree config schema lives at `schemas/shadowtree.schema.json`. Build outputs go in `bin/`; editor build outputs such as `editors/zed-shadowtree/target/` should stay untracked. Agent skill in `.agents/skills/shadowtree`
+Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point lives in `cmd/shadowtree/`. Internal packages live under `internal/`: `recipe` resolves configured recipes and Go profile defaults, `runner` manages sandboxed execution with Linux namespace overlayfs or copied-workspace fallback plus sync-out, `configfile` loads project config, `completion` emits shell completion, `shadowtreelsp` implements editor completion/semantic tokens, and `detect` handles profile detection. User-facing mdBook docs live in `docs/src/`; the behavioral spec lives at `docs/src/reference/spec.md`. Editor integrations live under `editors/`: `zed-shadowtree` is a Zed extension with a nested Rust crate and Tree-sitter queries, and `vscode-shadowtree` is a VS Code schema-binding manifest. The shared Shadowtree config schema lives at `schemas/shadowtree.schema.json`. Build outputs go in `bin/`; editor build outputs such as `editors/zed-shadowtree/target/` should stay untracked. Agent skill in `.agents/skills/shadowtree`
 
 ## Operating Principles
 
@@ -16,9 +16,10 @@ power behind existing concepts such as shell strings, typed arguments,
 placeholders, lifecycle stages, sandboxing, and inspection output instead of
 adding a parallel mini-language.
 
-On significant changes, update (where applicable) README, spec, json schema,
-agent `SKILL.md`, lsp (syntax highlighting, autocomplete and diagnostic), shell
-completion, and the reference configs under `examples/all-features*.shadowtree.toml`.
+On significant changes, update (where applicable) README, `docs/src`, spec,
+json schema, agent `SKILL.md`, lsp (syntax highlighting, autocomplete and
+diagnostic), shell completion, Pages workflow, and the reference configs under
+`examples/all-features*.shadowtree.toml`.
 
 Follow global duplication-control rules. In this repo, prefer these existing
 sources of truth over local copies:
@@ -33,8 +34,8 @@ sources of truth over local copies:
   and `recipe.ValidatePresetSelection`
 - global flags: `internal/globalflag.All` and `internal/globalflag.Lookup`
 - config schema surfaces: `schemas/shadowtree.schema.json`, runtime, LSP
-  completions/diagnostics, editor docs, agent skill docs, and the all-features
-  example configs must stay aligned
+  completions/diagnostics, mdBook/editor docs, agent skill docs, and the
+  all-features example configs must stay aligned
 
 ## Build, Test, and Development Commands
 

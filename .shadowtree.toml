@@ -18,6 +18,19 @@ default = "./cmd/shadowtree"
 [recipes.check]
 post = ["command -v deadcode >/dev/null && deadcode ./..."]
 
+[recipes.ci-test]
+help = "Run the Pages workflow build job locally with act."
+sandboxed = false
+cmd = '''
+ACT=true act push \
+  -W .github/workflows/pages.yml \
+  -j build \
+  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest
+'''
+
+[recipes.ci-test.requires]
+commands = ["act", "docker"]
+
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
 sandboxed = false
