@@ -438,6 +438,78 @@ commandz = ["go"]
 	assertDiagnosticRange(t, diagnostics[0], 4, 0, len("commandz"))
 }
 
+func TestDocumentDiagnosticsAcceptInlineStageCommandFields(t *testing.T) {
+	for _, stage := range []string{"pre", "post"} {
+		for _, field := range []string{"cmd", "timeout"} {
+			t.Run(stage+"."+field, func(t *testing.T) {
+				inline := `{ cmd = "printf stage" }`
+				if field == "timeout" {
+					inline = `{ cmd = "printf stage", timeout = "5s" }`
+				}
+				diagnostics := documentDiagnostics(t.Context(), `[recipes.inherited-merge]
+cmd = "printf merged"
+
+[recipes.kitchen-sink]
+`+stage+` = [`+inline+`]
+cmd = "true"
+`)
+				if len(diagnostics) != 0 {
+					t.Fatalf("diagnostics = %#v, want none", diagnostics)
+				}
+			})
+		}
+	}
+}
+
+func TestDocumentDiagnosticsRangeUnknownInlineStageCommandField(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		message string
+		line    int
+		start   int
+		end     int
+	}{
+		{
+			name: "array",
+			text: `[recipes.inherited-merge]
+cmd = "printf merged"
+
+[recipes.kitchen-sink]
+post = [
+  { cmd = "printf post", unknown = true },
+]
+cmd = "true"
+`,
+			message: "unknown field recipes.kitchen-sink.post.unknown",
+			line:    5,
+			start:   len(`  { cmd = "printf post", `),
+			end:     len(`  { cmd = "printf post", unknown`),
+		},
+		{
+			name: "single table",
+			text: `[recipes.inherited-merge]
+cmd = "printf merged"
+
+[recipes.kitchen-sink]
+pre = { cmd = "printf pre", unknown = true }
+cmd = "true"
+`,
+			message: "unknown field recipes.kitchen-sink.pre.unknown",
+			line:    4,
+			start:   len(`pre = { cmd = "printf pre", `),
+			end:     len(`pre = { cmd = "printf pre", unknown`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			assertOneDiagnostic(t, diagnostics, tc.message)
+			assertDiagnosticRange(t, diagnostics[0], tc.line, tc.start, tc.end)
+		})
+	}
+}
+
 func TestDocumentDiagnosticsRejectInvalidRequirementConfig(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = "go build"

@@ -94,6 +94,12 @@ var stageCommandKeys = []completion{
 	{Label: "timeout", InsertText: `timeout = "30s"`, Kind: completionKindKeyword, Detail: "Stage timeout"},
 }
 
+func stageCommandKey(label string) bool {
+	return slices.ContainsFunc(stageCommandKeys, func(item completion) bool {
+		return item.Label == label
+	})
+}
+
 var requirementKeys = []completion{
 	{Label: "commands", InsertText: "commands = []", Kind: completionKindKeyword, Detail: "Required executable names"},
 	{Label: "optional_commands", InsertText: "optional_commands = []", Kind: completionKindKeyword, Detail: "Optional executable names"},
@@ -369,6 +375,9 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	}
 	if inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos) {
 		return nil
+	}
+	if items, ok := inlineStageCommandKeyCompletions(analysis.CurrentTable, prefix); ok {
+		return items
 	}
 	if key, ok := keyBeforeValue(prefix); ok {
 		if items, ok := workdirValueCompletions(ctx, analysis.CurrentTable, key, prefix, opts); ok {
@@ -1289,6 +1298,71 @@ func keyCompletions(analysis documentAnalysis, table string, opts completionOpti
 		}
 	}
 	return nil
+}
+
+func inlineStageCommandKeyCompletions(table, prefix string) ([]completion, bool) {
+	if !recipeTable(table) {
+		return nil, false
+	}
+	key, rest, ok := inlineStageCommandValue(prefix)
+	if !ok || key != "pre" && key != "post" {
+		return nil, false
+	}
+	if !inlineTableKeyPosition(rest) {
+		return nil, false
+	}
+	return stageCommandKeys, true
+}
+
+func inlineStageCommandValue(prefix string) (string, string, bool) {
+	key, ok := keyBeforeValue(prefix)
+	if !ok {
+		return "", "", false
+	}
+	_, after, _ := strings.Cut(prefix, "=")
+	return key, after, true
+}
+
+func inlineTableKeyPosition(value string) bool {
+	depth := 0
+	segmentHasEquals := false
+	quote := byte(0)
+	escape := false
+	for i := range len(value) {
+		ch := value[i]
+		if quote != 0 {
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				quote = 0
+			}
+			escape = false
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '#':
+			return depth > 0 && !segmentHasEquals
+		case '{':
+			depth++
+			segmentHasEquals = false
+		case '}':
+			depth = max(depth-1, 0)
+			segmentHasEquals = false
+		case ',':
+			if depth > 0 {
+				segmentHasEquals = false
+			}
+		case '=':
+			if depth > 0 {
+				segmentHasEquals = true
+			}
+		}
+	}
+	return depth > 0 && quote == 0 && !segmentHasEquals
 }
 
 func recipeProfileArgumentKeyCompletions(analysis documentAnalysis, recipeName string, opts completionOptions) []completion {

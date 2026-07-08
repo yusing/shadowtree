@@ -67,6 +67,7 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	diagnostics := append(positionDiagnostics(text), commandReferenceDiagnostics(ctx, text, &resolver)...)
 	diagnostics = append(diagnostics, placeholderDiagnostics(text, cfg, &resolver)...)
 	diagnostics = append(diagnostics, undecodedDiagnostics(text, md)...)
+	diagnostics = append(diagnostics, inlineStageCommandFieldDiagnostics(text)...)
 	if err := recipe.ValidateConfig(cfg); err != nil {
 		diagnostic := configValidationDiagnostic(text, err)
 		if !overlapsErrorDiagnostic(diagnostics, diagnostic) {
@@ -82,6 +83,132 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 		return []lspDiagnostic{}
 	}
 	return diagnostics
+}
+
+func inlineStageCommandFieldDiagnostics(text string) []lspDiagnostic {
+	lines := strings.Split(text, "\n")
+	table := ""
+	var diagnostics []lspDiagnostic
+	for lineNo, line := range lines {
+		if parsed, ok := completeTableHeader(line); ok {
+			table = parsed
+			continue
+		}
+		if !recipeTable(table) {
+			continue
+		}
+		stage, ok := pairKey(line)
+		if !ok || stage != "pre" && stage != "post" {
+			continue
+		}
+		valueStart := inlineStageValueStart(line)
+		if valueStart < 0 || strings.TrimLeft(line[valueStart:], " \t") == "" {
+			continue
+		}
+		trimmedStart := valueStart + len(line[valueStart:]) - len(strings.TrimLeft(line[valueStart:], " \t"))
+		if trimmedStart >= len(line) || line[trimmedStart] != '{' {
+			continue
+		}
+		recipeName := currentRecipe(table)
+		diagnostics = append(diagnostics, inlineStageCommandUnknownFields(line, lineNo, trimmedStart, recipeName, stage)...)
+	}
+	return diagnostics
+}
+
+func inlineStageValueStart(line string) int {
+	equals := tomlEqualsIndex(line)
+	if equals < 0 {
+		return -1
+	}
+	return equals + 1
+}
+
+func inlineStageCommandUnknownFields(line string, lineNo, start int, recipeName, stage string) []lspDiagnostic {
+	var diagnostics []lspDiagnostic
+	depth := 0
+	quote := byte(0)
+	escape := false
+	expectKey := false
+	for i := start; i < len(line); i++ {
+		ch := line[i]
+		if quote != 0 {
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				quote = 0
+			}
+			escape = false
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '#':
+			return diagnostics
+		case '{':
+			depth++
+			expectKey = depth == 1
+		case '}':
+			depth = max(depth-1, 0)
+			expectKey = false
+		case ',':
+			expectKey = depth == 1
+		default:
+			if !expectKey || depth != 1 || ch == ' ' || ch == '\t' {
+				continue
+			}
+			key, keyStart, keyEnd, ok := inlineStageCommandFieldKey(line, i)
+			if !ok {
+				expectKey = false
+				continue
+			}
+			if !stageCommandKey(key) {
+				message := "unknown field recipes." + recipeName + "." + stage + "." + key
+				diagnostics = append(diagnostics, lspDiagnostic{
+					Range:    lspRange(line, lineNo, keyStart, keyEnd),
+					Severity: diagnosticSeverityError,
+					Source:   "shadowtree",
+					Message:  message,
+				})
+			}
+			i = keyEnd - 1
+			expectKey = false
+		}
+	}
+	return diagnostics
+}
+
+func inlineStageCommandFieldKey(line string, start int) (string, int, int, bool) {
+	keyStart := start
+	var key string
+	var rest string
+	switch line[start] {
+	case '"', '\'':
+		value, after, ok := cutQuotedTOMLKey(line[start:])
+		if !ok {
+			return "", 0, 0, false
+		}
+		key = value
+		keyStart = start + 1
+		rest = after
+	default:
+		end := start
+		for end < len(line) && isBareKeyByte(line[end]) {
+			end++
+		}
+		if end == start {
+			return "", 0, 0, false
+		}
+		key = line[start:end]
+		rest = line[end:]
+	}
+	keyEnd := keyStart + len(key)
+	if !inlineKeyHasEquals(rest) {
+		return "", 0, 0, false
+	}
+	return key, keyStart, keyEnd, true
 }
 
 type diagnosticRecipeResolver struct {
@@ -1250,7 +1377,7 @@ func positionDiagnostics(text string) []lspDiagnostic {
 }
 
 func undecodedDiagnostics(text string, md toml.MetaData) []lspDiagnostic {
-	var diagnostics []lspDiagnostic
+	var keys []toml.Key
 	for _, key := range md.Undecoded() {
 		if len(key) == 0 {
 			continue
@@ -1258,31 +1385,164 @@ func undecodedDiagnostics(text string, md toml.MetaData) []lspDiagnostic {
 		if len(key) == 1 && key[0] == "$schema" {
 			continue
 		}
-		keyText := key[len(key)-1]
-		diagnostics = append(diagnostics, keyDiagnostic(text, keyText, "unknown field "+key.String()))
+		if knownUndecodedStageCommandField(key) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	index := newTOMLRangeIndex(text)
+	lines := strings.Split(text, "\n")
+	diagnostics := make([]lspDiagnostic, 0, len(keys))
+	for _, key := range keys {
+		message := "unknown field " + key.String()
+		if field, ok := index.fields[tomlPathKey([]string(key))]; ok {
+			diagnostics = append(diagnostics, field.diagnostic(field.key, message))
+			continue
+		}
+		diagnostics = append(diagnostics, keyPathDiagnostic(lines, index, key, message))
 	}
 	return diagnostics
 }
 
-func keyDiagnostic(text, key, message string) lspDiagnostic {
-	lines := strings.Split(text, "\n")
-	for lineNo, line := range lines {
-		pair, ok := pairKey(line)
-		if !ok || pair != key {
-			continue
-		}
-		start := strings.Index(line, key)
-		if start < 0 {
-			break
-		}
-		return lspDiagnostic{
-			Range:    lspRange(line, lineNo, start, start+len(key)),
-			Severity: diagnosticSeverityError,
-			Source:   "shadowtree",
-			Message:  message,
+func knownUndecodedStageCommandField(key toml.Key) bool {
+	return len(key) == 4 &&
+		key[0] == "recipes" &&
+		(key[2] == "pre" || key[2] == "post") &&
+		stageCommandKey(key[3])
+}
+
+func keyPathDiagnostic(lines []string, index tomlRangeIndex, key toml.Key, message string) lspDiagnostic {
+	keyParts := []string(key)
+	keyText := keyParts[len(keyParts)-1]
+	if len(keyParts) >= 2 {
+		containerPath := keyParts[:len(keyParts)-1]
+		if field, ok := index.fields[tomlPathKey(containerPath)]; ok {
+			if targetLine, start, end, ok := inlineKeyDiagnosticSpan(lines, field.key.line, keyText); ok {
+				return lspDiagnostic{
+					Range:    lspRange(lineAt(lines, targetLine), targetLine, start, end),
+					Severity: diagnosticSeverityError,
+					Source:   "shadowtree",
+					Message:  message,
+				}
+			}
 		}
 	}
-	return documentDiagnostic(text, message)
+	for lineNo, line := range lines {
+		if pair, ok := pairKey(line); ok && pair == keyText {
+			return keyDiagnosticAt(line, lineNo, keyText, message)
+		}
+	}
+	return documentDiagnostic(strings.Join(lines, "\n"), message)
+}
+
+func keyDiagnosticAt(line string, lineNo int, key, message string) lspDiagnostic {
+	start := strings.Index(line, key)
+	if start < 0 {
+		return documentDiagnostic(line, message)
+	}
+	return lspDiagnostic{
+		Range:    lspRange(line, lineNo, start, start+len(key)),
+		Severity: diagnosticSeverityError,
+		Source:   "shadowtree",
+		Message:  message,
+	}
+}
+
+func inlineKeyDiagnosticSpan(lines []string, startLine int, key string) (int, int, int, bool) {
+	for lineNo := startLine; lineNo < len(lines); lineNo++ {
+		line := lines[lineNo]
+		start := 0
+		if lineNo == startLine {
+			if equals := strings.IndexByte(line, '='); equals >= 0 {
+				start = equals + 1
+			}
+		} else {
+			if _, ok := completeTableHeader(line); ok {
+				break
+			}
+			if topLevelPairLine(line) {
+				break
+			}
+		}
+		if keyStart, keyEnd, ok := inlineKeySpan(line[start:], key); ok {
+			return lineNo, start + keyStart, start + keyEnd, true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+func topLevelPairLine(line string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed[0] {
+	case '{', '}', '[', ']', ',':
+		return false
+	default:
+		_, ok := pairKey(line)
+		return ok
+	}
+}
+
+func inlineKeySpan(line, key string) (int, int, bool) {
+	quote := byte(0)
+	escape := false
+	for i := range len(line) {
+		ch := line[i]
+		if quote != 0 {
+			if quote == '"' && ch == '\\' && !escape {
+				escape = true
+				continue
+			}
+			if ch == quote && !escape {
+				quote = 0
+			}
+			escape = false
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			value, rest, ok := cutQuotedTOMLKey(line[i:])
+			if !ok {
+				return 0, 0, false
+			}
+			if value == key && inlineKeyHasEquals(rest) {
+				return i + 1, i + 1 + len(key), true
+			}
+			quote = ch
+		case '#':
+			return 0, 0, false
+		default:
+			if inlineBareKeyAt(line, i, key) {
+				return i, i + len(key), true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func inlineBareKeyAt(line string, start int, key string) bool {
+	if start > 0 && isBareKeyByte(line[start-1]) {
+		return false
+	}
+	if !strings.HasPrefix(line[start:], key) {
+		return false
+	}
+	end := start + len(key)
+	if end < len(line) && isBareKeyByte(line[end]) {
+		return false
+	}
+	return inlineKeyHasEquals(line[end:])
+}
+
+func inlineKeyHasEquals(rest string) bool {
+	rest = strings.TrimLeft(rest, " \t")
+	return strings.HasPrefix(rest, "=")
 }
 
 func argumentTable(table string) bool {

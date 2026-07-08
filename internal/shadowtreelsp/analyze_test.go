@@ -51,6 +51,87 @@ func TestCompletionsIncludeKeysForStructuredStageTable(t *testing.T) {
 	assertLabels(t, items, "cmd", "timeout")
 }
 
+func TestCompletionsIncludeKeysForInlineStageCommand(t *testing.T) {
+	cases := []struct {
+		stage string
+		name  string
+		line  string
+		label string
+		start int
+		end   int
+	}{
+		{
+			stage: "pre",
+			name:  "cmd",
+			line:  `{stage} = { c`,
+			label: "cmd",
+			start: len(`pre = { `),
+			end:   len(`pre = { c`),
+		},
+		{
+			stage: "pre",
+			name:  "timeout",
+			line:  `{stage} = { cmd = "printf hi", t`,
+			label: "timeout",
+			start: len(`pre = { cmd = "printf hi", `),
+			end:   len(`pre = { cmd = "printf hi", t`),
+		},
+		{
+			stage: "post",
+			name:  "cmd",
+			line:  `{stage} = { c`,
+			label: "cmd",
+			start: len(`post = { `),
+			end:   len(`post = { c`),
+		},
+		{
+			stage: "post",
+			name:  "timeout",
+			line:  `{stage} = { cmd = "printf hi", t`,
+			label: "timeout",
+			start: len(`post = { cmd = "printf hi", `),
+			end:   len(`post = { cmd = "printf hi", t`),
+		},
+		{
+			stage: "pre",
+			name:  "placeholder braces",
+			line:  `{stage} = { cmd = "echo {pkg}", t`,
+			label: "timeout",
+			start: len(`pre = { cmd = "echo {pkg}", `),
+			end:   len(`pre = { cmd = "echo {pkg}", t`),
+		},
+		{
+			stage: "post",
+			name:  "array placeholder braces",
+			line:  `{stage} = [{ cmd = "echo {pkg}", t`,
+			label: "timeout",
+			start: len(`post = [{ cmd = "echo {pkg}", `),
+			end:   len(`post = [{ cmd = "echo {pkg}", t`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.stage+"."+tc.name, func(t *testing.T) {
+			line := strings.ReplaceAll(tc.line, "{stage}", tc.stage)
+			text := `[recipes.build]
+` + line
+			pos := lspPosition{Line: 1, Character: len(line)}
+			items := completionsAt(t.Context(), text, pos)
+			assertLabels(t, items, "cmd", "timeout")
+
+			result := completionResult(t.Context(), text, pos)
+			edit := completionTextEdit(t, result, tc.label)
+			assertEditRange(t, edit, tc.start, tc.end)
+		})
+	}
+}
+
+func TestCompletionsExcludeInlineStageKeysInsideCommandString(t *testing.T) {
+	text := `[recipes.build]
+pre = { cmd = "printf `
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`pre = { cmd = "printf `)})
+	assertNoLabels(t, items, "cmd", "timeout")
+}
+
 func TestCompletionsExcludeVariadicPlaceholderInStructuredStageTable(t *testing.T) {
 	text := `[recipes.build.pre]
 cmd = "{"
