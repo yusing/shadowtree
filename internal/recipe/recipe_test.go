@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1034,6 +1035,16 @@ func TestMergeRecipeKeepsBaseHelpUnlessOverridden(t *testing.T) {
 	}
 }
 
+func TestMergeArgumentOverridesRanges(t *testing.T) {
+	got := MergeArgument(
+		Argument{Type: "int", Min: 1, Max: 8, Default: 4},
+		Argument{Min: 2, Max: 16},
+	)
+	if got.Min != 2 || got.Max != 16 || got.Default != 4 {
+		t.Fatalf("argument = %#v", got)
+	}
+}
+
 func TestResolveTypedArgumentsByNameAndPosition(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"go", "build", "-o", "bin/{binary}", "{project}", "{@}"},
@@ -1887,6 +1898,60 @@ func TestResolveTypedArgumentsValidatesTypes(t *testing.T) {
 	}
 }
 
+func TestResolveArgumentRanges(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"bench", "{workers}", "{ratio}", "{duration}", "{timeout}"},
+		Arguments: map[string]Argument{
+			"workers":  {Type: "int", Min: 1, Max: 8, Default: 4},
+			"ratio":    {Type: "float", Min: 0.25, Max: 2.5, Default: 1.5},
+			"duration": {Type: "duration", Min: "100ms", Max: "10s", Default: "1s"},
+			"timeout":  {Type: "duration:seconds", Min: "1s", Max: "1m", Default: "30s"},
+		},
+	}
+
+	got, err := Resolve("bench", rec, []string{
+		"workers=8",
+		"ratio=0.5",
+		"duration=1500ms",
+		"timeout=45s",
+	}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"bench", "8", "0.5", "1500ms", "45"}) {
+		t.Fatalf("Main = %#v", got.Main)
+	}
+}
+
+func TestResolveArgumentRangesRejectOutOfRangeValues(t *testing.T) {
+	cases := []struct {
+		name string
+		arg  Argument
+		raw  string
+		want string
+	}{
+		{name: "int below min", arg: Argument{Type: "int", Min: 1}, raw: "0", want: `workers: want >= 1, got "0"`},
+		{name: "int above max", arg: Argument{Type: "int", Max: 8}, raw: "9", want: `workers: want <= 8, got "9"`},
+		{name: "float below min", arg: Argument{Type: "float", Min: 0.25}, raw: "0.1", want: `workers: want >= 0.25, got "0.1"`},
+		{name: "float above max", arg: Argument{Type: "float", Max: 2.5}, raw: "3", want: `workers: want <= 2.5, got "3"`},
+		{name: "float nan", arg: Argument{Type: "float", Min: 0, Max: 1}, raw: "NaN", want: `workers: want float, got "NaN"`},
+		{name: "duration below min", arg: Argument{Type: "duration", Min: "1s"}, raw: "500ms", want: `workers: want >= 1s, got "500ms"`},
+		{name: "duration above max", arg: Argument{Type: "duration:seconds", Max: "1m"}, raw: "90s", want: `workers: want <= 1m, got "90s"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := Recipe{
+				Cmd:       Command{"bench", "{workers}"},
+				Arguments: map[string]Argument{"workers": tc.arg},
+			}
+			_, err := Resolve("bench", rec, []string{"workers=" + tc.raw}, nil, nil, "", "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Resolve() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveDurationArguments(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"bench", "-duration", "{duration}", "-timeout", "{timeout}", "{@}"},
@@ -1917,8 +1982,8 @@ func TestResolveDurationProfileArguments(t *testing.T) {
 	rec := Recipe{
 		Cmd: Command{"bench", "{duration}", "{timeout}"},
 		Arguments: map[string]Argument{
-			"duration": {Type: "duration", Default: "10s"},
-			"timeout":  {Type: "duration:seconds", Default: "30s"},
+			"duration": {Type: "duration", Default: "10s", Min: "1s", Max: "2m"},
+			"timeout":  {Type: "duration:seconds", Default: "30s", Min: "1s", Max: "3m"},
 		},
 		Profiles: map[string]RecipeProfile{
 			"stable": {
@@ -2023,6 +2088,31 @@ func TestValidateArgumentsValidatesPathKind(t *testing.T) {
 		"target": {Type: "path", PathKind: "socket"},
 	}); err == nil {
 		t.Fatal("ValidateArguments succeeded with invalid path_kind")
+	}
+}
+
+func TestValidateArgumentsValidatesRanges(t *testing.T) {
+	cases := []struct {
+		name string
+		arg  Argument
+		want string
+	}{
+		{name: "unsupported type", arg: Argument{Type: "string", Min: 1}, want: "target: min requires type int, float, duration, or duration:seconds"},
+		{name: "invalid int min", arg: Argument{Type: "int", Min: "one"}, want: `target min: want int, got "one"`},
+		{name: "invalid float min", arg: Argument{Type: "float", Min: "NaN"}, want: `target min: want float, got "NaN"`},
+		{name: "invalid duration max", arg: Argument{Type: "duration", Max: "1000"}, want: `target max: want duration, got "1000"`},
+		{name: "fractional seconds bound", arg: Argument{Type: "duration:seconds", Min: "1500ms"}, want: `target min: want whole-second duration, got "1500ms"`},
+		{name: "max below min", arg: Argument{Type: "int", Min: 10, Max: 1}, want: "target: max must be greater than or equal to min"},
+		{name: "default below min", arg: Argument{Type: "int", Min: 1, Default: 0}, want: `target default: target: want >= 1, got "0"`},
+		{name: "default nan", arg: Argument{Type: "float", Min: 0, Max: 1, Default: math.NaN()}, want: `target default: target: want float, got "NaN"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateArguments(map[string]Argument{"target": tc.arg})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateArguments() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

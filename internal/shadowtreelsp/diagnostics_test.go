@@ -853,6 +853,19 @@ requests = 20000
 	assertDiagnosticRange(t, diagnostics[0], 4, 0, len("requests"))
 }
 
+func TestDocumentDiagnosticsRejectInvalidArgumentRange(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
+type = "int"
+min = 10
+max = 1
+
+[recipes.benchmark]
+cmd = "true"
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "benchmark" arguments: connections: max must be greater than or equal to min`)
+	assertDiagnosticRange(t, diagnostics[0], 3, len("max = "), len("max = 1"))
+}
+
 func TestDocumentDiagnosticsRejectProfileArgumentNameAtArgumentTable(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.profile]
 type = "string"
@@ -986,6 +999,22 @@ cmd = "go build"
 type = "bool"
 `)
 	assertOneDiagnostic(t, diagnostics, `flag: want bool, got "$not_bool"`)
+}
+
+func TestDocumentDiagnosticsValidateRecipeReferenceArgumentRange(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = '''
+@compile workers=0
+'''
+
+[recipes.compile]
+cmd = "go build"
+
+[recipes.compile.arguments.workers]
+type = "int"
+min = 1
+`)
+	assertOneDiagnostic(t, diagnostics, `workers: want >= 1, got "0"`)
 }
 
 func TestDocumentDiagnosticsRejectUnknownNamedArgWithDynamicValue(t *testing.T) {

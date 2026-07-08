@@ -95,6 +95,8 @@ var argumentKeys = []completion{
 	{Label: "position", InsertText: "position = 1", Kind: completionKindKeyword, Detail: "1-based positional index"},
 	{Label: "required", InsertText: "required = false", Kind: completionKindKeyword, Detail: "Whether the argument is required"},
 	{Label: "default", InsertText: `default = ""`, Kind: completionKindKeyword, Detail: "Default value"},
+	{Label: "min", InsertText: "min = 0", Kind: completionKindKeyword, Detail: "Inclusive minimum for rangeable arguments"},
+	{Label: "max", InsertText: "max = 0", Kind: completionKindKeyword, Detail: "Inclusive maximum for rangeable arguments"},
 	{Label: "values", InsertText: "values = '''\n\n'''", Kind: completionKindKeyword, Detail: "Dynamic completion command"},
 }
 

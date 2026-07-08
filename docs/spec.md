@@ -451,6 +451,16 @@ positionally.
 `default`
 : Optional default value. Defaults are type-checked.
 
+`min`
+: Optional inclusive lower bound for `int`, `float`, `duration`, and
+`duration:seconds` arguments. Values are converted and type-checked the same
+way as argument values. Duration bounds use Go duration strings.
+
+`max`
+: Optional inclusive upper bound for `int`, `float`, `duration`, and
+`duration:seconds` arguments. `max` must be greater than or equal to `min` when
+both are set.
+
 `values`
 : Optional command that produces completion candidates for this argument. Each
 output line is a value, optionally followed by a tab and help text. The

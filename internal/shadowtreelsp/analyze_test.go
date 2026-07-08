@@ -289,6 +289,13 @@ type = "`
 	assertLabels(t, items, "string", "int", "float", "bool", "path", "rel_path", "duration", "duration:seconds")
 }
 
+func TestCompletionsIncludeArgumentRangeKeys(t *testing.T) {
+	text := `[recipes.benchmark.arguments.timeout]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
+	assertLabels(t, items, "min", "max")
+}
+
 func TestCompletionsIncludeForEachItemPlaceholders(t *testing.T) {
 	text := `[recipes.lint]
 for_each = "@enum a b"

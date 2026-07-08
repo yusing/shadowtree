@@ -254,6 +254,14 @@
           "$ref": "#/definitions/scalar",
           "description": "Default value. Shadowtree converts the TOML scalar to a string and then validates it against type."
         },
+        "min": {
+          "$ref": "#/definitions/scalar",
+          "description": "Optional inclusive lower bound for int, float, duration, and duration:seconds arguments. Duration bounds use Go time.ParseDuration strings."
+        },
+        "max": {
+          "$ref": "#/definitions/scalar",
+          "description": "Optional inclusive upper bound for int, float, duration, and duration:seconds arguments. Duration bounds use Go time.ParseDuration strings."
+        },
         "values": {
           "$ref": "#/definitions/command",
           "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @go-modules, @go-packages, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side, for example @enum all='all modules'."

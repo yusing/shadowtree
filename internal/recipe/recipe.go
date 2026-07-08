@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go/version"
 	"maps"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,6 +123,8 @@ type Argument struct {
 	Position int     `toml:"position"`
 	Required bool    `toml:"required"`
 	Default  any     `toml:"default"`
+	Min      any     `toml:"min"`
+	Max      any     `toml:"max"`
 	Values   Command `toml:"values"`
 }
 
@@ -989,6 +992,14 @@ func ValidateArguments(args map[string]Argument) error {
 		if err := validateArgumentPathKind(name, arg); err != nil {
 			return configValuePathError(err, "arguments", name, "path_kind")
 		}
+		argRange, err := parseArgumentRange(name, arg)
+		if err != nil {
+			target := "min"
+			if rangeErr, ok := errors.AsType[*argumentRangeError](err); ok {
+				target = rangeErr.field
+			}
+			return configValuePathError(err, "arguments", name, target)
+		}
 		if arg.Position < 0 {
 			return configValuePathError(fmt.Errorf("%s: position must be positive", name), "arguments", name, "position")
 		}
@@ -999,7 +1010,7 @@ func ValidateArguments(args map[string]Argument) error {
 			positions[arg.Position] = name
 		}
 		if arg.Default != nil {
-			_, err := argumentValueString(name, arg, arg.Default)
+			_, err := argumentValueStringWithRange(name, arg, argRange, arg.Default)
 			if err != nil {
 				return configValuePathError(fmt.Errorf("%s default: %w", name, err), "arguments", name, "default")
 			}
@@ -1017,6 +1028,14 @@ func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfil
 	if len(profiles) == 0 {
 		return nil
 	}
+	ranges := map[string]argumentRange{}
+	for argName, arg := range args {
+		argRange, err := parseArgumentRange(argName, arg)
+		if err != nil {
+			return err
+		}
+		ranges[argName] = argRange
+	}
 	if _, ok := args[ProfileArgumentName]; ok {
 		return configTablePathError(fmt.Errorf("argument name %q is reserved when profiles are configured", ProfileArgumentName), "arguments", ProfileArgumentName)
 	}
@@ -1032,7 +1051,7 @@ func validateProfiles(args map[string]Argument, profiles map[string]RecipeProfil
 			if !ok {
 				return configKeyPathError(fmt.Errorf("%s: unknown argument %q", name, argName), name, "arguments", argName)
 			}
-			if _, err := argumentValueString(argName, arg, raw); err != nil {
+			if _, err := argumentValueStringWithRange(argName, arg, ranges[argName], raw); err != nil {
 				return configValuePathError(fmt.Errorf("%s: %w", name, err), name, "arguments", argName)
 			}
 		}
@@ -1379,6 +1398,12 @@ func MergeArgument(base, override Argument) Argument {
 	}
 	if override.Default != nil {
 		out.Default = override.Default
+	}
+	if override.Min != nil {
+		out.Min = override.Min
+	}
+	if override.Max != nil {
+		out.Max = override.Max
 	}
 	if len(override.Values) > 0 {
 		out.Values = slices.Clone(override.Values)
@@ -2251,7 +2276,16 @@ func validateArgumentPathKind(name string, arg Argument) error {
 }
 
 func validateArgumentValue(name string, arg Argument, value string) error {
-	switch ArgumentType(arg) {
+	argRange, err := parseArgumentRange(name, arg)
+	if err != nil {
+		return err
+	}
+	return validateArgumentValueWithRange(name, arg, argRange, value)
+}
+
+func validateArgumentValueWithRange(name string, arg Argument, argRange argumentRange, value string) error {
+	typ := ArgumentType(arg)
+	switch typ {
 	case "string", "path":
 		return nil
 	case "rel_path":
@@ -2259,19 +2293,31 @@ func validateArgumentValue(name string, arg Argument, value string) error {
 			return fmt.Errorf("%s: want relative path, got %q", name, value)
 		}
 	case "int":
-		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
 			return fmt.Errorf("%s: want int, got %q", name, value)
 		}
+		if err := validateArgumentRange(name, value, argRangeValue{kind: argumentRangeKindInt, intValue: parsed}, argRange); err != nil {
+			return err
+		}
 	case "float":
-		if _, err := strconv.ParseFloat(value, 64); err != nil {
-			return fmt.Errorf("%s: want float, got %q", name, value)
+		parsed, err := parseArgumentFloat(name, value, argRange.hasBounds())
+		if err != nil {
+			return err
+		}
+		if err := validateArgumentRange(name, value, argRangeValue{kind: argumentRangeKindFloat, floatValue: parsed}, argRange); err != nil {
+			return err
 		}
 	case "bool":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("%s: want bool, got %q", name, value)
 		}
 	case "duration", "duration:seconds":
-		if _, err := parseArgumentDuration(name, arg, value); err != nil {
+		parsed, err := parseArgumentDuration(name, arg, value)
+		if err != nil {
+			return err
+		}
+		if err := validateArgumentRange(name, value, argRangeValue{kind: argumentRangeKindDuration, durationValue: parsed}, argRange); err != nil {
 			return err
 		}
 	}
@@ -2279,17 +2325,29 @@ func validateArgumentValue(name string, arg Argument, value string) error {
 }
 
 func argumentValueString(name string, arg Argument, raw any) (string, error) {
+	argRange, err := parseArgumentRange(name, arg)
+	if err != nil {
+		return "", err
+	}
+	return argumentValueStringWithRange(name, arg, argRange, raw)
+}
+
+func argumentValueStringWithRange(name string, arg Argument, argRange argumentRange, raw any) (string, error) {
 	value, err := ScalarValueString(raw)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	if err := validateArgumentValue(name, arg, value); err != nil {
+	if err := validateArgumentValueWithRange(name, arg, argRange, value); err != nil {
 		return "", err
 	}
 	return value, nil
 }
 
 func resolvedArgumentValueString(name string, arg Argument, raw any) (string, error) {
+	argRange, err := parseArgumentRange(name, arg)
+	if err != nil {
+		return "", err
+	}
 	value, err := ScalarValueString(raw)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
@@ -2299,9 +2357,12 @@ func resolvedArgumentValueString(name string, arg Argument, raw any) (string, er
 		if err != nil {
 			return "", err
 		}
+		if err := validateArgumentRange(name, value, argRangeValue{kind: argumentRangeKindDuration, durationValue: duration}, argRange); err != nil {
+			return "", err
+		}
 		return strconv.FormatInt(int64(duration/time.Second), 10), nil
 	}
-	if err := validateArgumentValue(name, arg, value); err != nil {
+	if err := validateArgumentValueWithRange(name, arg, argRange, value); err != nil {
 		return "", err
 	}
 	value, err = expandPathArgumentValue(arg, value)
@@ -2320,6 +2381,133 @@ func parseArgumentDuration(name string, arg Argument, value string) (time.Durati
 		return 0, fmt.Errorf("%s: want whole-second duration, got %q", name, value)
 	}
 	return duration, nil
+}
+
+type argumentRangeKind uint8
+
+const (
+	argumentRangeKindInt argumentRangeKind = iota + 1
+	argumentRangeKindFloat
+	argumentRangeKindDuration
+)
+
+type argRangeValue struct {
+	kind          argumentRangeKind
+	text          string
+	intValue      int64
+	floatValue    float64
+	durationValue time.Duration
+}
+
+type argumentRange struct {
+	min    argRangeValue
+	max    argRangeValue
+	hasMin bool
+	hasMax bool
+}
+
+func (argRange argumentRange) hasBounds() bool {
+	return argRange.hasMin || argRange.hasMax
+}
+
+type argumentRangeError struct {
+	field string
+	err   error
+}
+
+func (err *argumentRangeError) Error() string {
+	return err.err.Error()
+}
+
+func (err *argumentRangeError) Unwrap() error {
+	return err.err
+}
+
+func parseArgumentRange(name string, arg Argument) (argumentRange, error) {
+	minBound, hasMin, err := argumentRangeBound(name, arg, "min", arg.Min)
+	if err != nil {
+		return argumentRange{}, &argumentRangeError{field: "min", err: err}
+	}
+	maxBound, hasMax, err := argumentRangeBound(name, arg, "max", arg.Max)
+	if err != nil {
+		return argumentRange{}, &argumentRangeError{field: "max", err: err}
+	}
+	if hasMin && hasMax && rangeValueLess(maxBound, minBound) {
+		return argumentRange{}, &argumentRangeError{field: "max", err: fmt.Errorf("%s: max must be greater than or equal to min", name)}
+	}
+	return argumentRange{
+		min:    minBound,
+		max:    maxBound,
+		hasMin: hasMin,
+		hasMax: hasMax,
+	}, nil
+}
+
+func argumentRangeBound(name string, arg Argument, field string, raw any) (argRangeValue, bool, error) {
+	if raw == nil {
+		return argRangeValue{}, false, nil
+	}
+	value, err := ScalarValueString(raw)
+	if err != nil {
+		return argRangeValue{}, false, fmt.Errorf("%s %s: %w", name, field, err)
+	}
+	typ := ArgumentType(arg)
+	switch typ {
+	case "int":
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return argRangeValue{}, false, fmt.Errorf("%s %s: want int, got %q", name, field, value)
+		}
+		return argRangeValue{kind: argumentRangeKindInt, text: value, intValue: parsed}, true, nil
+	case "float":
+		parsed, err := parseArgumentFloat(name+" "+field, value, true)
+		if err != nil {
+			return argRangeValue{}, false, err
+		}
+		return argRangeValue{kind: argumentRangeKindFloat, text: value, floatValue: parsed}, true, nil
+	case "duration", "duration:seconds":
+		parsed, err := parseArgumentDuration(name+" "+field, arg, value)
+		if err != nil {
+			return argRangeValue{}, false, err
+		}
+		return argRangeValue{kind: argumentRangeKindDuration, text: value, durationValue: parsed}, true, nil
+	default:
+		return argRangeValue{}, false, fmt.Errorf("%s: %s requires type int, float, duration, or duration:seconds", name, field)
+	}
+}
+
+func parseArgumentFloat(name, value string, rejectNaN bool) (float64, error) {
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || rejectNaN && math.IsNaN(parsed) {
+		return 0, fmt.Errorf("%s: want float, got %q", name, value)
+	}
+	return parsed, nil
+}
+
+func validateArgumentRange(name, value string, parsed argRangeValue, argRange argumentRange) error {
+	if argRange.hasMin && rangeValueLess(parsed, argRange.min) {
+		return fmt.Errorf("%s: want >= %s, got %q", name, argRange.min.text, value)
+	}
+	if argRange.hasMax && rangeValueLess(argRange.max, parsed) {
+		return fmt.Errorf("%s: want <= %s, got %q", name, argRange.max.text, value)
+	}
+	return nil
+}
+
+func rangeValueLess(left, right argRangeValue) bool {
+	if left.kind != right.kind {
+		panic("mismatched argument range value kinds")
+	}
+	switch left.kind {
+	case argumentRangeKindInt:
+		return left.intValue < right.intValue
+	case argumentRangeKindFloat:
+		return left.floatValue < right.floatValue
+	case argumentRangeKindDuration:
+		return left.durationValue < right.durationValue
+	default:
+		panic("unknown argument range value kind")
+	}
 }
 
 func expandPathArgumentValue(arg Argument, value string) (string, error) {

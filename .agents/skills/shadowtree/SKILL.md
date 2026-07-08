@@ -304,6 +304,7 @@ Use fields under `[recipes.<name>.arguments.<arg>]`:
 - `position`: 1-based positional slot.
 - `required`: true when user must supply the argument.
 - `default`: string, integer, number, or boolean default; converted to string then type-validated.
+- `min` / `max`: optional inclusive bounds for `int`, `float`, `duration`, and `duration:seconds`; duration bounds use Go duration strings.
 - `values`: shell string command that prints completion/help candidates, one per line as `value` or `value<TAB>help`; TOML arrays are invalid here, including `values = []`.
   Use argument-values builtins for common static/contextual sources: `@enum a b "c d"`, `@enum api='API service'`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-packages`, `@go-main-packages`, `@recipes`, and `@vars`.
   `@enum` attaches help for `value=help text` entries when the help side contains whitespace; quote the help side, for example `@enum all='all modules'`. Single-token values such as `GOOS=linux` remain literal values.
@@ -330,6 +331,7 @@ Resolution rules:
 - Bool completion suggests `true` and `false`.
 - `path` accepts absolute paths, relative paths, and `~/`; `rel_path` rejects absolute and `~` paths.
 - `duration` accepts Go duration strings such as `10s`, `1500ms`, and `1m30s`; `duration:seconds` accepts exact whole-second Go durations and expands them as base-10 integer seconds.
+- `min` and `max` validate defaults, profile argument values, explicit CLI args, and recipe-reference args for rangeable argument types.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` still include directories as traversal candidates; `path_kind=dir` lists directories only.
 - Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and use the configured recipe shell; output help text is split on a tab. LSP completion and diagnostics do not run command-backed `values`; use builtins such as `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, `@go-packages`, and `@go-main-packages` for editor-safe completions.
 

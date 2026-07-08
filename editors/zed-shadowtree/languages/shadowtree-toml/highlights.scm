@@ -59,6 +59,8 @@
     "position"
     "required"
     "default"
+    "min"
+    "max"
     "values"))
 
 ; Variables and generated variables.

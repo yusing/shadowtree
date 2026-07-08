@@ -336,7 +336,9 @@ relative checkout paths. `duration` accepts Go duration strings such as `10s`,
 `1500ms`, and `1m30s`. `duration:seconds` accepts Go duration strings that are
 exact whole seconds and expands them as base-10 integer seconds. Path arguments
 can set `path_kind` to `any`, `file`, `dir`, or `executable` to filter
-completion candidates.
+completion candidates. `int`, `float`, `duration`, and `duration:seconds`
+arguments can set inclusive `min` and `max` bounds; duration bounds use Go
+duration strings such as `100ms` or `2m`.
 
 Use `{@}` in `cmd` to splice leftover recipe CLI args:
 
