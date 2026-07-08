@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 )
@@ -1306,6 +1307,39 @@ func TestRunStageCommandTimesOut(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want main skipped", stdout.String())
+	}
+}
+
+func TestRunStageTimeoutKillsBackgroundWriter(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("(printf started > started.txt; while [ ! -e gate ]; do sleep 0.01; done; printf late > late.txt) & sleep 5"), Timeout: "30ms"}},
+			Cmd:       recipe.Command{"true"},
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "pre[0] timed out after 30ms") {
+		t.Fatalf("Run() error = %v, want pre timeout", err)
+	}
+	assertFileContent(t, filepath.Join(source, "started.txt"), "started")
+	if err := os.WriteFile(filepath.Join(source, "gate"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(source, "late.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("late.txt err = %v, want not exist", err)
 	}
 }
 

@@ -205,6 +205,7 @@ func runNamespaceHelper(ctx context.Context, env, args []string, stdin io.Reader
 		}},
 		GidMappingsEnableSetgroups: false,
 	}
+	configureCommandCancellation(cmd)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

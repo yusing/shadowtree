@@ -751,6 +751,7 @@ func runExternalCommand(ctx context.Context, dir string, env []string, command r
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	configureCommandCancellation(cmd)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

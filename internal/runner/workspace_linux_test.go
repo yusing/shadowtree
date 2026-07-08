@@ -4,6 +4,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 
@@ -468,6 +470,60 @@ func TestNamespaceCommandPreservesEnvironment(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("namespace command env: %v", err)
+	}
+}
+
+func TestNamespaceCommandTimeoutKillsBackgroundWriterBeforeSyncOut(t *testing.T) {
+	source := t.TempDir()
+	workDir := t.TempDir()
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, filepath.Join(workDir, "workspace"))
+	if err != nil {
+		t.Skipf("overlayfs unavailable: %v", err)
+	}
+	defer func() {
+		if err := sandbox.Close(); err != nil {
+			t.Fatalf("close overlay workspace: %v", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	gate := filepath.Join(t.TempDir(), "gate")
+
+	err = sandbox.runNamespaceCommand(
+		ctx,
+		append(os.Environ(), "GATE="+gate),
+		sandbox.target,
+		[]string{"sh", "-c", `(printf started > started.txt; while [ ! -e "$GATE" ]; do sleep 0.01; done; printf late > late.txt) & sleep 5`},
+		nil,
+		io.Discard,
+		io.Discard,
+	)
+	if err == nil {
+		t.Fatal("namespace command succeeded, want timeout")
+	}
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"started.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := SyncPath(syncRoot, source, "started.txt"); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "started.txt"), "started")
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	syncRoot, cleanup, err = sandbox.SyncRoot([]string{"late.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := SyncPath(syncRoot, source, "late.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "late.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("late.txt err = %v, want not exist", err)
 	}
 }
 
