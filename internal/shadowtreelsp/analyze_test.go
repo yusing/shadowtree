@@ -617,6 +617,52 @@ log = "logs/{`
 	assertLabels(t, items, "{run_id}")
 }
 
+func TestCompletionsIncludePostStageStatusPlaceholders(t *testing.T) {
+	text := `[recipes.test]
+cmd = "go test"
+post = "printf {sta`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`post = "printf {sta`)})
+	assertLabels(t, items, "{status:pre}", "{status:cmd}")
+
+	result := completionResult(t.Context(), text, lspPosition{Line: 2, Character: len(`post = "printf {sta`)})
+	edit := completionTextEdit(t, result, "{status:cmd}")
+	if edit["newText"] != "status:cmd}" {
+		t.Fatalf("newText = %#v, want status placeholder suffix", edit["newText"])
+	}
+}
+
+func TestCompletionsIncludePostStageStatusPlaceholdersInCommandList(t *testing.T) {
+	text := `[recipes.test]
+cmd = "go test"
+post = [
+  "printf {sta"
+]`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 3, Character: len(`  "printf {sta`)})
+	assertLabels(t, items, "{status:pre}", "{status:cmd}")
+}
+
+func TestCompletionsIncludeStructuredPostStageStatusPlaceholders(t *testing.T) {
+	text := `[recipes.test]
+cmd = "go test"
+
+[recipes.test.post]
+cmd = "printf {status:`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`cmd = "printf {status:`)})
+	assertLabels(t, items, "{status:pre}", "{status:cmd}")
+}
+
+func TestCompletionsScopeStageStatusPlaceholders(t *testing.T) {
+	text := `[recipes.test]
+cmd = "go test {sta"
+pre = "printf {sta`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "go test {sta`)})
+	assertLabels(t, items, "{status:pre}")
+	assertNoLabels(t, items, "{status:cmd}")
+
+	items = completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`pre = "printf {sta`)})
+	assertNoLabels(t, items, "{status:pre}", "{status:cmd}")
+}
+
 func TestCompletionsExcludeVariadicArgsPlaceholderInSyncOut(t *testing.T) {
 	text := `[recipes.test]
 sync_out = ["{`

@@ -497,6 +497,9 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 					diagnostics = append(diagnostics, diagnostic)
 					continue
 				}
+				if recipe.IsStageStatusPlaceholder(placeholder) && recipe.StageAllowsStatusPlaceholder(statusPlaceholderCommandStage(region.Table, region.Key), placeholder) {
+					continue
+				}
 				if known[placeholder.Name] {
 					if diagnostic, ok := unsafeShellPlaceholderDiagnostic(lines, effectiveCfg, recipes, region, lineNo, placeholder, quoteContexts, unsafeArgs); ok {
 						diagnostics = append(diagnostics, diagnostic)
@@ -518,6 +521,15 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 
 func placeholderModeDiagnostic(lines []string, region scriptRegion, lineNo int, placeholder recipe.Placeholder, quoteContexts map[scriptRegion]placeholderQuoteContextCache) (lspDiagnostic, bool) {
 	line := lineAt(lines, lineNo)
+	if placeholder.Name == recipe.StatusPlaceholder && placeholder.Mode != recipe.PlaceholderModeDefault {
+		if err := recipe.ValidateStageStatusPlaceholder(placeholder); err != nil {
+			return placeholderDiagnostic(line, lineNo, placeholder, err.Error(), diagnosticSeverityError), true
+		}
+		if !recipe.StageAllowsStatusPlaceholder(statusPlaceholderCommandStage(region.Table, region.Key), placeholder) {
+			return placeholderDiagnostic(line, lineNo, placeholder, recipe.StatusPlaceholderContextError(placeholder).Error(), diagnosticSeverityError), true
+		}
+		return lspDiagnostic{}, false
+	}
 	quote := byte(0)
 	if scriptKey(region.Key) && (placeholder.Mode == recipe.PlaceholderModeShell || placeholder.Mode == recipe.PlaceholderModeDQ) {
 		var ok bool

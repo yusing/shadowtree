@@ -852,6 +852,198 @@ post
 `)
 }
 
+func TestRunPostReceivesSuccessfulStageStatuses(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       stageCommands(recipe.Command{"true"}),
+			Cmd:       recipe.Command{"true"},
+			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), "0:0")
+}
+
+func TestRunCmdReceivesPreStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       stageCommands(recipe.Command{"true"}),
+			Cmd:       recipe.ScriptCommand(`printf '%s' "{status:pre}" > status.txt`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), "0")
+}
+
+func TestRunCmdReceivesEmptyPreStatusWhenPreDidNotRun(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand(`printf '<%s>' "{status:pre}" > status.txt`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), "<>")
+}
+
+func TestRunPostReceivesMainFailureStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("exit 7"),
+			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil {
+		t.Fatal("Run succeeded, want failure")
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), ":7")
+}
+
+func TestRunPostReceivesPreFailureAndSkippedMainStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       stageCommands(recipe.ScriptCommand("exit 5")),
+			Cmd:       recipe.ScriptCommand("printf 'cmd' > cmd.txt"),
+			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil {
+		t.Fatal("Run succeeded, want failure")
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), "5:")
+	if _, err := os.Stat(filepath.Join(source, "cmd.txt")); !os.IsNotExist(err) {
+		t.Fatalf("cmd.txt stat error = %v, want not exist", err)
+	}
+}
+
+func TestRunPostReceivesTimeoutStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("sleep 1"), Timeout: "20ms"}},
+			Cmd:       recipe.Command{"true"},
+			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil || !strings.Contains(err.Error(), "pre[0] timed out after 20ms") {
+		t.Fatalf("Run() error = %v, want pre timeout", err)
+	}
+	assertFileContent(t, filepath.Join(source, "status.txt"), "1:")
+}
+
+func TestRunPostRecipeReferenceReceivesStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("exit 3"),
+			Post:      stageCommands(recipe.ScriptCommand("@cleanup[code={status:cmd}]")),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := recipe.Recipe{
+		Cmd:       recipe.ScriptCommand(`printf '%s' "{code}" > nested-status.txt`),
+		Arguments: map[string]recipe.Argument{"code": {Required: true}},
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"cleanup": cleanup},
+		SourceDir: source,
+	})
+	if err == nil {
+		t.Fatal("Run succeeded, want failure")
+	}
+	assertFileContent(t, filepath.Join(source, "nested-status.txt"), "3")
+}
+
 func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
 	source := t.TempDir()
 	child := recipe.Recipe{
@@ -1355,7 +1547,7 @@ func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
 		recipe.Recipe{
 			ForEach:   recipe.ScriptCommand("@enum a b c"),
 			Cmd:       recipe.ScriptCommand(`printf '%s\n' "{item}" >> out.txt; test "{item}" != b`),
-			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n' >> out.txt")),
+			Post:      stageCommands(recipe.ScriptCommand(`printf 'post:%s\n' "{status:cmd}" >> out.txt`)),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -1376,10 +1568,36 @@ func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	want := "a\nb\npost\n"
+	want := "a\nb\npost:1\n"
 	if string(data) != want {
 		t.Fatalf("out.txt = %q, want %q", data, want)
 	}
+}
+
+func TestRunForEachCmdReceivesPreStatus(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"check",
+		recipe.Recipe{
+			Pre:       stageCommands(recipe.Command{"true"}),
+			ForEach:   recipe.ScriptCommand("@enum a b"),
+			Cmd:       recipe.ScriptCommand(`printf '%s:%s\n' "{item}" "{status:pre}" >> out.txt`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "out.txt"), "a:0\nb:0\n")
 }
 
 func TestRunForEachUsesCommandBackedValues(t *testing.T) {

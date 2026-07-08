@@ -48,6 +48,7 @@ const (
 	ForEachItemHelpPlaceholder  = "item_help"
 	ForEachItemIndexPlaceholder = "item_index"
 	RunIDPlaceholder            = "run_id"
+	StatusPlaceholder           = "status"
 	ProfileArgumentName         = "profile"
 )
 
@@ -75,6 +76,10 @@ var ReservedNames = map[string]bool{
 }
 
 var allLogStages = []string{LogStagePre, LogStageCmd, LogStagePost}
+var (
+	cmdStatusPlaceholderStages  = []string{LogStagePre}
+	postStatusPlaceholderStages = []string{LogStagePre, LogStageCmd}
+)
 
 type Command []string
 
@@ -611,15 +616,15 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	if len(rec.ForEach) > 0 {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
 	}
-	cmd, err := expandCommand(rec.Cmd, commandValues, variadicArgs, rec.Shell)
+	cmd, err := expandCommandWithOptions(rec.Cmd, commandValues, variadicArgs, rec.Shell, placeholderExpansionOptions{commandStage: LogStageCmd})
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
-	pre, err := expandStageCommands(rec.Pre, values, nil, rec.Shell)
+	pre, err := expandStageCommands(rec.Pre, values, nil, rec.Shell, "")
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
-	post, err := expandStageCommands(rec.Post, values, nil, rec.Shell)
+	post, err := expandStageCommands(rec.Post, values, nil, rec.Shell, LogStagePost)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
@@ -1570,10 +1575,10 @@ func MergeArgument(base, override Argument) Argument {
 	return out
 }
 
-func expandStageCommands(commands []StageCommand, values map[string]string, variadicArgs []string, shell string) ([]StageCommand, error) {
+func expandStageCommands(commands []StageCommand, values map[string]string, variadicArgs []string, shell, commandStage string) ([]StageCommand, error) {
 	out := make([]StageCommand, len(commands))
 	for i, command := range commands {
-		expanded, err := expandStageCommand(command, values, variadicArgs, shell)
+		expanded, err := expandStageCommand(command, values, variadicArgs, shell, commandStage)
 		if err != nil {
 			return nil, fmt.Errorf("[%d]: %w", i, err)
 		}
@@ -1582,8 +1587,8 @@ func expandStageCommands(commands []StageCommand, values map[string]string, vari
 	return out, nil
 }
 
-func expandStageCommand(stage StageCommand, values map[string]string, variadicArgs []string, shell string) (StageCommand, error) {
-	command, err := expandCommand(stage.Cmd, values, variadicArgs, shell)
+func expandStageCommand(stage StageCommand, values map[string]string, variadicArgs []string, shell, commandStage string) (StageCommand, error) {
+	command, err := expandCommandWithOptions(stage.Cmd, values, variadicArgs, shell, placeholderExpansionOptions{commandStage: commandStage})
 	if err != nil {
 		return StageCommand{}, err
 	}
@@ -1591,8 +1596,16 @@ func expandStageCommand(stage StageCommand, values map[string]string, variadicAr
 }
 
 func expandCommand(command Command, values map[string]string, variadicArgs []string, shell string) (Command, error) {
+	return expandCommandWithOptions(command, values, variadicArgs, shell, placeholderExpansionOptions{})
+}
+
+type placeholderExpansionOptions struct {
+	commandStage string
+}
+
+func expandCommandWithOptions(command Command, values map[string]string, variadicArgs []string, shell string, opts placeholderExpansionOptions) (Command, error) {
 	if IsScriptCommand(command) {
-		body, err := expandScript(ScriptBody(command), values, variadicArgs, scriptExpansionShell(command, shell))
+		body, err := expandScriptWithOptions(ScriptBody(command), values, variadicArgs, scriptExpansionShell(command, shell), opts)
 		if err != nil {
 			return nil, err
 		}
@@ -1601,7 +1614,7 @@ func expandCommand(command Command, values map[string]string, variadicArgs []str
 		}
 		return ScriptCommand(body), nil
 	}
-	expanded, err := expandStrings(command, values, variadicArgs)
+	expanded, err := expandStringsWithOptions(command, values, variadicArgs, opts)
 	return Command(expanded), err
 }
 
@@ -1617,6 +1630,57 @@ func ExpandForEachString(value string, item ValueCandidate, index int) (string, 
 		return "", err
 	}
 	return expanded[0], nil
+}
+
+// CommandContainsStageStatusPlaceholder reports whether command contains a stage status placeholder.
+func CommandContainsStageStatusPlaceholder(command Command) bool {
+	if IsScriptCommand(command) {
+		return strings.Contains(ScriptBody(command), "{"+StatusPlaceholder+":")
+	}
+	return slices.ContainsFunc(command, func(item string) bool {
+		return strings.Contains(item, "{"+StatusPlaceholder+":")
+	})
+}
+
+// ExpandStageStatusPlaceholders expands prior-stage status placeholders in a command.
+func ExpandStageStatusPlaceholders(command Command, values map[string]string) (Command, error) {
+	if !CommandContainsStageStatusPlaceholder(command) {
+		return command, nil
+	}
+	if IsScriptCommand(command) {
+		body, err := expandStageStatusString(ScriptBody(command), values)
+		if err != nil {
+			return nil, err
+		}
+		if len(command) >= 4 {
+			return append(Command{scriptCommand, command[1], body}, command[3:]...), nil
+		}
+		return ScriptCommand(body), nil
+	}
+	out := make(Command, 0, len(command))
+	for _, item := range command {
+		expanded, err := expandStageStatusString(item, values)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, expanded)
+	}
+	return out, nil
+}
+
+func expandStageStatusString(text string, values map[string]string) (string, error) {
+	if !strings.Contains(text, "{"+StatusPlaceholder+":") {
+		return text, nil
+	}
+	return expandPlaceholderNames(text, func(placeholder Placeholder) (string, error) {
+		if placeholder.Name != StatusPlaceholder {
+			return placeholder.Match, nil
+		}
+		if err := ValidateStageStatusPlaceholder(placeholder); err != nil {
+			return "", err
+		}
+		return values[string(placeholder.Mode)], nil
+	})
 }
 
 func forEachPlaceholderValues(item ValueCandidate, index int) map[string]string {
@@ -1636,6 +1700,10 @@ func forEachPlaceholderSentinels() map[string]string {
 }
 
 func expandStrings(items []string, values map[string]string, variadicArgs []string) ([]string, error) {
+	return expandStringsWithOptions(items, values, variadicArgs, placeholderExpansionOptions{})
+}
+
+func expandStringsWithOptions(items []string, values map[string]string, variadicArgs []string, opts placeholderExpansionOptions) ([]string, error) {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
 		if !strings.Contains(item, "{") {
@@ -1649,7 +1717,7 @@ func expandStrings(items []string, values map[string]string, variadicArgs []stri
 		if strings.Contains(item, variadicArgsPlaceholder) {
 			return nil, fmt.Errorf("%s must be a whole argument item", variadicArgsPlaceholder)
 		}
-		expanded, err := expandPlaceholders(item, values)
+		expanded, err := expandPlaceholdersWithOptions(item, values, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -1918,6 +1986,60 @@ func validateStringPlaceholderMode(placeholder Placeholder) error {
 	return ValidatePlaceholderMode(placeholder, false, 0)
 }
 
+// IsStageStatusPlaceholder reports whether placeholder references a prior stage status.
+func IsStageStatusPlaceholder(placeholder Placeholder) bool {
+	return placeholder.Name == StatusPlaceholder &&
+		(placeholder.Mode == PlaceholderMode(LogStagePre) || placeholder.Mode == PlaceholderMode(LogStageCmd))
+}
+
+// ValidateStageStatusPlaceholder reports whether placeholder is a supported stage status placeholder.
+func ValidateStageStatusPlaceholder(placeholder Placeholder) error {
+	if placeholder.Name != StatusPlaceholder {
+		return nil
+	}
+	switch placeholder.Mode {
+	case PlaceholderMode(LogStagePre), PlaceholderMode(LogStageCmd):
+		return nil
+	case PlaceholderModeDefault:
+		return fmt.Errorf("{%s} is not a stage status placeholder; use {%s:%s} or {%s:%s}", StatusPlaceholder, StatusPlaceholder, LogStagePre, StatusPlaceholder, LogStageCmd)
+	default:
+		return fmt.Errorf("%s supports only %s or %s", placeholder.Match, LogStagePre, LogStageCmd)
+	}
+}
+
+// StatusPlaceholderStages reports which status placeholders are available in commandStage.
+func StatusPlaceholderStages(commandStage string) []string {
+	switch commandStage {
+	case LogStageCmd:
+		return cmdStatusPlaceholderStages
+	case LogStagePost:
+		return postStatusPlaceholderStages
+	default:
+		return nil
+	}
+}
+
+// StageAllowsStatusPlaceholder reports whether placeholder is available in commandStage.
+func StageAllowsStatusPlaceholder(commandStage string, placeholder Placeholder) bool {
+	return slices.Contains(StatusPlaceholderStages(commandStage), string(placeholder.Mode))
+}
+
+// StatusPlaceholderContextError reports where a status placeholder may be used.
+func StatusPlaceholderContextError(placeholder Placeholder) error {
+	switch string(placeholder.Mode) {
+	case LogStagePre:
+		return fmt.Errorf("%s is supported only in cmd or post", placeholder.Match)
+	case LogStageCmd:
+		return fmt.Errorf("%s is supported only in post", placeholder.Match)
+	default:
+		return fmt.Errorf("%s is not supported here", placeholder.Match)
+	}
+}
+
+func (opts placeholderExpansionOptions) allowsStageStatus(placeholder Placeholder) bool {
+	return StageAllowsStatusPlaceholder(opts.commandStage, placeholder)
+}
+
 func identifierStart(ch byte) bool {
 	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch == '_'
 }
@@ -1938,8 +2060,21 @@ func containsVariadicArgsPlaceholder(items []string) bool {
 }
 
 func expandPlaceholders(text string, values map[string]string) (string, error) {
+	return expandPlaceholdersWithOptions(text, values, placeholderExpansionOptions{})
+}
+
+func expandPlaceholdersWithOptions(text string, values map[string]string, opts placeholderExpansionOptions) (string, error) {
 	var missing string
 	out, err := expandPlaceholderNames(text, func(placeholder Placeholder) (string, error) {
+		if placeholder.Name == StatusPlaceholder && placeholder.Mode != PlaceholderModeDefault {
+			if err := ValidateStageStatusPlaceholder(placeholder); err != nil {
+				return "", err
+			}
+			if !opts.allowsStageStatus(placeholder) {
+				return "", StatusPlaceholderContextError(placeholder)
+			}
+			return placeholder.Match, nil
+		}
 		if err := validateStringPlaceholderMode(placeholder); err != nil {
 			return "", err
 		}
@@ -1969,8 +2104,8 @@ func scriptExpansionShell(command Command, shell string) string {
 	return shell
 }
 
-func expandScript(body string, values map[string]string, variadicArgs []string, shell string) (string, error) {
-	expanded, err := expandScriptPlaceholders(body, values, shell)
+func expandScriptWithOptions(body string, values map[string]string, variadicArgs []string, shell string, opts placeholderExpansionOptions) (string, error) {
+	expanded, err := expandScriptPlaceholdersWithOptions(body, values, shell, opts)
 	if err != nil {
 		return "", err
 	}
@@ -1999,6 +2134,10 @@ func expandScript(body string, values map[string]string, variadicArgs []string, 
 }
 
 func expandScriptPlaceholders(text string, values map[string]string, shell string) (string, error) {
+	return expandScriptPlaceholdersWithOptions(text, values, shell, placeholderExpansionOptions{})
+}
+
+func expandScriptPlaceholdersWithOptions(text string, values map[string]string, shell string, opts placeholderExpansionOptions) (string, error) {
 	if !strings.Contains(text, "{") {
 		return text, nil
 	}
@@ -2015,6 +2154,17 @@ func expandScriptPlaceholders(text string, values map[string]string, shell strin
 				if placeholder.Name == "@" {
 					if placeholder.Mode != PlaceholderModeDefault {
 						return "", fmt.Errorf("%s does not support placeholder modes", placeholder.Match)
+					}
+					out.WriteString(placeholder.Match)
+					i = placeholder.End
+					continue
+				}
+				if placeholder.Name == StatusPlaceholder && placeholder.Mode != PlaceholderModeDefault {
+					if err := ValidateStageStatusPlaceholder(placeholder); err != nil {
+						return "", err
+					}
+					if !opts.allowsStageStatus(placeholder) {
+						return "", StatusPlaceholderContextError(placeholder)
 					}
 					out.WriteString(placeholder.Match)
 					i = placeholder.End

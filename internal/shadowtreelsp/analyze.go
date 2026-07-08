@@ -366,9 +366,21 @@ func completionsAtWithOptions(ctx context.Context, text string, pos lspPosition,
 	}
 	if variablePrefix, ok := placeholderPrefix(prefix); ok {
 		key, _ := keyBeforeValue(prefix)
+		commandStage := statusPlaceholderCommandStage(analysis.CurrentTable, key)
+		if commandStage == "" {
+			if region, ok := scriptRegionAt(analysis.Lines, analysis.ScriptRegions, pos); ok {
+				key = region.Key
+				commandStage = statusPlaceholderCommandStage(region.Table, region.Key)
+			}
+		}
+		if name, modePrefix, ok := strings.Cut(variablePrefix, ":"); ok && name == recipe.StatusPlaceholder {
+			if stages := recipe.StatusPlaceholderStages(commandStage); len(stages) > 0 {
+				return statusPlaceholderCompletions(modePrefix, stages)
+			}
+		}
 		enrichAnalysisWithResolvedConfig(ctx, text, &analysis, -1, opts)
 		shellModes := scriptKey(key) || inScriptRegion(analysis.Lines, analysis.ScriptRegions, pos)
-		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, shellModes, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key), opts)
+		return placeholderCompletions(analysis, currentRecipe(analysis.CurrentTable), variablePrefix, shellModes, variadicPlaceholderCompletionAllowed(analysis, prefix, pos), forEachPlaceholderCompletionAllowed(analysis.CurrentTable, key), recipe.StatusPlaceholderStages(commandStage), opts)
 	}
 	if items, ok := includePathCompletions(analysis.Lines, pos, opts); ok {
 		return items
@@ -1631,7 +1643,7 @@ func recipeProfileArgumentsTableParts(table string) (string, string, bool) {
 	return recipeName, profileName, true
 }
 
-func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, shellModes, allowVariadic, allowForEach bool, opts completionOptions) []completion {
+func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string, shellModes, allowVariadic, allowForEach bool, statusStages []string, opts completionOptions) []completion {
 	var names []string
 	names = append(names, analysis.GlobalVars...)
 	names = append(names, analysis.RecipeVars[recipeName]...)
@@ -1710,11 +1722,41 @@ func placeholderCompletions(analysis documentAnalysis, recipeName, prefix string
 			Placeholder: true,
 		})
 	}
+	if len(statusStages) > 0 && strings.HasPrefix(recipe.StatusPlaceholder, prefix) {
+		items = append(items, statusPlaceholderCompletions("", statusStages)...)
+	}
+	return items
+}
+
+func statusPlaceholderCompletions(selectorPrefix string, stages []string) []completion {
+	var items []completion
+	for _, stage := range stages {
+		if selectorPrefix != "" && !strings.HasPrefix(stage, selectorPrefix) {
+			continue
+		}
+		items = append(items, completion{
+			Label:       "{" + recipe.StatusPlaceholder + ":" + stage + "}",
+			InsertText:  recipe.StatusPlaceholder + ":" + stage + "}",
+			Kind:        completionKindVariable,
+			Detail:      "Prior " + stage + " stage status",
+			Placeholder: true,
+		})
+	}
 	return items
 }
 
 func forEachPlaceholderCompletionAllowed(table, key string) bool {
 	return recipeTable(table) && (key == "cmd" || key == "workdir")
+}
+
+func statusPlaceholderCommandStage(table, key string) string {
+	if recipeTable(table) && key == "cmd" {
+		return recipe.LogStageCmd
+	}
+	if (recipeTable(table) && key == "post") || (strings.HasSuffix(table, ".post") && key == "cmd") {
+		return recipe.LogStagePost
+	}
+	return ""
 }
 
 func variadicPlaceholderCompletionAllowed(analysis documentAnalysis, prefix string, pos lspPosition) bool {

@@ -325,7 +325,7 @@
     },
     "command": {
       "$ref": "#/definitions/shellScript",
-      "description": "Command string run through the configured shell after placeholder expansion. A string that is exactly @recipe or @path:recipe invokes another recipe. In sh/bash, a literal command-position @recipe inside a script also invokes that recipe. Unquoted {name} is raw text; quoted {name} is escaped for that quote context. Quote free string/path placeholders normally, for example foo \"{bar}\". Use {name:shell} only when embedding in an unquoted shell word, such as -xxx{name:shell}; use {name:dq} inside double quotes, and {name:raw} for intentional raw text. Use {@} in cmd as a whole shell word to splice leftover CLI args."
+      "description": "Command string run through the configured shell after placeholder expansion. A string that is exactly @recipe or @path:recipe invokes another recipe. In sh/bash, a literal command-position @recipe inside a script also invokes that recipe. Unquoted {name} is raw text; quoted {name} is escaped for that quote context. Quote free string/path placeholders normally, for example foo \"{bar}\". Use {name:shell} only when embedding in an unquoted shell word, such as -xxx{name:shell}; use {name:dq} inside double quotes, and {name:raw} for intentional raw text. Use {@} in cmd as a whole shell word to splice leftover CLI args. In cmd commands, use {status:pre}; in post commands, use {status:pre} and {status:cmd} to inspect prior stage status."
     },
     "stageCommands": {
       "anyOf": [
@@ -381,7 +381,7 @@
     "shellScript": {
       "type": "string",
       "minLength": 1,
-      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly; assignments such as FOO=\"@recipe\" and expanded variables do not. Quote free string/path placeholders normally, for example foo \"{bar}\". Placeholder modes: {name:shell} for embedded unquoted shell words, {name:dq} inside double quotes, {name:raw} for explicit raw text."
+      "description": "Shell script. Shadowtree runs this as <shell> -c <script> and passes shadowtree as $0, unless the whole string is exactly @recipe or @path:recipe. In sh/bash scripts, a literal command-position @recipe invokes that recipe directly; assignments such as FOO=\"@recipe\" and expanded variables do not. Quote free string/path placeholders normally, for example foo \"{bar}\". Placeholder modes: {name:shell} for embedded unquoted shell words, {name:dq} inside double quotes, {name:raw} for explicit raw text. In cmd commands, {status:pre} expands to pre status; in post commands, {status:pre} and {status:cmd} expand to prior stage status."
     },
     "syncOut": {
       "type": "array",

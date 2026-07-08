@@ -679,6 +679,12 @@ run ID for each top-level invocation and reuses it for `pre`, `cmd`, `post`,
 and cannot be declared in top-level `vars`, top-level `var_commands`, recipe
 `vars`, or recipe `arguments`.
 
+`cmd` commands can use `{status:pre}`, and `post` commands can use
+`{status:pre}` and `{status:cmd}` to inspect prior stage status. They expand to
+`0` when the stage succeeds, the failing exit code when available, `1` for
+non-exit failures such as timeouts, and an empty string when that stage did not
+run.
+
 `{@}` is a variadic placeholder for leftover recipe CLI args. It must be a
 whole argument item in argv-style `cmd` values, or a whole shell word in script
 `cmd` values; Shadowtree splices each leftover CLI arg at that position. It is

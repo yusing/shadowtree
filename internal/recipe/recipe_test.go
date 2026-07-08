@@ -1973,6 +1973,80 @@ func TestValidateConfigRejectsReservedRunIDDeclarations(t *testing.T) {
 	}
 }
 
+func TestResolvePreservesPostStageStatusPlaceholders(t *testing.T) {
+	got, err := Resolve("test", Recipe{
+		Cmd:  Command{"true"},
+		Post: stageCommands(ScriptCommand(`printf '%s\n' "{status:pre}" "{status:cmd}"`)),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := ScriptBody(got.Recipe.Post[0].Cmd)
+	if !strings.Contains(body, "{status:pre}") || !strings.Contains(body, "{status:cmd}") {
+		t.Fatalf("post body = %q, want status placeholders preserved", body)
+	}
+}
+
+func TestResolvePreservesCmdPreStatusPlaceholder(t *testing.T) {
+	got, err := Resolve("test", Recipe{
+		Cmd: ScriptCommand(`printf '%s\n' "{status:pre}"`),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := ScriptBody(got.Main); !strings.Contains(body, "{status:pre}") {
+		t.Fatalf("cmd body = %q, want pre status placeholder preserved", body)
+	}
+}
+
+func TestResolveRejectsUnavailableStageStatusPlaceholders(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  Recipe
+		want string
+	}{
+		{
+			name: "cmd status in cmd",
+			rec:  Recipe{Cmd: ScriptCommand(`printf '%s\n' "{status:cmd}"`)},
+			want: "{status:cmd} is supported only in post",
+		},
+		{
+			name: "cmd status in pre",
+			rec: Recipe{
+				Pre: stageCommands(ScriptCommand(`printf '%s\n' "{status:cmd}"`)),
+				Cmd: Command{"true"},
+			},
+			want: "{status:cmd} is supported only in post",
+		},
+		{
+			name: "pre status in pre",
+			rec: Recipe{
+				Pre: stageCommands(ScriptCommand(`printf '%s\n' "{status:pre}"`)),
+				Cmd: Command{"true"},
+			},
+			want: "{status:pre} is supported only in cmd or post",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Resolve("test", tt.rec, nil, nil, nil, "", "")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Resolve() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveRejectsInvalidPostStageStatusPlaceholder(t *testing.T) {
+	_, err := Resolve("test", Recipe{
+		Cmd:  Command{"true"},
+		Post: stageCommands(ScriptCommand(`printf '%s\n' "{status:post}"`)),
+	}, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), "{status:post} supports only pre or cmd") {
+		t.Fatalf("Resolve() error = %v, want invalid status placeholder", err)
+	}
+}
+
 func TestValidateConfigRejectsInvalidLogSettings(t *testing.T) {
 	cases := []struct {
 		name string

@@ -620,6 +620,53 @@ cmd = "echo {missing}"
 	assertOneDiagnostic(t, diagnostics, "unknown variable {missing}")
 }
 
+func TestDocumentDiagnosticsAcceptPostStageStatusPlaceholders(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test"
+post = ['printf "%s:%s\n" "{status:pre}" "{status:cmd}"']
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptCmdPreStatusPlaceholder(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test {status:pre}"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptStructuredPostStageStatusPlaceholders(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test"
+
+[recipes.test.post]
+cmd = 'printf "%s:%s\n" "{status:pre}" "{status:cmd}"'
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectInvalidStageStatusPlaceholder(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test"
+post = "echo {status:post}"
+`)
+	assertOneDiagnostic(t, diagnostics, "{status:post} supports only pre or cmd")
+}
+
+func TestDocumentDiagnosticsRejectStageStatusPlaceholderOutsidePost(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test {status:cmd}"
+post = "echo done"
+`)
+	assertOneDiagnostic(t, diagnostics, "{status:cmd} is supported only in post")
+}
+
 func TestDocumentDiagnosticsRejectArgvPreCommand(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = [

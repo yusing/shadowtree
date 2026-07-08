@@ -316,6 +316,11 @@ nested `@recipe` calls. `run_id` is reserved and cannot be declared in
 top-level `vars`, top-level `var_commands`, recipe `vars`, or recipe
 `arguments`.
 
+`cmd` commands can use `{status:pre}`; `post` commands can use `{status:pre}`
+and `{status:cmd}` for prior stage status. Values are `0` for success, the
+failing exit code when available, `1` for non-exit failures such as timeouts,
+and empty when the stage did not run.
+
 `var_commands` use top-level `env`, configured `shell`, and top-level `shell_prelude`. They are not evaluated during shell completion.
 
 Fan-out placeholders exist only when a recipe has `for_each`:

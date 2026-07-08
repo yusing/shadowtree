@@ -242,6 +242,10 @@ generated for each top-level run and stays the same through `pre`, `cmd`,
 `post`, `for_each`, and nested recipe references. `run_id` is reserved and
 cannot be declared in `vars`, `var_commands`, recipe `vars`, or recipe
 `arguments`.
+`cmd` commands can use `{status:pre}`, and `post` commands can use
+`{status:pre}` and `{status:cmd}` to inspect prior stage status. They expand to
+`0` on success, the failing exit code when available, `1` for non-exit failures
+such as timeouts, and an empty string when that stage did not run.
 
 Use a recipe reference from `cmd`, `pre`, or `post`:
 

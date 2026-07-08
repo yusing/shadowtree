@@ -61,6 +61,7 @@ pre = [
 ]
 cmd = '''
 printf '[%s] main\n' "{project_slug}"
+printf 'pre status=%s\n' "{status:pre}"
 recipe_banner
 printf 'item=%s help=%s index=%s\n' "{item}" "{item_help}" "{item_index}"
 printf 'target=%s retries=%s ratio=%s enabled=%s path=%s timeout=%s seconds=%s leftover=%s\n' \
@@ -70,6 +71,7 @@ printf 'synced from {target}\n' > "out/{target}.txt"
 '''
 post = [
   "printf 'post string stage\\n'",
+  "printf 'pre=%s cmd=%s\\n' '{status:pre}' '{status:cmd}'",
   { cmd = "printf 'post table stage\\n'", timeout = "5s" },
 ]
 sync_out = ["out/{target}.txt"]

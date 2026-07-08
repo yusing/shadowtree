@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -418,21 +419,67 @@ func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) er
 
 func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
 	var firstErr error
+	preStatus := ""
+	cmdStatus := ""
 	for i, command := range options.Resolved.Recipe.Pre {
 		if err := runStageCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePre, i, stack); err != nil {
+			preStatus = statusValue(err)
 			firstErr = err
 			break
 		}
 	}
 	if firstErr == nil {
-		firstErr = runMainCommands(ctx, sandbox, dir, env, options, stdin, stdout, stderr, stack)
+		if len(options.Resolved.Recipe.Pre) > 0 {
+			preStatus = "0"
+		}
+		mainOptions := options
+		if recipe.CommandContainsStageStatusPlaceholder(options.Resolved.Main) {
+			expandedMain, err := recipe.ExpandStageStatusPlaceholders(options.Resolved.Main, stageStatusValues(preStatus, cmdStatus))
+			if err != nil {
+				firstErr = fmt.Errorf("cmd: %w", err)
+			} else {
+				mainOptions.Resolved.Main = expandedMain
+			}
+		}
+		if firstErr == nil {
+			firstErr = runMainCommands(ctx, sandbox, dir, env, mainOptions, stdin, stdout, stderr, stack)
+		}
+		cmdStatus = statusValue(firstErr)
 	}
 	for i, command := range options.Resolved.Recipe.Post {
+		if recipe.CommandContainsStageStatusPlaceholder(command.Cmd) {
+			expanded, err := recipe.ExpandStageStatusPlaceholders(command.Cmd, stageStatusValues(preStatus, cmdStatus))
+			if err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("post[%d]: %w", i, err)
+				}
+				continue
+			}
+			command.Cmd = expanded
+		}
 		if err := runStageCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+func stageStatusValues(preStatus, cmdStatus string) map[string]string {
+	return map[string]string{
+		recipe.LogStagePre: preStatus,
+		recipe.LogStageCmd: cmdStatus,
+	}
+}
+
+func statusValue(err error) string {
+	if err == nil {
+		return "0"
+	}
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		return strconv.Itoa(exitErr.Code)
+	}
+	return "1"
 }
 
 func runStageCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.StageCommand, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
