@@ -11,6 +11,14 @@ import (
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
+func stageCommands(commands ...recipe.Command) recipe.StageCommands {
+	out := make(recipe.StageCommands, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, recipe.StageCommand{Cmd: command})
+	}
+	return out
+}
+
 func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
 	opts, rest, err := parseGlobal([]string{"--profile", "go", "--print", "test", "./..."})
 	if err != nil {
@@ -130,9 +138,9 @@ func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "install", recipe.Recipe{
 		Help:    "Install Shadowtree.",
-		Pre:     []recipe.Command{{"go", "build"}},
+		Pre:     stageCommands(recipe.Command{"go", "build"}),
 		Cmd:     recipe.Command{"sh", "-c", "set -eu\ninstall -d bin\n"},
-		Post:    []recipe.Command{{"echo", "done"}},
+		Post:    stageCommands(recipe.Command{"echo", "done"}),
 		SyncOut: []string{"bin/shadowtree"},
 	}, recipeHelpOptions{})
 	if err != nil {
@@ -200,7 +208,7 @@ func TestPrintRecipeHelpShowsBareRecipeReferences(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "check", recipe.Recipe{
 		Help: "Run vet and tests.",
-		Pre:  []recipe.Command{recipe.ScriptCommand("@vet")},
+		Pre:  stageCommands(recipe.ScriptCommand("@vet")),
 		Cmd:  recipe.ScriptCommand("@test ./..."),
 	}, recipeHelpOptions{})
 	if err != nil {

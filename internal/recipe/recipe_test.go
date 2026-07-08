@@ -19,6 +19,14 @@ func applyGlobals(t *testing.T, recipes map[string]Recipe, vars map[string]strin
 	return out
 }
 
+func stageCommands(commands ...Command) StageCommands {
+	out := make(StageCommands, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, StageCommand{Cmd: command})
+	}
+	return out
+}
+
 func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:       Command{"go", "test", "{pkg}", "{@}"},
@@ -28,7 +36,7 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 		LogTee:    new(false),
 	}
 	override := Recipe{
-		Pre:       []Command{{"go", "generate", "./..."}},
+		Pre:       stageCommands(Command{"go", "generate", "./..."}),
 		Sandboxed: new(false),
 		Log:       "override.log",
 		LogStages: []string{LogStagePre, LogStagePost},
@@ -38,7 +46,7 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	if !slices.Equal(got.Cmd, Command{"go", "test", "{pkg}", "{@}"}) {
 		t.Fatalf("Cmd = %#v", got.Cmd)
 	}
-	if len(got.Pre) != 1 || !slices.Equal(got.Pre[0], Command{"go", "generate", "./..."}) {
+	if len(got.Pre) != 1 || !slices.Equal(got.Pre[0].Cmd, Command{"go", "generate", "./..."}) {
 		t.Fatalf("Pre = %#v", got.Pre)
 	}
 	if got.Sandboxed == nil || *got.Sandboxed {
@@ -59,8 +67,8 @@ func TestResolveExpandsRunIDEverywhere(t *testing.T) {
 	recipes := applyGlobals(t, map[string]Recipe{
 		"test": {
 			Cmd:          ScriptCommand("printf '%s' '{marker} {local} {run_id}'"),
-			Pre:          []Command{ScriptCommand("printf '%s' '{run_id}'")},
-			Post:         []Command{ScriptCommand("printf '%s' '{run_id}'")},
+			Pre:          stageCommands(ScriptCommand("printf '%s' '{run_id}'")),
+			Post:         stageCommands(ScriptCommand("printf '%s' '{run_id}'")),
 			ForEach:      ScriptCommand("@enum {run_id}"),
 			ShellPrelude: "RUN_ID={run_id}",
 			Workdir:      "work/{run_id}/{item}",
@@ -88,8 +96,8 @@ func TestResolveExpandsRunIDEverywhere(t *testing.T) {
 	}
 	for _, value := range []string{
 		ScriptBody(got.Main),
-		ScriptBody(got.Recipe.Pre[0]),
-		ScriptBody(got.Recipe.Post[0]),
+		ScriptBody(got.Recipe.Pre[0].Cmd),
+		ScriptBody(got.Recipe.Post[0].Cmd),
 		ScriptBody(got.Recipe.ForEach),
 		got.Recipe.ShellPrelude,
 		got.Recipe.Workdir,
@@ -763,7 +771,7 @@ func TestBuiltinTidyRunsWorkspaceSyncPostHook(t *testing.T) {
 	if len(tidy.Post) != 1 {
 		t.Fatalf("tidy Post = %#v, want one workspace sync post command", tidy.Post)
 	}
-	if body := ScriptBody(tidy.Post[0]); body != "if test -f go.work; then go work sync; fi" {
+	if body := ScriptBody(tidy.Post[0].Cmd); body != "if test -f go.work; then go work sync; fi" {
 		t.Fatalf("tidy post script = %q, want conditional go work sync", body)
 	}
 	if body := ScriptBody(tidy.ForEach); body != GoModuleValuesCommand {
@@ -990,7 +998,7 @@ func TestMergeRecipesAllowsRunOverride(t *testing.T) {
 
 func TestHelpSummarizesMultilineScript(t *testing.T) {
 	got := Help(Recipe{
-		Pre: []Command{{"go", "build"}},
+		Pre: stageCommands(Command{"go", "build"}),
 		Cmd: Command{"sh", "-c", "set -eu\ninstall -d \"$bindir\"\n"},
 	})
 
@@ -1023,7 +1031,7 @@ func TestHelpUsesConfiguredHelp(t *testing.T) {
 func TestMergeRecipeKeepsBaseHelpUnlessOverridden(t *testing.T) {
 	got := MergeRecipe(
 		Recipe{Help: "Run tests.", Cmd: Command{"go", "test"}},
-		Recipe{Pre: []Command{{"go", "generate", "./..."}}},
+		Recipe{Pre: stageCommands(Command{"go", "generate", "./..."})},
 	)
 	if got.Help != "Run tests." {
 		t.Fatalf("Help = %q", got.Help)
@@ -2484,7 +2492,7 @@ func TestNodeBuiltinsCheckComposesAvailableRecipes(t *testing.T) {
 
 	rec := Builtins(NodeProfile, BuiltinOptions{Dir: dir})["check"]
 
-	if len(rec.Pre) != 2 || !slices.Equal(rec.Pre[0], Command{"@lint"}) || !slices.Equal(rec.Pre[1], Command{"@typecheck"}) {
+	if len(rec.Pre) != 2 || !slices.Equal(rec.Pre[0].Cmd, Command{"@lint"}) || !slices.Equal(rec.Pre[1].Cmd, Command{"@typecheck"}) {
 		t.Fatalf("check pre = %#v, want lint then typecheck", rec.Pre)
 	}
 	if !slices.Equal(rec.Cmd, Command{"@test"}) {

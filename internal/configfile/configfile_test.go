@@ -50,7 +50,7 @@ count = 5
 	if loaded.Config.Profile != "go" {
 		t.Fatalf("Profile = %q", loaded.Config.Profile)
 	}
-	if got := recipe.ScriptBody(loaded.Config.Recipes["test"].Pre[0]); got != "go generate ./..." {
+	if got := recipe.ScriptBody(loaded.Config.Recipes["test"].Pre[0].Cmd); got != "go generate ./..." {
 		t.Fatalf("pre command = %#v", loaded.Config.Recipes["test"].Pre)
 	}
 	if got := loaded.Config.Shell; got != "bash" {
@@ -134,15 +134,51 @@ cmd = "true"
 	if len(pre) != 2 {
 		t.Fatalf("pre = %#v, want two commands", pre)
 	}
-	output, err := recipe.CommandOutput(t.Context(), filepath.Dir(path), nil, pre[0])
+	output, err := recipe.CommandOutput(t.Context(), filepath.Dir(path), nil, pre[0].Cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if output != "123\n" {
 		t.Fatalf("pre[0] output = %q, want echo output", output)
 	}
-	if len(pre[1]) != 1 || pre[1][0] != "@foo" {
+	if len(pre[1].Cmd) != 1 || pre[1].Cmd[0] != "@foo" {
 		t.Fatalf("pre[1] = %#v, want recipe reference", pre[1])
+	}
+}
+
+func TestLoadStructuredStageCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+[recipes.benchmark]
+cmd = "go test ./..."
+
+[recipes.benchmark.pre]
+cmd = "benchmark_prepare"
+timeout = "120s"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := loaded.Config.Recipes["benchmark"]
+	if len(rec.Pre) != 1 {
+		t.Fatalf("pre = %#v, want one structured command", rec.Pre)
+	}
+	if got := recipe.ScriptBody(rec.Pre[0].Cmd); got != "benchmark_prepare" {
+		t.Fatalf("pre command = %q, want benchmark_prepare", got)
+	}
+	if rec.Pre[0].Timeout != "120s" {
+		t.Fatalf("pre timeout = %q, want 120s", rec.Pre[0].Timeout)
+	}
+	resolved, err := recipe.Resolve("benchmark", rec, nil, nil, nil, loaded.Path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.StageTimeout(resolved.Recipe.Pre[0]); got.String() != "2m0s" {
+		t.Fatalf("resolved timeout = %s, want 2m0s", got)
 	}
 }
 

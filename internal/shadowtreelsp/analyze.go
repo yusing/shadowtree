@@ -88,6 +88,11 @@ var recipeKeys = []completion{
 	{Label: "log_tee", InsertText: "log_tee = true", Kind: completionKindKeyword, Detail: "Also write logged output to the terminal"},
 }
 
+var stageCommandKeys = []completion{
+	{Label: "cmd", InsertText: `cmd = ""`, Kind: completionKindKeyword, Detail: "Stage command"},
+	{Label: "timeout", InsertText: `timeout = "30s"`, Kind: completionKindKeyword, Detail: "Stage timeout"},
+}
+
 var argumentKeys = []completion{
 	{Label: "help", InsertText: `help = ""`, Kind: completionKindKeyword, Detail: "Argument help text"},
 	{Label: "type", InsertText: `type = "string"`, Kind: completionKindKeyword, Detail: "Argument type"},
@@ -1246,6 +1251,8 @@ func recipeSubtableCompletions() []completion {
 		{Label: "env", InsertText: "env]", Kind: completionKindField, Detail: "Recipe environment"},
 		{Label: "arguments", InsertText: "arguments.", Kind: completionKindField, Detail: "Recipe argument"},
 		{Label: "profiles", InsertText: "profiles.", Kind: completionKindField, Detail: "Recipe profile"},
+		{Label: "pre", InsertText: "pre]", Kind: completionKindFunction, Detail: "Structured pre command"},
+		{Label: "post", InsertText: "post]", Kind: completionKindFunction, Detail: "Structured post command"},
 	}
 }
 
@@ -1263,6 +1270,9 @@ func keyCompletions(analysis documentAnalysis, table string, opts completionOpti
 		parts := strings.Split(table, ".")
 		if len(parts) == 2 {
 			return recipeKeys
+		}
+		if stageCommandTable(table) {
+			return stageCommandKeys
 		}
 		if len(parts) == 4 && parts[2] == "arguments" {
 			return argumentKeys
@@ -1627,6 +1637,9 @@ func forEachPlaceholderCompletionAllowed(table, key string) bool {
 }
 
 func variadicPlaceholderCompletionAllowed(analysis documentAnalysis, prefix string, pos lspPosition) bool {
+	if !recipeTable(analysis.CurrentTable) {
+		return false
+	}
 	key, ok := keyBeforeValue(prefix)
 	if !ok {
 		return false
@@ -1739,9 +1752,11 @@ func scriptRegions(lines []string, shells map[string]string) []scriptRegion {
 		shell := shellForTable(shells, table)
 		if key == "pre" || key == "post" {
 			listRegions, endLine := commandListScriptRegions(lines, lineNo, table, key, shell)
-			regions = append(regions, listRegions...)
-			lineNo = endLine
-			continue
+			if len(listRegions) > 0 || endLine != lineNo {
+				regions = append(regions, listRegions...)
+				lineNo = endLine
+				continue
+			}
 		}
 		region, endLine, ok := stringValueRegion(lines, lineNo, table, key, shell)
 		if !ok {
@@ -1797,6 +1812,9 @@ func commandListStringRegions(lines []string, startLine int, table, key, shell s
 		if lineNo == startLine {
 			_, value, ok := strings.Cut(raw, "=")
 			if !ok {
+				return nil, startLine
+			}
+			if !strings.HasPrefix(strings.TrimSpace(value), "[") {
 				return nil, startLine
 			}
 			col = len(raw) - len(value)
@@ -2492,7 +2510,7 @@ func commandReferenceSpansWithScriptRegions(lines []string, regions []scriptRegi
 				continue
 			}
 			start = len(line) - len(value)
-			scan.list = key == "pre" || key == "post"
+			scan.list = (key == "pre" || key == "post") && strings.HasPrefix(strings.TrimSpace(value), "[")
 			scan.pending = !scan.list
 			scan.table = table
 			scan.key = key
@@ -2691,6 +2709,9 @@ func scriptCommandReferenceSpans(lines []string, regions []scriptRegion) []comma
 		}
 		for _, ref := range refs {
 			spans = append(spans, commandReferenceSpanFromScriptReference(lines, region, ref))
+			if target, ok := retryTargetReferenceSpanFromScriptReference(lines, region, ref); ok {
+				spans = append(spans, target)
+			}
 		}
 	}
 	return spans
@@ -2733,24 +2754,53 @@ func commandReferenceSpanFromScriptReference(lines []string, region scriptRegion
 	span := commandReferenceSpanFromString(ref.Value, region.Table, region.Key, startLine, startCol, endCol)
 	span.TargetEnd = targetEndCol
 	for _, arg := range ref.Args {
-		argStartLine, argStartCol := scriptPosition(region, arg.Start)
-		argEndLine, argEndCol := scriptPosition(region, arg.End)
-		if argStartLine != argEndLine {
-			continue
+		if argSpan, ok := commandReferenceArgumentSpanFromScriptArgument(lines, region, arg); ok {
+			span.Args = append(span.Args, argSpan)
 		}
-		text := arg.Value
-		if line := lineAt(lines, argStartLine); argStartCol <= argEndCol && argEndCol <= len(line) {
-			text = line[argStartCol:argEndCol]
-		}
-		span.Args = append(span.Args, commandReferenceArgumentSpan{
-			Text:    text,
-			Dynamic: arg.Dynamic,
-			Line:    argStartLine,
-			Start:   argStartCol,
-			End:     argEndCol,
-		})
 	}
 	return span
+}
+
+func retryTargetReferenceSpanFromScriptReference(lines []string, region scriptRegion, ref scriptref.Reference) (commandReferenceSpan, bool) {
+	helper, ok := recipe.ParseRecipeReference(recipe.Command{ref.Value})
+	if !ok || helper.Path != "" || !recipe.IsCommandHelperName(helper.Name) || len(ref.Args) == 0 {
+		return commandReferenceSpan{}, false
+	}
+	target := ref.Args[0]
+	if target.Dynamic || !strings.HasPrefix(target.Value, "@") {
+		return commandReferenceSpan{}, false
+	}
+	startLine, startCol := scriptPosition(region, target.Start)
+	endLine, endCol := scriptPosition(region, target.End)
+	if startLine != endLine {
+		return commandReferenceSpan{}, false
+	}
+	span := commandReferenceSpanFromString(target.Value, region.Table, region.Key, startLine, startCol, endCol)
+	for _, arg := range ref.Args[1:] {
+		if argSpan, ok := commandReferenceArgumentSpanFromScriptArgument(lines, region, arg); ok {
+			span.Args = append(span.Args, argSpan)
+		}
+	}
+	return span, true
+}
+
+func commandReferenceArgumentSpanFromScriptArgument(lines []string, region scriptRegion, arg scriptref.Argument) (commandReferenceArgumentSpan, bool) {
+	argStartLine, argStartCol := scriptPosition(region, arg.Start)
+	argEndLine, argEndCol := scriptPosition(region, arg.End)
+	if argStartLine != argEndLine {
+		return commandReferenceArgumentSpan{}, false
+	}
+	text := arg.Value
+	if line := lineAt(lines, argStartLine); argStartCol <= argEndCol && argEndCol <= len(line) {
+		text = line[argStartCol:argEndCol]
+	}
+	return commandReferenceArgumentSpan{
+		Text:    text,
+		Dynamic: arg.Dynamic,
+		Line:    argStartLine,
+		Start:   argStartCol,
+		End:     argEndCol,
+	}, true
 }
 
 func scriptPosition(region scriptRegion, pos scriptref.Position) (int, int) {
@@ -2941,7 +2991,7 @@ func lastOpenQuote(prefix string) int {
 func recipeReferenceKey(table, key string) bool {
 	switch key {
 	case "cmd", "pre", "post", "for_each":
-		return recipeTable(table)
+		return recipeTable(table) || key == "cmd" && stageCommandTable(table)
 	case "values":
 		return recipeArgumentTable(table)
 	default:
@@ -2952,6 +3002,15 @@ func recipeReferenceKey(table, key string) bool {
 func recipeTable(table string) bool {
 	rest, ok := strings.CutPrefix(table, "recipes.")
 	return ok && rest != "" && !strings.Contains(rest, ".")
+}
+
+func stageCommandTable(table string) bool {
+	rest, ok := strings.CutPrefix(table, "recipes.")
+	if !ok {
+		return false
+	}
+	_, stage, ok := strings.Cut(rest, ".")
+	return ok && (stage == "pre" || stage == "post")
 }
 
 func recipeArgumentTable(table string) bool {

@@ -24,6 +24,8 @@ cmd = "go build"
 		"vars",
 		"env",
 		"arguments",
+		"pre",
+		"post",
 	)
 }
 
@@ -32,6 +34,21 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
 	assertLabels(t, items, "cmd", "sandboxed", "sync_out", "log", "log_stages", "log_tee")
+}
+
+func TestCompletionsIncludeKeysForStructuredStageTable(t *testing.T) {
+	text := `[recipes.build.pre]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
+	assertLabels(t, items, "cmd", "timeout")
+}
+
+func TestCompletionsExcludeVariadicPlaceholderInStructuredStageTable(t *testing.T) {
+	text := `[recipes.build.pre]
+cmd = "{"
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`cmd = "{`)})
+	assertNoLabels(t, items, "{@}")
 }
 
 func TestCompletionsIncludeLogValues(t *testing.T) {

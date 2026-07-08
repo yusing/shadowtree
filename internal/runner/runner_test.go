@@ -24,6 +24,14 @@ func assertFileContent(t *testing.T, path, want string) {
 	}
 }
 
+func stageCommands(commands ...recipe.Command) recipe.StageCommands {
+	out := make(recipe.StageCommands, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, recipe.StageCommand{Cmd: command})
+	}
+	return out
+}
+
 func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	if os.Getenv("SHELL") == "" {
 		t.Setenv("SHELL", "/bin/sh")
@@ -363,9 +371,9 @@ func TestRunVerbosePrintsStageBoundaries(t *testing.T) {
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
-			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'\nprintf 'again\n'")},
+			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n'\nprintf 'again\n'")),
 			Cmd:       recipe.Command{"@child"},
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -410,9 +418,9 @@ func TestRunLogsAllStagesByDefault(t *testing.T) {
 	resolved, err := recipe.ResolveWithOptions(
 		"test",
 		recipe.Recipe{
-			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'")},
+			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n'")),
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Log:       "logs/{run_id}.log",
 			Sandboxed: new(false),
 		},
@@ -517,9 +525,9 @@ func TestRunLogTeeFalseSuppressesSelectedTerminalOutput(t *testing.T) {
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
-			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n'")},
+			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n'")),
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Log:       "run.log",
 			LogStages: []string{recipe.LogStageCmd},
 			LogTee:    new(false),
@@ -626,7 +634,7 @@ func TestRunLogsPostAfterMainFailure(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'; exit 7"),
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n'")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Log:       "run.log",
 			Sandboxed: new(false),
 		},
@@ -654,9 +662,9 @@ post
 func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
 	source := t.TempDir()
 	child := recipe.Recipe{
-		Pre:  []recipe.Command{recipe.ScriptCommand("printf 'child-pre\n'")},
+		Pre:  stageCommands(recipe.ScriptCommand("printf 'child-pre\n'")),
 		Cmd:  recipe.ScriptCommand("printf 'child-cmd\n'"),
-		Post: []recipe.Command{recipe.ScriptCommand("printf 'child-post\n'")},
+		Post: stageCommands(recipe.ScriptCommand("printf 'child-post\n'")),
 		Log:  "ignored.log",
 	}
 	resolved, err := recipe.Resolve(
@@ -695,13 +703,71 @@ child-post
 	}
 }
 
+func TestRunStageCommandTimesOut(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("sleep 1"), Timeout: "20ms"}},
+			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout})
+	if err == nil || !strings.Contains(err.Error(), "pre[0] timed out after 20ms") {
+		t.Fatalf("Run() error = %v, want pre timeout", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want main skipped", stdout.String())
+	}
+}
+
+func TestRunRetryHelperRetriesCommand(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand(`@retry[count=3,delay=1ms] sh -c 'count=$(cat attempts 2>/dev/null || printf 0); count=$((count+1)); printf "%s" "$count" > attempts; test "$count" -ge 3'`),
+			Post:      stageCommands(recipe.ScriptCommand("cat attempts")),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "3" {
+		t.Fatalf("stdout = %q, want three attempts", stdout.String())
+	}
+}
+
 func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"cat", "out.txt"},
-			Pre:       []recipe.Command{{"@gen", "value=shadow"}},
+			Pre:       stageCommands(recipe.Command{"@gen", "value=shadow"}),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -742,7 +808,7 @@ func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"cat", "out.txt"},
-			Pre:       []recipe.Command{recipe.ScriptCommand("@gen[value=shadow]")},
+			Pre:       stageCommands(recipe.ScriptCommand("@gen[value=shadow]")),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -1030,9 +1096,9 @@ func TestRunForEachRunsMainPerItem(t *testing.T) {
 		recipe.Recipe{
 			ForEach:   recipe.ScriptCommand("@enum a='alpha item' b='beta item'"),
 			Workdir:   "{item}",
-			Pre:       []recipe.Command{recipe.ScriptCommand("printf 'pre\n' > out.txt")},
+			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n' > out.txt")),
 			Cmd:       recipe.ScriptCommand(`printf '%s:%s:%s:%s\n' "{item_index}" "{item}" "{item_help}" "$(basename "$PWD")" >> ../out.txt`),
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n' >> out.txt")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n' >> out.txt")),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -1096,7 +1162,7 @@ func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
 		recipe.Recipe{
 			ForEach:   recipe.ScriptCommand("@enum a b c"),
 			Cmd:       recipe.ScriptCommand(`printf '%s\n' "{item}" >> out.txt; test "{item}" != b`),
-			Post:      []recipe.Command{recipe.ScriptCommand("printf 'post\n' >> out.txt")},
+			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n' >> out.txt")),
 			Sandboxed: new(false),
 		},
 		nil,

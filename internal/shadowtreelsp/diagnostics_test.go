@@ -484,6 +484,25 @@ cmd = "go build"
 	}
 }
 
+func TestDocumentDiagnosticsAcceptRetryCommandHelper(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+pre = "@retry[count=3,delay=1s] benchmark_prepare"
+cmd = "go test"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsRejectRetryUnknownRecipeTarget(t *testing.T) {
+	text := `[recipes.test]
+pre = "@retry[count=3,delay=1s] @missing"
+cmd = "go test"
+`
+	diagnostics := documentDiagnostics(t.Context(), text)
+	assertOneDiagnostic(t, diagnostics, "unknown recipe reference @missing")
+}
+
 func TestDocumentDiagnosticsRejectUnknownBracketRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["@missing[component=godoxy]"]
@@ -493,6 +512,16 @@ cmd = "go test"
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`pre = ["`), len(`pre = ["@missing[component=godoxy]`))
 }
 
+func TestDocumentDiagnosticsRejectStructuredStageMissingPlaceholder(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+cmd = "go test"
+
+[recipes.test.pre]
+cmd = "echo {missing}"
+`)
+	assertOneDiagnostic(t, diagnostics, "unknown variable {missing}")
+}
+
 func TestDocumentDiagnosticsRejectArgvPreCommand(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = [
@@ -500,7 +529,7 @@ pre = [
 ]
 cmd = "go test"
 `)
-	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
+	assertOneDiagnostic(t, diagnostics, "[0]: command arrays are no longer supported; use a shell string")
 }
 
 func TestDocumentDiagnosticsRejectUnknownScalarRecipeReference(t *testing.T) {

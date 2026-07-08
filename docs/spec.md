@@ -322,6 +322,33 @@ cmd = "@test[package=./internal/recipe]"
 post = ["@webui:gen-schema[mode=dev]"]
 ```
 
+`pre` and `post` may also be structured stage command tables when a command
+needs execution controls:
+
+```toml
+[recipes.benchmark.pre]
+cmd = "benchmark_prepare"
+timeout = "120s"
+```
+
+`timeout` is parsed as a Go duration and must be greater than zero. It limits
+that one stage command. Timeout failure follows the same stage-order rules as
+other command failures: a failing `pre` skips the main command, and `post`
+commands still run after `pre` or main failure.
+
+In `sh` and `bash` script commands, `@retry` is a built-in command helper for
+flaky readiness checks:
+
+```toml
+pre = "@retry[count=30,delay=1s] benchmark_prepare"
+```
+
+`count` is the maximum number of attempts and `delay` is the duration to sleep
+between failed attempts. Defaults are `count=3` and `delay=1s`. The helper runs
+the remaining command words again until they succeed or attempts are exhausted.
+It can wrap external commands or literal recipe references such as
+`@retry[count=5] @prepare`.
+
 Placeholders can be used in recipe references. Static references such as
 `@gen-swagger` and `@webui:gen-schema` can be validated by the editor; dynamic
 references such as `@{target}` and `@{target_path}:{target_recipe}` are
@@ -376,10 +403,12 @@ command. With `for_each`, it is expanded per item and can use `{item}`,
 `{item_help}`, and `{item_index}`.
 
 `pre`
-: Commands run before the main command, in order.
+: Commands run before the main command, in order. May be an array of command
+  strings or one structured table with `cmd` and optional `timeout`.
 
 `post`
-: Commands run after the main command, in order.
+: Commands run after the main command, in order. May be an array of command
+  strings or one structured table with `cmd` and optional `timeout`.
 
 `env`
 : Recipe-specific environment overrides.
@@ -785,14 +814,16 @@ go-modules
 go-packages
 help
 lines
+retry
 vars
 version
 __complete
 ```
 
 The argument-values builtins (`enum`, `glob`, `go-main-packages`, `go-modules`,
-`go-packages`, `lines`, `recipes`, and `vars`) are reserved as recipe names.
-Future built-in `@` command identifiers are also reserved.
+`go-packages`, `lines`, `recipes`, and `vars`) and command helpers such as
+`retry` are reserved as recipe names. Future built-in `@` command identifiers
+are also reserved.
 
 ## Built-In Profiles
 

@@ -254,9 +254,9 @@ func addNodeCheckRecipe(recipes map[string]Recipe) {
 	if len(available) == 0 {
 		return
 	}
-	pre := make([]Command, 0, len(available)-1)
+	pre := make([]StageCommand, 0, len(available)-1)
 	for _, name := range available[:len(available)-1] {
-		pre = append(pre, Command{"@" + name})
+		pre = append(pre, StageCommand{Cmd: Command{"@" + name}})
 	}
 	addNodeRecipe(recipes, "check", "Run Node checks.", Command{"@" + available[len(available)-1]})
 	rec := recipes["check"]

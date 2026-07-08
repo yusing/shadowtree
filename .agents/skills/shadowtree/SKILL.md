@@ -112,6 +112,23 @@ scripts, so `pre = ["echo 123", "@foo"]` runs `echo 123` as a script and then
 invokes recipe `foo`. A literal command-position `@recipe` inside those script
 strings also dispatches directly, e.g. `post = ["if @check; then @publish; fi"]`.
 
+Structured `pre` and `post` tables support one stage command with execution
+controls:
+
+```toml
+[recipes.benchmark.pre]
+cmd = "benchmark_prepare"
+timeout = "120s"
+```
+
+`timeout` is a positive Go duration for that stage command. Timeout failure
+follows normal stage ordering: failing `pre` skips `cmd`, and `post` still runs.
+
+`@retry` is a sh/bash command-position helper for flaky readiness checks:
+`pre = "@retry[count=30,delay=1s] benchmark_prepare"`. `count` is max attempts,
+`delay` is wait between failures, defaults are `count=3` and `delay=1s`, and it
+can wrap external commands or literal recipe references.
+
 Completion criterion: cleanup or reporting that must run after failure belongs in `post`; generated outputs are copied back only on success.
 
 ## Top-Level Fields
@@ -147,8 +164,8 @@ Use these fields under `[recipes.<name>]`:
 - `cmd`: required main command; prefer a shell string.
 - `for_each`: optional value-provider command; when set, runs `cmd` once per candidate.
 - `workdir`: optional relative working directory for the main command; with `for_each`, expands per item.
-- `pre`: list of commands before `cmd`.
-- `post`: list of commands after `cmd`.
+- `pre`: list of commands before `cmd`, or a structured table with `cmd` and optional `timeout`.
+- `post`: list of commands after `cmd`, or a structured table with `cmd` and optional `timeout`.
 - `sandboxed`: boolean; defaults to `true`.
 - `sync_out`: sandboxed paths copied back after successful recipe completion.
 - `log`: optional recipe log file path; supports placeholders including `{run_id}`.
@@ -161,7 +178,7 @@ Use these fields under `[recipes.<name>]`:
 - `arguments`: typed argument definitions.
 - `profiles`: recipe-local argument default sets selected by `profile=<name>`.
 
-Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
+Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `retry`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses typed `arguments` plus placeholders in `cmd` instead of extra argument lists.
 

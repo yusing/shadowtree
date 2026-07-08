@@ -413,13 +413,13 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 	if len(rec.Pre) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Pre commands:"))
 		for i, command := range rec.Pre {
-			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.CommandHelpText(command)))
+			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.StageCommandHelpText(command)))
 		}
 	}
 	if len(rec.Post) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Post commands:"))
 		for i, command := range rec.Post {
-			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.CommandHelpText(command)))
+			fmt.Fprintf(w, "    %s %s\n", colors.index(i), colors.literal(recipe.StageCommandHelpText(command)))
 		}
 	}
 	if len(rec.ForEach) > 0 {

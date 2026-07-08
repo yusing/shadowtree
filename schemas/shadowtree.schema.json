@@ -78,7 +78,7 @@
     },
     "recipes": {
       "type": "object",
-      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, go-main-packages, go-modules, go-packages, help, lines, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
+      "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, go-main-packages, go-modules, go-packages, help, lines, retry, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
       "additionalProperties": {
         "$ref": "#/definitions/recipe"
       },
@@ -130,12 +130,12 @@
           "description": "Required main command. Use {@} in cmd to splice leftover recipe CLI args. Recipes with for_each may also use {item}, {item_help}, and {item_index}."
         },
         "pre": {
-          "$ref": "#/definitions/commandList",
-          "description": "Commands run before the main command."
+          "$ref": "#/definitions/stageCommands",
+          "description": "Commands run before the main command. May be an array of command strings or a table with cmd and optional timeout."
         },
         "post": {
-          "$ref": "#/definitions/commandList",
-          "description": "Commands run after the main command."
+          "$ref": "#/definitions/stageCommands",
+          "description": "Commands run after the main command. May be an array of command strings or a table with cmd and optional timeout."
         },
         "env": {
           "$ref": "#/definitions/env"
@@ -275,11 +275,45 @@
       "$ref": "#/definitions/shellScript",
       "description": "Command string run through the configured shell after placeholder expansion. A string that is exactly @recipe or @path:recipe invokes another recipe. In sh/bash, a literal command-position @recipe inside a script also invokes that recipe. Unquoted {name} is raw text; quoted {name} is escaped for that quote context. Quote free string/path placeholders normally, for example foo \"{bar}\". Use {name:shell} only when embedding in an unquoted shell word, such as -xxx{name:shell}; use {name:dq} inside double quotes, and {name:raw} for intentional raw text. Use {@} in cmd as a whole shell word to splice leftover CLI args."
     },
-    "commandList": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/command"
-      }
+    "stageCommands": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/stageCommand"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/stageCommand"
+          }
+        }
+      ]
+    },
+    "stageCommand": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/command"
+        },
+        {
+          "type": "object",
+          "description": "Stage command with optional execution controls.",
+          "additionalProperties": false,
+          "required": ["cmd"],
+          "properties": {
+            "cmd": {
+              "$ref": "#/definitions/command",
+              "description": "Stage command to run."
+            },
+            "timeout": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Maximum runtime for this stage command as a Go duration, such as 30s, 2m, or 1m30s."
+            }
+          },
+          "x-taplo": {
+            "initKeys": ["cmd", "timeout"]
+          }
+        }
+      ]
     },
     "shell": {
       "type": "string",

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/scriptref"
@@ -115,21 +117,147 @@ func recipeReferenceExecHandler(references map[syntax.Pos]struct{}, exported map
 			if _, ok := references[handler.Pos]; !ok {
 				return next(ctx, args)
 			}
+			runner := scriptCommandRunner{
+				next:    next,
+				sandbox: sandbox,
+				handler: handler,
+				options: options,
+				stack:   stack,
+				env:     scriptEnvironList(handler.Env, baseEnv),
+			}
+			if opts, target, ok, err := retryInvocation(args); ok {
+				if err != nil {
+					return err
+				}
+				return runRetryInvocation(ctx, opts, target, runner)
+			}
 			if _, ok := recipe.ParseRecipeReference(recipe.Command(args)); !ok || options.Recipes == nil {
 				return next(ctx, args)
 			}
-			env := scriptEnvironList(handler.Env, baseEnv)
-			err := runRecipeReference(ctx, sandbox, handler.Dir, env, recipe.Command(args), handler.Stdin, handler.Stdout, handler.Stderr, options, stack)
-			if err == nil {
-				return nil
-			}
-			var exitErr ExitError
-			if errors.As(err, &exitErr) {
-				return interp.ExitStatus(uint8(exitErr.Code))
-			}
-			return err
+			return runner.runRecipeReference(ctx, recipe.Command(args))
 		}
 	}
+}
+
+type scriptCommandRunner struct {
+	next    interp.ExecHandlerFunc
+	sandbox *sandboxWorkspace
+	handler interp.HandlerContext
+	options Options
+	stack   []string
+	env     []string
+}
+
+func (runner scriptCommandRunner) run(ctx context.Context, target recipe.Command) error {
+	if _, ok := recipe.ParseRecipeReference(target); ok && runner.options.Recipes != nil {
+		return runner.runRecipeReference(ctx, target)
+	}
+	return runner.next(ctx, target)
+}
+
+func (runner scriptCommandRunner) runRecipeReference(ctx context.Context, target recipe.Command) error {
+	err := runRecipeReference(ctx, runner.sandbox, runner.handler.Dir, runner.env, target, runner.handler.Stdin, runner.handler.Stdout, runner.handler.Stderr, runner.options, runner.stack)
+	return scriptCommandError(err)
+}
+
+func scriptCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		return interp.ExitStatus(uint8(exitErr.Code))
+	}
+	return err
+}
+
+type retryOptions struct {
+	count int
+	delay time.Duration
+}
+
+func retryInvocation(args []string) (retryOptions, recipe.Command, bool, error) {
+	prefix := "@" + recipe.RetryCommandHelper
+	if len(args) == 0 || args[0] != prefix && !strings.HasPrefix(args[0], prefix+"[") {
+		return retryOptions{}, nil, false, nil
+	}
+	opts := retryOptions{count: 3, delay: time.Second}
+	helper, targetStart, err := retryHelperInvocation(args)
+	if err != nil {
+		return retryOptions{}, nil, true, err
+	}
+	target := recipe.Command(args[targetStart:])
+	name, optionArgs := recipe.Invocation(helper)
+	if name != recipe.RetryCommandHelper {
+		return retryOptions{}, nil, true, errors.New("invalid @retry syntax")
+	}
+	for _, option := range optionArgs {
+		key, value, ok := strings.Cut(strings.TrimSpace(option), "=")
+		if !ok {
+			return retryOptions{}, nil, true, errors.New("@retry options must be key=value")
+		}
+		switch key {
+		case "count":
+			count, err := strconv.Atoi(value)
+			if err != nil || count <= 0 {
+				return retryOptions{}, nil, true, errors.New("@retry count must be a positive integer")
+			}
+			opts.count = count
+		case "delay":
+			delay, err := time.ParseDuration(value)
+			if err != nil || delay < 0 {
+				return retryOptions{}, nil, true, errors.New("@retry delay must be a non-negative duration")
+			}
+			opts.delay = delay
+		default:
+			return retryOptions{}, nil, true, errors.New("@retry unsupported option " + strconv.Quote(key))
+		}
+	}
+	if len(target) == 0 {
+		return opts, nil, true, errors.New("@retry requires a command")
+	}
+	return opts, target, true, nil
+}
+
+func retryHelperInvocation(args []string) ([]string, int, error) {
+	first := strings.TrimPrefix(args[0], "@")
+	if first == recipe.RetryCommandHelper {
+		return []string{first}, 1, nil
+	}
+	helper := []string{first}
+	for i := 1; i < len(args); i++ {
+		if strings.HasSuffix(strings.Join(helper, " "), "]") {
+			return helper, i, nil
+		}
+		helper = append(helper, args[i])
+	}
+	if strings.HasSuffix(strings.Join(helper, " "), "]") {
+		return helper, len(args), nil
+	}
+	return nil, 0, errors.New("invalid @retry syntax")
+}
+
+func runRetryInvocation(ctx context.Context, opts retryOptions, target recipe.Command, runner scriptCommandRunner) error {
+	var err error
+	for attempt := 1; attempt <= opts.count; attempt++ {
+		err = runner.run(ctx, target)
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		if attempt == opts.count {
+			break
+		}
+		if opts.delay > 0 {
+			timer := time.NewTimer(opts.delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return scriptCommandError(err)
 }
 
 func syncScriptExports(env expand.Environ, exported map[string]string) {

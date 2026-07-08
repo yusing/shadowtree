@@ -40,6 +40,9 @@ const scriptCommand = "__shadowtree_script__"
 const scriptArg0 = "shadowtree"
 const recipeReferencePrefix = "@"
 const variadicArgsPlaceholder = "{@}"
+
+// RetryCommandHelper is the built-in @ command helper that retries another command.
+const RetryCommandHelper = "retry"
 const (
 	ForEachItemPlaceholder      = "item"
 	ForEachItemHelpPlaceholder  = "item_help"
@@ -60,14 +63,15 @@ const (
 )
 
 var ReservedNames = map[string]bool{
-	"recipes":    true,
-	"init":       true,
-	"config":     true,
-	"exec":       true,
-	"completion": true,
-	"help":       true,
-	"version":    true,
-	"__complete": true,
+	"recipes":          true,
+	"init":             true,
+	"config":           true,
+	"exec":             true,
+	"completion":       true,
+	"help":             true,
+	"version":          true,
+	"__complete":       true,
+	RetryCommandHelper: true,
 }
 
 var allLogStages = []string{LogStagePre, LogStageCmd, LogStagePost}
@@ -80,6 +84,33 @@ func (command *Command) UnmarshalTOML(value any) error {
 		return err
 	}
 	*command = decoded
+	return nil
+}
+
+// StageCommand is a pre/post command plus optional execution controls.
+type StageCommand struct {
+	Cmd     Command `toml:"cmd"`
+	Timeout string  `toml:"timeout"`
+}
+
+func (stage *StageCommand) UnmarshalTOML(value any) error {
+	decoded, err := decodeStageCommand(value)
+	if err != nil {
+		return err
+	}
+	*stage = decoded
+	return nil
+}
+
+// StageCommands is the TOML representation of a pre or post command list.
+type StageCommands []StageCommand
+
+func (commands *StageCommands) UnmarshalTOML(value any) error {
+	decoded, err := decodeStageCommands(value)
+	if err != nil {
+		return err
+	}
+	*commands = decoded
 	return nil
 }
 
@@ -106,8 +137,8 @@ type Recipe struct {
 	ForEach      Command                  `toml:"for_each"`
 	Workdir      string                   `toml:"workdir"`
 	Cmd          Command                  `toml:"cmd"`
-	Pre          []Command                `toml:"pre"`
-	Post         []Command                `toml:"post"`
+	Pre          StageCommands            `toml:"pre"`
+	Post         StageCommands            `toml:"post"`
 	Env          map[string]string        `toml:"env"`
 	SyncOut      []string                 `toml:"sync_out"`
 	Log          string                   `toml:"log"`
@@ -225,6 +256,11 @@ func SupportsProfile(profile string) bool {
 	return slices.Contains(supportedProfiles, profile)
 }
 
+// IsCommandHelperName reports whether name identifies a built-in @ command helper.
+func IsCommandHelperName(name string) bool {
+	return name == RetryCommandHelper
+}
+
 func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 	if profile != GoProfile {
 		if profile == NodeProfile {
@@ -333,7 +369,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		"tidy": moduleWide(Recipe{
 			Help:      "Tidy Go module files.",
 			Cmd:       Command{"go", "mod", "tidy"},
-			Post:      []Command{ScriptCommand("if test -f go.work; then go work sync; fi")},
+			Post:      StageCommands{{Cmd: ScriptCommand("if test -f go.work; then go work sync; fi")}},
 			Sandboxed: new(false),
 		}),
 	}
@@ -453,10 +489,10 @@ func MergeRecipe(base, override Recipe) Recipe {
 		out.Cmd = slices.Clone(override.Cmd)
 	}
 	if override.Pre != nil {
-		out.Pre = cloneCommands(override.Pre)
+		out.Pre = cloneStageCommands(override.Pre)
 	}
 	if override.Post != nil {
-		out.Post = cloneCommands(override.Post)
+		out.Post = cloneStageCommands(override.Post)
 	}
 	if override.Env != nil {
 		out.Env = maps.Clone(override.Env)
@@ -550,11 +586,11 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q cmd: %w", name, err)
 	}
-	pre, err := expandCommands(rec.Pre, values, nil, rec.Shell)
+	pre, err := expandStageCommands(rec.Pre, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q pre: %w", name, err)
 	}
-	post, err := expandCommands(rec.Post, values, nil, rec.Shell)
+	post, err := expandStageCommands(rec.Post, values, nil, rec.Shell)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q post: %w", name, err)
 	}
@@ -599,10 +635,10 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	}
 	cmd = CommandWithRecipeReference(cmd, rec.Shell, shellPrelude)
 	for i := range pre {
-		pre[i] = CommandWithRecipeReference(pre[i], rec.Shell, shellPrelude)
+		pre[i].Cmd = CommandWithRecipeReference(pre[i].Cmd, rec.Shell, shellPrelude)
 	}
 	for i := range post {
-		post[i] = CommandWithRecipeReference(post[i], rec.Shell, shellPrelude)
+		post[i].Cmd = CommandWithRecipeReference(post[i].Cmd, rec.Shell, shellPrelude)
 	}
 	workdir := rec.Workdir
 	if workdir != "" {
@@ -629,12 +665,12 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	for i, command := range pre {
-		if err := ValidateCommand(command); err != nil {
+		if err := ValidateStageCommand(command); err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q pre[%d]: %w", name, i, err)
 		}
 	}
 	for i, command := range post {
-		if err := ValidateCommand(command); err != nil {
+		if err := ValidateStageCommand(command); err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 		}
 	}
@@ -670,17 +706,17 @@ func NewRunID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-func commandsUseShellPrelude(cmd Command, pre, post []Command, forEach Command, shell, shellPrelude string) bool {
+func commandsUseShellPrelude(cmd Command, pre, post []StageCommand, forEach Command, shell, shellPrelude string) bool {
 	if commandUsesShellPrelude(cmd, shell, shellPrelude) || forEachUsesShellPrelude(forEach, shell, shellPrelude) {
 		return true
 	}
-	for _, command := range pre {
-		if commandUsesShellPrelude(command, shell, shellPrelude) {
+	for _, stage := range pre {
+		if commandUsesShellPrelude(stage.Cmd, shell, shellPrelude) {
 			return true
 		}
 	}
-	for _, command := range post {
-		if commandUsesShellPrelude(command, shell, shellPrelude) {
+	for _, stage := range post {
+		if commandUsesShellPrelude(stage.Cmd, shell, shellPrelude) {
 			return true
 		}
 	}
@@ -764,18 +800,18 @@ func ValidateConfig(cfg Config) error {
 			}
 		}
 		for i, command := range rec.Pre {
-			if containsVariadicArgsPlaceholder(command) {
+			if containsVariadicArgsPlaceholder(command.Cmd) {
 				return fmt.Errorf("recipe %q pre[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
 			}
-			if err := ValidateCommand(command); err != nil {
+			if err := ValidateStageCommand(command); err != nil {
 				return fmt.Errorf("recipe %q pre[%d]: %w", name, i, err)
 			}
 		}
 		for i, command := range rec.Post {
-			if containsVariadicArgsPlaceholder(command) {
+			if containsVariadicArgsPlaceholder(command.Cmd) {
 				return fmt.Errorf("recipe %q post[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
 			}
-			if err := ValidateCommand(command); err != nil {
+			if err := ValidateStageCommand(command); err != nil {
 				return fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 			}
 		}
@@ -1217,6 +1253,23 @@ func ValidateCommand(command Command) error {
 	return nil
 }
 
+// ValidateStageCommand validates a pre/post stage command.
+func ValidateStageCommand(command StageCommand) error {
+	if err := ValidateCommand(command.Cmd); err != nil {
+		return err
+	}
+	if _, err := stageTimeout(command.Timeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// StageTimeout returns the resolved timeout for command, or zero when unset.
+func StageTimeout(command StageCommand) time.Duration {
+	timeout, _ := stageTimeout(command.Timeout)
+	return timeout
+}
+
 func Help(rec Recipe) string {
 	if rec.Help != "" {
 		return SingleLine(rec.Help)
@@ -1271,6 +1324,17 @@ func CommandHelpText(command Command) string {
 		parts = append(parts, arg)
 	}
 	return strings.Join(parts, " ")
+}
+
+// StageCommandHelpText returns a compact display form for command.
+func StageCommandHelpText(command StageCommand) string {
+	text := CommandHelpText(command.Cmd)
+	if timeout := StageTimeout(command); timeout > 0 {
+		text += " timeout=" + timeout.String()
+	} else if timeout, err := stageTimeout(command.Timeout); err == nil && timeout > 0 {
+		text += " timeout=" + timeout.String()
+	}
+	return text
 }
 
 // ParseRecipeReference parses a command whose first item starts with @.
@@ -1421,6 +1485,26 @@ func expandCommands(commands []Command, values map[string]string, variadicArgs [
 		out[i] = expanded
 	}
 	return out, nil
+}
+
+func expandStageCommands(commands []StageCommand, values map[string]string, variadicArgs []string, shell string) ([]StageCommand, error) {
+	out := make([]StageCommand, len(commands))
+	for i, command := range commands {
+		expanded, err := expandStageCommand(command, values, variadicArgs, shell)
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+		out[i] = expanded
+	}
+	return out, nil
+}
+
+func expandStageCommand(stage StageCommand, values map[string]string, variadicArgs []string, shell string) (StageCommand, error) {
+	command, err := expandCommand(stage.Cmd, values, variadicArgs, shell)
+	if err != nil {
+		return StageCommand{}, err
+	}
+	return StageCommand{Cmd: command, Timeout: stage.Timeout}, nil
 }
 
 func expandCommand(command Command, values map[string]string, variadicArgs []string, shell string) (Command, error) {
@@ -2223,6 +2307,86 @@ func decodeCommand(value any) (Command, error) {
 	}
 }
 
+func decodeStageCommands(value any) ([]StageCommand, error) {
+	switch value := value.(type) {
+	case string:
+		stage, err := decodeStageCommand(value)
+		if err != nil {
+			return nil, err
+		}
+		return []StageCommand{stage}, nil
+	case map[string]any:
+		stage, err := decodeStageCommand(value)
+		if err != nil {
+			return nil, err
+		}
+		return []StageCommand{stage}, nil
+	case []any:
+		out := make([]StageCommand, 0, len(value))
+		for i, item := range value {
+			stage, err := decodeStageCommand(item)
+			if err != nil {
+				return nil, fmt.Errorf("[%d]: %w", i, err)
+			}
+			out = append(out, stage)
+		}
+		return out, nil
+	case []string:
+		out := make([]StageCommand, 0, len(value))
+		for _, item := range value {
+			out = append(out, StageCommand{Cmd: ScriptCommand(item)})
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("stage commands must be a shell string, table, or array, got %T", value)
+	}
+}
+
+func decodeStageCommand(value any) (StageCommand, error) {
+	switch value := value.(type) {
+	case string:
+		return StageCommand{Cmd: ScriptCommand(value)}, nil
+	case map[string]any:
+		rawCommand, ok := value["cmd"]
+		if !ok {
+			return StageCommand{}, errors.New("stage command requires cmd")
+		}
+		command, err := decodeCommand(rawCommand)
+		if err != nil {
+			return StageCommand{}, err
+		}
+		stage := StageCommand{Cmd: command}
+		if rawTimeout, ok := value["timeout"]; ok {
+			timeout, ok := rawTimeout.(string)
+			if !ok {
+				return StageCommand{}, fmt.Errorf("timeout must be a duration string, got %T", rawTimeout)
+			}
+			stage.Timeout = timeout
+		}
+		return stage, nil
+	default:
+		command, err := decodeCommand(value)
+		if err != nil {
+			return StageCommand{}, err
+		}
+		return StageCommand{Cmd: command}, nil
+	}
+}
+
+func stageTimeout(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	timeout, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("timeout: %w", err)
+	}
+	if timeout <= 0 {
+		return 0, errors.New("timeout must be greater than zero")
+	}
+	return timeout, nil
+}
+
 // IsRecipeReferenceString reports whether value is exactly an @recipe script string.
 func IsRecipeReferenceString(value string) bool {
 	if !strings.HasPrefix(value, recipeReferencePrefix) ||
@@ -2552,10 +2716,11 @@ func ScalarValueString(value any) (string, error) {
 	}
 }
 
-func cloneCommands(commands []Command) []Command {
-	out := make([]Command, len(commands))
+func cloneStageCommands(commands []StageCommand) []StageCommand {
+	out := make([]StageCommand, len(commands))
 	for i, command := range commands {
-		out[i] = slices.Clone(command)
+		out[i] = command
+		out[i].Cmd = slices.Clone(command.Cmd)
 	}
 	return out
 }

@@ -136,14 +136,27 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 	if len(refs) == 0 {
 		return nil
 	}
-	recipes, ok := resolver.Recipes()
-	if !ok {
-		return nil
-	}
 	completionOpts := resolver.opts
 	crossConfigRecipes := map[string]diagnosticCrossConfigResult{}
+	var recipes map[string]recipe.Recipe
+	recipesLoaded := false
+	loadRecipes := func() bool {
+		if recipesLoaded {
+			return recipes != nil
+		}
+		var ok bool
+		recipes, ok = resolver.Recipes()
+		recipesLoaded = true
+		if !ok {
+			recipes = nil
+		}
+		return ok
+	}
 	var diagnostics []lspDiagnostic
 	for _, ref := range refs {
+		if ref.isCommandHelper() {
+			continue
+		}
 		if ref.isValueBuiltin() {
 			continue
 		}
@@ -158,6 +171,9 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 		}
 		if strings.Contains(ref.Name, "{") {
 			continue
+		}
+		if !loadRecipes() {
+			return nil
 		}
 		if ref.Path != "" {
 			if strings.Contains(ref.Path, "{") {
@@ -202,6 +218,10 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes, completionOpts)...)
 	}
 	return diagnostics
+}
+
+func (ref commandReferenceSpan) isCommandHelper() bool {
+	return ref.Path == "" && recipe.IsCommandHelperName(ref.Name)
 }
 
 func (ref commandReferenceSpan) isValueBuiltin() bool {
@@ -531,7 +551,7 @@ func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Rec
 		knownNames[region.Table] = names
 		return names
 	}
-	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) {
+	if !placeholderDiagnosticKey(region.Key) || !recipeTable(region.Table) && !stageCommandTable(region.Table) {
 		return nil
 	}
 	rec, ok := recipeForDiagnosticTable(cfg, recipes, region.Table)
@@ -544,12 +564,12 @@ func placeholderDiagnosticNames(cfg recipe.Config, recipes map[string]recipe.Rec
 	for name := range rec.Arguments {
 		names[name] = true
 	}
-	if len(rec.ForEach) > 0 && (region.Key == "cmd" || region.Key == "workdir") {
+	if len(rec.ForEach) > 0 && recipeTable(region.Table) && (region.Key == "cmd" || region.Key == "workdir") {
 		names[recipe.ForEachItemPlaceholder] = true
 		names[recipe.ForEachItemHelpPlaceholder] = true
 		names[recipe.ForEachItemIndexPlaceholder] = true
 	}
-	if region.Key == "cmd" {
+	if region.Key == "cmd" && recipeTable(region.Table) {
 		names["@"] = true
 	}
 	return names

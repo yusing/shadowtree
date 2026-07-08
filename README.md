@@ -273,6 +273,29 @@ Use bracket-style arguments to pass named or positional arguments:
 pre = ["@build[component=godoxy, mode=dev]"]
 ```
 
+Use a structured `pre` or `post` table when a stage command needs execution
+controls:
+
+```toml
+[recipes.benchmark.pre]
+cmd = "benchmark_prepare"
+timeout = "120s"
+```
+
+`timeout` is a Go duration such as `30s`, `2m`, or `1m30s`. If it expires,
+Shadowtree stops that stage command, skips later main work when the failure is
+in `pre`, and still runs `post` commands.
+
+Use `@retry` in a shell command position to retry flaky setup or readiness
+checks:
+
+```toml
+pre = "@retry[count=30,delay=1s] benchmark_prepare"
+```
+
+`count` is the maximum number of attempts and `delay` is the wait between
+failed attempts. Omitted values default to `count=3` and `delay=1s`.
+
 Use shell script strings when a workflow needs shared shell logic, conditionals,
 pipes, or multiple statements.
 

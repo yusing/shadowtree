@@ -348,7 +348,7 @@ func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) er
 func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
 	var firstErr error
 	for i, command := range options.Resolved.Recipe.Pre {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePre, i, stack); err != nil {
+		if err := runStageCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePre, i, stack); err != nil {
 			firstErr = err
 			break
 		}
@@ -357,11 +357,25 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 		firstErr = runMainCommands(ctx, sandbox, dir, env, options, stdin, stdout, stderr, stack)
 	}
 	for i, command := range options.Resolved.Recipe.Post {
-		if err := runCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
+		if err := runStageCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+func runStageCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.StageCommand, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
+	timeout := recipe.StageTimeout(command)
+	if timeout <= 0 {
+		return runCommand(ctx, sandbox, dir, env, command.Cmd, stdin, stdout, stderr, options, phase, index, stack)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := runCommand(runCtx, sandbox, dir, env, command.Cmd, stdin, stdout, stderr, options, phase, index, stack)
+	if err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s[%d] timed out after %s", logStageForPhase(phase), index, timeout)
+	}
+	return err
 }
 
 func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
@@ -814,7 +828,7 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 		fmt.Fprintln(w, "sandboxed: false")
 	}
 	for i, command := range resolved.Recipe.Pre {
-		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.CommandHelpText(command))
+		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.StageCommandHelpText(command))
 	}
 	if len(resolved.Recipe.ForEach) > 0 {
 		fmt.Fprintf(w, "for_each: %s\n", recipe.CommandHelpText(resolved.Recipe.ForEach))
@@ -824,7 +838,7 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
 	for i, command := range resolved.Recipe.Post {
-		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.CommandHelpText(command))
+		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.StageCommandHelpText(command))
 	}
 	for _, path := range resolved.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)
