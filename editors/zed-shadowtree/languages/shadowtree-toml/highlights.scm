@@ -48,12 +48,18 @@
     "help"
     "arguments"
     "presets"
+    "requires"
     "sandboxed"
     "for_each"
     "workdir"
     "cmd"
     "pre"
     "post"
+    "commands"
+    "optional_commands"
+    "go_commands"
+    "node_commands"
+    "timeout"
     "type"
     "path_kind"
     "position"
@@ -61,7 +67,10 @@
     "default"
     "min"
     "max"
-    "values"))
+    "values"
+    "log"
+    "log_stages"
+    "log_tee"))
 
 ; Variables and generated variables.
 (table
