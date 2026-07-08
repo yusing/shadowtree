@@ -1137,10 +1137,6 @@ func validateValueCommand(field string, command Command) error {
 	return ValidateCommand(command)
 }
 
-func ValidateCommandsMap(name string, commands map[string]Command) error {
-	return validateCommandsMapAt(name, []string{name}, commands)
-}
-
 func validateCommandsMapAt(name string, pathPrefix []string, commands map[string]Command) error {
 	for key, command := range commands {
 		if err := validateIdentifierKey(name, key); err != nil {
@@ -1151,10 +1147,6 @@ func validateCommandsMapAt(name string, pathPrefix []string, commands map[string
 		}
 	}
 	return nil
-}
-
-func ValidateVarsMap(name string, vars map[string]string) error {
-	return validateVarsMapAt(name, []string{name}, vars)
 }
 
 func validateVarsMapAt(name string, pathPrefix []string, vars map[string]string) error {
@@ -1475,18 +1467,6 @@ func MergeArgument(base, override Argument) Argument {
 	return out
 }
 
-func expandCommands(commands []Command, values map[string]string, variadicArgs []string, shell string) ([]Command, error) {
-	out := make([]Command, len(commands))
-	for i, command := range commands {
-		expanded, err := expandCommand(command, values, variadicArgs, shell)
-		if err != nil {
-			return nil, fmt.Errorf("[%d]: %w", i, err)
-		}
-		out[i] = expanded
-	}
-	return out, nil
-}
-
 func expandStageCommands(commands []StageCommand, values map[string]string, variadicArgs []string, shell string) ([]StageCommand, error) {
 	out := make([]StageCommand, len(commands))
 	for i, command := range commands {
@@ -1595,10 +1575,6 @@ func expandStringMap(items map[string]string, values map[string]string) (map[str
 		out[key] = expanded
 	}
 	return out, nil
-}
-
-func expandVars(vars map[string]string) (map[string]string, error) {
-	return expandVarsWithBase(vars, nil)
 }
 
 func runtimePlaceholderSentinels(base map[string]string) map[string]string {
@@ -2439,14 +2415,6 @@ func validateArgumentPathKind(name string, arg Argument) error {
 	}
 }
 
-func validateArgumentValue(name string, arg Argument, value string) error {
-	argRange, err := parseArgumentRange(name, arg)
-	if err != nil {
-		return err
-	}
-	return validateArgumentValueWithRange(name, arg, argRange, value)
-}
-
 func validateArgumentValueWithRange(name string, arg Argument, argRange argumentRange, value string) error {
 	typ := ArgumentType(arg)
 	switch typ {
@@ -2486,14 +2454,6 @@ func validateArgumentValueWithRange(name string, arg Argument, argRange argument
 		}
 	}
 	return nil
-}
-
-func argumentValueString(name string, arg Argument, raw any) (string, error) {
-	argRange, err := parseArgumentRange(name, arg)
-	if err != nil {
-		return "", err
-	}
-	return argumentValueStringWithRange(name, arg, argRange, raw)
 }
 
 func argumentValueStringWithRange(name string, arg Argument, argRange argumentRange, raw any) (string, error) {

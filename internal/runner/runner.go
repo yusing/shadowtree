@@ -290,29 +290,12 @@ func (sandbox *sandboxWorkspace) relInsideRoot(dir string) (string, bool) {
 	return relInside(sandbox.root, dir)
 }
 
-func (sandbox *sandboxWorkspace) relInsideOverlayView(dir string) (string, bool) {
-	if rel, ok := relInside(sandbox.root, dir); ok {
-		return rel, true
-	}
-	return relInside(sandbox.target, dir)
-}
-
 func relInside(root, dir string) (string, bool) {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", false
 	}
 	return rel, true
-}
-
-func (sandbox *sandboxWorkspace) materialize(dst string) error {
-	if err := clearHostDir(dst); err != nil {
-		return err
-	}
-	if err := CopyTree(sandbox.source, dst); err != nil {
-		return err
-	}
-	return applyOverlayUpper(sandbox.upper, dst, nil)
 }
 
 func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) error {

@@ -964,11 +964,6 @@ func scriptRecipeReferencePrefixAt(line string, pos lspPosition, region scriptRe
 	return activeStart, prefix, true
 }
 
-func completionRecipes(ctx context.Context, text string, opts completionOptions) (map[string]recipe.Recipe, bool) {
-	_, recipes, ok := completionConfig(ctx, text, opts)
-	return recipes, ok
-}
-
 func completionConfig(ctx context.Context, text string, opts completionOptions) (configfile.Loaded, map[string]recipe.Recipe, bool) {
 	var cfg recipe.Config
 	md, err := toml.Decode(text, &cfg)
