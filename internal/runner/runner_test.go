@@ -773,6 +773,153 @@ func TestRunRejectsEscapingLogPath(t *testing.T) {
 	}
 }
 
+func TestRunLogReplacesParentSymlinkWithoutMutatingTarget(t *testing.T) {
+	source := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "run.log"), []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(source, "logs")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
+			Log:       "logs/run.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(outside, "run.log"), "victim")
+	info, err := os.Lstat(filepath.Join(source, "logs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Type() == os.ModeSymlink {
+		t.Fatal("source logs is still a symlink")
+	}
+	assertFileContent(t, filepath.Join(source, "logs", "run.log"), `== cmd: <script> ==
+logged
+`)
+}
+
+func TestRunLogPreservesRegularParentFile(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "logs"), []byte("parent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
+			Log:       "logs/run.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "log parent is not a directory: logs") {
+		t.Fatalf("Run() error = %v, want log parent error", err)
+	}
+	assertFileContent(t, filepath.Join(source, "logs"), "parent")
+}
+
+func TestRunLogReplacesLeafSymlinkWithoutMutatingTarget(t *testing.T) {
+	source := t.TempDir()
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.log")
+	if err := os.WriteFile(victim, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(source, "run.log")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
+			Log:       "run.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, victim, "victim")
+	info, err := os.Lstat(filepath.Join(source, "run.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Type() == os.ModeSymlink {
+		t.Fatal("source run.log is still a symlink")
+	}
+	assertFileContent(t, filepath.Join(source, "run.log"), `== cmd: <script> ==
+logged
+`)
+}
+
+func TestRunLogPreservesLeafDirectory(t *testing.T) {
+	source := t.TempDir()
+	logDir := filepath.Join(source, "run.log")
+	if err := os.Mkdir(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "kept.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
+			Log:       "run.log",
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "log path is a directory: run.log") {
+		t.Fatalf("Run() error = %v, want log directory error", err)
+	}
+	assertFileContent(t, filepath.Join(logDir, "kept.txt"), "kept")
+}
+
 func TestRunCopiedWorkspaceSyncPreservesHostLog(t *testing.T) {
 	original := newOverlayWorkspace
 	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {

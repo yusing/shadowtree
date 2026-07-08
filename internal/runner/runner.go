@@ -77,30 +77,97 @@ func openRecipeLog(resolved recipe.Resolved, sourceDir string) (*os.File, string
 	if resolved.LogPath == "" {
 		return nil, "", nil
 	}
-	path, err := recipeLogPath(resolved, sourceDir)
+	base, name, path, err := recipeLogPath(resolved, sourceDir)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, "", fmt.Errorf("open log root: %w", err)
+	}
+	defer root.Close()
+	if err := ensureRecipeLogParent(root, name); err != nil {
 		return nil, "", fmt.Errorf("create log directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err := removeRecipeLogLeaf(root, name); err != nil {
+		return nil, "", err
+	}
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, "", fmt.Errorf("open log: %w", err)
 	}
 	return file, path, nil
 }
 
-func recipeLogPath(resolved recipe.Resolved, sourceDir string) (string, error) {
+func recipeLogPath(resolved recipe.Resolved, sourceDir string) (string, string, string, error) {
 	path := filepath.Clean(filepath.FromSlash(resolved.LogPath))
 	if path == "." || filepath.IsAbs(path) || !filepath.IsLocal(path) {
-		return "", fmt.Errorf("log path must be relative to config directory: %s", resolved.LogPath)
+		return "", "", "", fmt.Errorf("log path must be relative to config directory: %s", resolved.LogPath)
 	}
 	base := sourceDir
 	if resolved.ConfigPath != "" {
 		base = filepath.Dir(resolved.ConfigPath)
 	}
-	return filepath.Join(base, path), nil
+	name := filepath.ToSlash(path)
+	return base, name, filepath.Join(base, path), nil
+}
+
+func ensureRecipeLogParent(root *os.Root, name string) error {
+	dir := pathDirSlash(name)
+	if dir == "." {
+		return nil
+	}
+	current := ""
+	for part := range strings.SplitSeq(dir, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		if current == "" {
+			current = part
+		} else {
+			current += "/" + part
+		}
+		info, err := root.Lstat(current)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			if err := root.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+		case err != nil:
+			return err
+		case info.Mode().Type() == os.ModeSymlink:
+			if err := root.RemoveAll(current); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err := root.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+		case !info.IsDir():
+			return fmt.Errorf("log parent is not a directory: %s", current)
+		}
+	}
+	return nil
+}
+
+func removeRecipeLogLeaf(root *os.Root, name string) error {
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat log: %w", err)
+	}
+	mode := info.Mode()
+	if mode.IsDir() {
+		return fmt.Errorf("log path is a directory: %s", name)
+	}
+	if mode.Type() != 0 && mode.Type() != os.ModeSymlink {
+		return fmt.Errorf("log path is not a regular file: %s", name)
+	}
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove log: %w", err)
+	}
+	return nil
 }
 
 func runWithRecipeLog(options Options, sourceDir string, run func(Options) error) (string, error) {
