@@ -323,6 +323,43 @@ func TestOverlaySyncRootMaterializesRequestedWhiteout(t *testing.T) {
 	}
 }
 
+func TestOverlaySyncRootDirectoryDeletionMirrorsToSource(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "kept.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	upperDir := filepath.Join(upper, "dir")
+	if err := os.Mkdir(upperDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	whiteout := filepath.Join(upperDir, "stale.txt")
+	if err := os.WriteFile(whiteout, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setOverlayXattr(t, whiteout, "whiteout")
+	sandbox := newOverlaySandboxForTest(t, source, upper)
+
+	syncRoot, cleanup, err := sandbox.SyncRoot([]string{"dir"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := SyncPath(syncRoot, source, "dir"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "dir", "stale.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale.txt err = %v, want not exist", err)
+	}
+	assertFileContent(t, filepath.Join(source, "dir", "kept.txt"), "kept")
+}
+
 func TestOverlaySyncRootMaterializesRequestedOpaqueAncestor(t *testing.T) {
 	source := t.TempDir()
 	upper := t.TempDir()

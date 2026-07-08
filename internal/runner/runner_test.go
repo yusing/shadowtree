@@ -968,6 +968,51 @@ logged
 	}
 }
 
+func TestRunCopiedWorkspaceSyncOutDirectoryRemovesStaleFile(t *testing.T) {
+	original := newOverlayWorkspace
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		return nil, errors.New("forced overlay failure")
+	}
+	t.Cleanup(func() {
+		newOverlayWorkspace = original
+	})
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "dir", "kept.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.Command{"sh", "-c", "rm dir/stale.txt; printf shadow > dir/new.txt"},
+			SyncOut:   []string{"dir"},
+			Sandboxed: new(true),
+		},
+		nil,
+		nil,
+		nil,
+		filepath.Join(source, ".shadowtree.toml"),
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "dir", "stale.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale.txt err = %v, want not exist", err)
+	}
+	assertFileContent(t, filepath.Join(source, "dir", "kept.txt"), "kept")
+	assertFileContent(t, filepath.Join(source, "dir", "new.txt"), "shadow")
+}
+
 func TestRunLogsPostAfterMainFailure(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(

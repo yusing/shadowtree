@@ -1358,6 +1358,11 @@ func SyncPath(workspace, source, requested string) error {
 	if info.IsDir() && shouldSkip(cleaned, fileInfoDirEntry{info: info}) {
 		return removeRootPath(dstRoot, cleaned)
 	}
+	if info.IsDir() {
+		if err := removeRootPath(dstRoot, cleaned); err != nil {
+			return err
+		}
+	}
 	supported, err := copyRootPathToRoot(srcRoot, cleaned, info, dstRoot, cleaned, nil)
 	if err != nil {
 		return err
