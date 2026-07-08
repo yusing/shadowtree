@@ -15,6 +15,9 @@ default = "shadowtree"
 help = "Go package to build."
 default = "./cmd/shadowtree"
 
+[recipes.check]
+post = ["command -v deadcode >/dev/null && deadcode ./..."]
+
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
 sandboxed = false
