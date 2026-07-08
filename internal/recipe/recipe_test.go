@@ -113,6 +113,25 @@ func TestValidateConfigAcceptsRequirements(t *testing.T) {
 	}
 }
 
+func TestValidateConfigAcceptsVarsArgumentValuesDefaultsAndPresets(t *testing.T) {
+	cfg := Config{Recipes: map[string]Recipe{
+		"render": {
+			Cmd:  Command{"render", "{name}"},
+			Vars: map[string]string{"component": "api"},
+			Arguments: map[string]Argument{
+				"name": {Default: "component", Values: ScriptCommand("@vars")},
+			},
+			Presets: map[string]RecipePreset{
+				"stable": {Arguments: map[string]any{"name": "component"}},
+			},
+		},
+	}}
+
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateConfigRejectsInvalidRequirements(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2173,6 +2192,83 @@ func TestResolveArgumentRangesRejectOutOfRangeValues(t *testing.T) {
 				t.Fatalf("Resolve() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveArgumentValuesRejectInvalidEnumValues(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"deploy", "{target}", "{stage}"},
+		Arguments: map[string]Argument{
+			"target": {Position: 1, Required: true, Values: ScriptCommand("@enum api worker")},
+			"stage":  {Required: true, Values: ScriptCommand("@enum dev prod")},
+		},
+	}
+
+	if _, err := Resolve("deploy", rec, []string{"api", "stage=prod"}, nil, nil, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Resolve("deploy", rec, []string{"docs", "stage=prod"}, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `target: invalid value "docs"`) {
+		t.Fatalf("Resolve() positional error = %v, want invalid target", err)
+	}
+	_, err = Resolve("deploy", rec, []string{"api", "stage=qa"}, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `stage: invalid value "qa"`) {
+		t.Fatalf("Resolve() named error = %v, want invalid stage", err)
+	}
+	_, err = Resolve("deploy", rec, []string{"api", "stage="}, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `stage: invalid value ""`) {
+		t.Fatalf("Resolve() empty error = %v, want invalid stage", err)
+	}
+}
+
+func TestResolveArgumentValuesRejectInvalidDefaultValues(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"deploy", "{target}"},
+		Arguments: map[string]Argument{
+			"target": {Default: "docs", Values: ScriptCommand("@enum api worker")},
+		},
+	}
+
+	_, err := Resolve("deploy", rec, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `target default: target: invalid value "docs"`) {
+		t.Fatalf("Resolve() error = %v, want invalid default", err)
+	}
+}
+
+func TestResolveArgumentValuesRejectInvalidRecipeValues(t *testing.T) {
+	rec := Recipe{
+		Cmd:       Command{"shadowtree", "{target}"},
+		Arguments: map[string]Argument{"target": {Values: ScriptCommand("@recipes")}},
+	}
+	recipes := map[string]Recipe{
+		"build": rec,
+		"test":  {Cmd: Command{"go", "test"}},
+	}
+
+	if _, err := ResolveWithOptions("build", rec, []string{"target=test"}, nil, nil, "", "", ResolveOptions{Recipes: recipes}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ResolveWithOptions("build", rec, []string{"target=deploy"}, nil, nil, "", "", ResolveOptions{Recipes: recipes})
+	if err == nil || !strings.Contains(err.Error(), `target: invalid value "deploy"`) {
+		t.Fatalf("ResolveWithOptions() error = %v, want invalid target", err)
+	}
+}
+
+func TestResolveArgumentValuesAcceptVarsDefaultValues(t *testing.T) {
+	rec := Recipe{
+		Cmd:  Command{"render", "{name}"},
+		Vars: map[string]string{"component": "api"},
+		Arguments: map[string]Argument{
+			"name": {Default: "component", Values: ScriptCommand("@vars")},
+		},
+	}
+
+	got, err := Resolve("render", rec, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"render", "component"}) {
+		t.Fatalf("Main = %#v", got.Main)
 	}
 }
 

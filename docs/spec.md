@@ -583,6 +583,11 @@ names.
 `@vars` returns recipe placeholder and argument names. Relative `@lines` paths,
 `@glob` patterns, and Go discovery walks resolve from the config file directory
 when available.
+When `values` is a builtin that can be checked without running arbitrary
+commands or walking the filesystem, such as `@enum`, `@recipes`, or `@vars`,
+explicit CLI and recipe-reference argument values must match one of its
+candidates. Filesystem discovery and command-backed `values` remain completion
+and help providers and are not run as part of argument validation.
 
 Example:
 
@@ -671,6 +676,9 @@ Argument values are resolved in this order: typed argument defaults, selected
 recipe preset defaults, then explicit positional or `key=value` CLI arguments.
 The `preset=<name>` selector is consumed like a typed argument and is excluded
 from `{@}`. Tokens after `--` are not preset selectors.
+Resolved argument values are type-checked, range-checked, and, for safely
+checkable `values` builtins, checked against the accepted candidate set before
+any recipe command runs.
 
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are

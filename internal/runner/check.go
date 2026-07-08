@@ -130,7 +130,7 @@ func validateRecipeReference(ctx context.Context, options Options, stage string,
 	if dynamicArgs {
 		return nil
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes})
 	if err != nil {
 		return fmt.Errorf("recipe %q %s @%s: %w", options.Resolved.Name, stage, ref.Target(), err)
 	}
@@ -156,7 +156,7 @@ func validateCrossConfigReference(ctx context.Context, options Options, stage st
 	if dynamicArgs {
 		return nil
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes})
 	if err != nil {
 		return fmt.Errorf("recipe %q %s @%s: %w", options.Resolved.Name, stage, ref.Target(), err)
 	}

@@ -401,7 +401,9 @@ exact whole seconds and expands them as base-10 integer seconds. Path arguments
 can set `path_kind` to `any`, `file`, `dir`, or `executable` to filter
 completion candidates. `int`, `float`, `duration`, and `duration:seconds`
 arguments can set inclusive `min` and `max` bounds; duration bounds use Go
-duration strings such as `100ms` or `2m`.
+duration strings such as `100ms` or `2m`. When `values` is a safely checkable
+builtin such as `@enum`, `@recipes`, or `@vars`, explicit typed-argument values
+must match one of its candidates before Shadowtree runs the recipe.
 
 Use `{@}` in `cmd` to splice leftover recipe CLI args:
 

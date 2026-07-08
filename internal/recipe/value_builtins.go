@@ -134,6 +134,51 @@ func BuiltinValues(command Command, opts ValueBuiltinOptions) ([]ValueCandidate,
 	return values, true, nil
 }
 
+// ValidateArgumentAcceptedValue validates value against arg.Values when the
+// values provider can be evaluated safely during argument resolution.
+func ValidateArgumentAcceptedValue(name string, arg Argument, value string, opts ValueBuiltinOptions) error {
+	if len(arg.Values) == 0 {
+		return nil
+	}
+	values, ok, err := acceptedValueCandidates(arg.Values, opts)
+	if err != nil || !ok {
+		return err
+	}
+	if values == nil {
+		return nil
+	}
+	for _, candidate := range values {
+		if candidate.Value == value {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: invalid value %q", name, value)
+}
+
+func acceptedValueCandidates(command Command, opts ValueBuiltinOptions) ([]ValueCandidate, bool, error) {
+	calls, ok, err := validatedValueBuiltinInvocations(command)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	var values []ValueCandidate
+	for _, call := range calls {
+		switch call.name {
+		case globValuesName, goMainPackagesValuesName, goModulesValuesName, goPackagesValuesName, linesValuesName:
+			return nil, true, nil
+		case recipesValuesName:
+			if opts.Recipes == nil {
+				return nil, true, nil
+			}
+		}
+		callValues, err := builtinValuesForCall(call, opts)
+		if err != nil {
+			return nil, true, err
+		}
+		values = append(values, callValues...)
+	}
+	return values, true, nil
+}
+
 func builtinValuesForCall(call valueBuiltinCall, opts ValueBuiltinOptions) ([]ValueCandidate, error) {
 	name := call.name
 	args := call.args

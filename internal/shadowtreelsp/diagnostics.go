@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	recipecompletion "github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
@@ -362,7 +361,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 			if strings.Contains(ref.Path, "{") {
 				continue
 			}
-			crossRecipes, targetOpts, err := diagnosticCrossConfigRecipes(ctx, ref.Path, completionOpts, crossConfigRecipes)
+			crossRecipes, _, err := diagnosticCrossConfigRecipes(ctx, ref.Path, completionOpts, crossConfigRecipes)
 			if err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
@@ -385,7 +384,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 				})
 				continue
 			}
-			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes, targetOpts)...)
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes)...)
 			continue
 		}
 		rec, ok := recipes[ref.Name]
@@ -398,7 +397,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 			})
 			continue
 		}
-		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes, completionOpts)...)
+		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes)...)
 	}
 	return diagnostics
 }
@@ -414,7 +413,7 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 	return valueBuiltinReferenceContext(ref.Table, ref.Key)
 }
 
-func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) []lspDiagnostic {
+func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe) []lspDiagnostic {
 	if len(ref.Args) == 0 || len(rec.Arguments) == 0 && len(rec.Presets) == 0 {
 		return nil
 	}
@@ -478,12 +477,9 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 			continue
 		}
 		value = unquoteRecipeReferenceArgumentValue(value)
-		if err := validateRecipeReferenceArgumentValue(name, arg, value); err != nil {
+		if err := validateRecipeReferenceArgumentValue(ctx, name, arg, value, rec, recipes); err != nil {
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
 			continue
-		}
-		if len(arg.Values) > 0 && value != "" && recipeReferenceArgumentValueCheckAllowed(arg.Values) && !recipeReferenceArgumentValueExists(ctx, name, value, rec, recipes, opts) {
-			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, fmt.Sprintf("%s: invalid value %q", name, value)))
 		}
 	}
 	return diagnostics
@@ -938,33 +934,15 @@ func placeholderNames(value string) []string {
 	return names
 }
 
-func validateRecipeReferenceArgumentValue(name string, arg recipe.Argument, value string) error {
-	arg.Default = nil
-	arg.Required = false
-	_, _, err := recipe.ResolveArguments(recipe.Recipe{Arguments: map[string]recipe.Argument{name: arg}}, []string{name + "=" + value})
-	return err
-}
-
-func recipeReferenceArgumentValueExists(ctx context.Context, name, value string, rec recipe.Recipe, recipes map[string]recipe.Recipe, opts completionOptions) bool {
-	candidates := recipecompletion.GroupedArgumentCandidates(
-		ctx,
-		"",
-		name+"="+value,
-		rec,
-		recipes,
-		lspCompletionCandidateOptions(opts),
-	)
-	for _, candidate := range candidates {
-		if candidate.Value == name+"="+value {
-			return true
-		}
+func validateRecipeReferenceArgumentValue(ctx context.Context, name string, arg recipe.Argument, value string, rec recipe.Recipe, recipes map[string]recipe.Recipe) error {
+	if err := recipe.ValidateArgumentValue(name, arg, value); err != nil {
+		return err
 	}
-	return false
-}
-
-func recipeReferenceArgumentValueCheckAllowed(values recipe.Command) bool {
-	usesFilesystem, ok, err := recipe.ValueBuiltinUsesFilesystem(values)
-	return ok && err == nil && !usesFilesystem
+	return recipe.ValidateArgumentAcceptedValue(name, arg, value, recipe.ValueBuiltinOptions{
+		Context: ctx,
+		Recipe:  rec,
+		Recipes: recipes,
+	})
 }
 
 func unquoteRecipeReferenceArgumentValue(value string) string {

@@ -775,7 +775,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes})
 	if err != nil {
 		return err
 	}
@@ -805,7 +805,7 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Target())
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes})
 	if err != nil {
 		return err
 	}
@@ -849,7 +849,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	if !ok {
 		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, env, opts.ConfigPath, "")
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, env, opts.ConfigPath, "", recipe.ResolveOptions{Recipes: opts.Recipes})
 	if err != nil {
 		return "", err
 	}
@@ -880,7 +880,7 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	if !ok {
 		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Target())
 	}
-	resolved, err := recipe.Resolve(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile)
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{Recipes: target.Recipes})
 	if err != nil {
 		return "", err
 	}

@@ -311,6 +311,7 @@ Resolution rules:
 - `path` accepts absolute, relative, `~/`; `rel_path` rejects absolute and `~`.
 - `duration` accepts Go duration strings like `10s`, `1500ms`, `1m30s`; `duration:seconds` accepts exact whole-second Go durations and expands as base-10 integer seconds.
 - `min` / `max` validate defaults, preset values, explicit CLI args, recipe-reference args for rangeable types.
+- Keep validation in Shadowtree's typed argument resolution, runtime validation, and LSP diagnostics. Do not put accepted-value, range, preset, or recipe-reference validation in shell scripts; shell bodies should consume already-validated placeholders.
 - Path completion lists filesystem candidates. `path_kind=file` and `path_kind=executable` include dirs as traversal candidates; `path_kind=dir` lists dirs only.
 - Command-backed scalar `values` for help/completion run with top-level `env` overlaid by recipe `env` and configured recipe shell; help text splits on tab. Editor completion/diagnostics do not run command-backed `values`; use editor-safe builtins: `@enum`, `@glob`, `@lines`, `@recipes`, `@vars`, `@go-modules`, `@go-packages`, `@go-main-packages`.
 

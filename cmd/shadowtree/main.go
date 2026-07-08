@@ -182,7 +182,7 @@ func run(ctx context.Context, args []string) error {
 		if !ok {
 			return fmt.Errorf("unknown recipe: %s", name)
 		}
-		resolved, err := recipe.Resolve(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile)
+		resolved, err := recipe.ResolveWithOptions(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile, recipe.ResolveOptions{Recipes: resolvedSet})
 		if err != nil {
 			return err
 		}

@@ -196,7 +196,8 @@ type Resolved struct {
 }
 
 type ResolveOptions struct {
-	RunID string
+	RunID   string
+	Recipes map[string]Recipe
 }
 
 type ConfigErrorTarget string
@@ -592,7 +593,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	runtimeValues := map[string]string{RunIDPlaceholder: runID}
-	presetName, argValues, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs)
+	presetName, argValues, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes})
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
@@ -940,7 +941,7 @@ func validateRequirementName(field, name string) error {
 }
 
 func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
-	_, values, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs)
+	_, values, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{})
 	return values, variadicArgs, err
 }
 
@@ -1009,11 +1010,12 @@ func ValidatePresetSelection(rec Recipe, selectedPreset, value string) error {
 	return nil
 }
 
-func resolveArgumentsWithPreset(rec Recipe, cliArgs []string) (string, map[string]string, []string, error) {
+func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBuiltinOptions) (string, map[string]string, []string, error) {
 	presetName, cliArgs, err := extractRecipePreset(rec, cliArgs)
 	if err != nil {
 		return "", nil, nil, err
 	}
+	valueOpts.Recipe = rec
 	usesVariadicArgs := RecipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
 		if len(cliArgs) == 0 {
@@ -1034,7 +1036,7 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string) (string, map[strin
 	values := map[string]string{}
 	for name, arg := range rec.Arguments {
 		if arg.Default != nil {
-			value, err := resolvedArgumentValueString(name, arg, arg.Default)
+			value, err := resolvedArgumentValueString(name, arg, arg.Default, valueOpts)
 			if err != nil {
 				return "", nil, nil, fmt.Errorf("%s default: %w", name, err)
 			}
@@ -1045,7 +1047,7 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string) (string, map[strin
 		preset := rec.Presets[presetName]
 		for name, raw := range preset.Arguments {
 			arg := rec.Arguments[name]
-			value, err := resolvedArgumentValueString(name, arg, raw)
+			value, err := resolvedArgumentValueString(name, arg, raw, valueOpts)
 			if err != nil {
 				return "", nil, nil, fmt.Errorf("preset %q: %w", presetName, err)
 			}
@@ -1072,7 +1074,7 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string) (string, map[strin
 				}
 				return "", nil, nil, fmt.Errorf("unknown argument %q", key)
 			}
-			expanded, err := resolvedArgumentValueString(key, arg, value)
+			expanded, err := resolvedArgumentValueString(key, arg, value, valueOpts)
 			if err != nil {
 				return "", nil, nil, err
 			}
@@ -1093,7 +1095,7 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string) (string, map[strin
 		name := positionals[nextPositional]
 		nextPositional++
 		arg := rec.Arguments[name]
-		expanded, err := resolvedArgumentValueString(name, arg, token)
+		expanded, err := resolvedArgumentValueString(name, arg, token, valueOpts)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -1165,15 +1167,14 @@ func ValidateArguments(args map[string]Argument) error {
 			}
 			positions[arg.Position] = name
 		}
-		if arg.Default != nil {
-			_, err := argumentValueStringWithRange(name, arg, argRange, arg.Default)
-			if err != nil {
-				return configValuePathError(fmt.Errorf("%s default: %w", name, err), "arguments", name, "default")
-			}
-		}
 		if arg.Values != nil {
 			if err := validateValueCommand("values", arg.Values); err != nil {
 				return configValuePathError(fmt.Errorf("%s values: %w", name, err), "arguments", name, "values")
+			}
+		}
+		if arg.Default != nil {
+			if _, err := argumentValueStringWithRange(name, arg, argRange, arg.Default); err != nil {
+				return configValuePathError(fmt.Errorf("%s default: %w", name, err), "arguments", name, "default")
 			}
 		}
 	}
@@ -2732,7 +2733,16 @@ func argumentValueStringWithRange(name string, arg Argument, argRange argumentRa
 	return value, nil
 }
 
-func resolvedArgumentValueString(name string, arg Argument, raw any) (string, error) {
+// ValidateArgumentValue validates a string argument value's scalar type and range.
+func ValidateArgumentValue(name string, arg Argument, value string) error {
+	argRange, err := parseArgumentRange(name, arg)
+	if err != nil {
+		return err
+	}
+	return validateArgumentValueWithRange(name, arg, argRange, value)
+}
+
+func resolvedArgumentValueString(name string, arg Argument, raw any, valueOpts ValueBuiltinOptions) (string, error) {
 	argRange, err := parseArgumentRange(name, arg)
 	if err != nil {
 		return "", err
@@ -2749,9 +2759,15 @@ func resolvedArgumentValueString(name string, arg Argument, raw any) (string, er
 		if err := validateArgumentRange(name, value, argRangeValue{kind: argumentRangeKindDuration, durationValue: duration}, argRange); err != nil {
 			return "", err
 		}
+		if err := ValidateArgumentAcceptedValue(name, arg, value, valueOpts); err != nil {
+			return "", err
+		}
 		return strconv.FormatInt(int64(duration/time.Second), 10), nil
 	}
 	if err := validateArgumentValueWithRange(name, arg, argRange, value); err != nil {
+		return "", err
+	}
+	if err := ValidateArgumentAcceptedValue(name, arg, value, valueOpts); err != nil {
 		return "", err
 	}
 	value, err = expandPathArgumentValue(arg, value)

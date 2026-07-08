@@ -1029,6 +1029,58 @@ cmd = "true"
 	assertDiagnosticRange(t, diagnostics[0], 10, len(`@minify `), len(`@minify component=foo`))
 }
 
+func TestDocumentDiagnosticsRejectEmptyValuesScriptRecipeReferenceEnumArgumentValue(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.deploy.arguments.stage]
+values = "@enum dev prod"
+
+[recipes.deploy]
+cmd = "true"
+
+[recipes.test]
+cmd = "@deploy[stage=]"
+`)
+	assertOneDiagnostic(t, diagnostics, `stage: invalid value ""`)
+	assertDiagnosticRange(t, diagnostics[0], 7, len(`cmd = "@deploy[`), len(`cmd = "@deploy[stage=`))
+}
+
+func TestDocumentDiagnosticsAcceptValuesScriptRecipeReferenceVarsArgumentValue(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.render.vars]
+component = "api"
+
+[recipes.render.arguments.name]
+type = "string"
+values = "@vars"
+
+[recipes.render]
+cmd = "true"
+
+[recipes.test]
+cmd = "@render[name=component]"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
+func TestDocumentDiagnosticsAcceptVarsValuesDefaultsAndPresets(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.render.vars]
+component = "api"
+
+[recipes.render.arguments.name]
+values = "@vars"
+default = "component"
+
+[recipes.render.presets.stable.arguments]
+name = "component"
+
+[recipes.render]
+cmd = "true"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsRejectUnknownRecipePresetArgument(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.benchmark.arguments.connections]
 type = "int"
