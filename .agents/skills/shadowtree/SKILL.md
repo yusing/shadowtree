@@ -22,6 +22,9 @@ shadowtree config
 shadowtree recipes
 shadowtree help <recipe>
 shadowtree --print <recipe> [args...]
+shadowtree --print --expanded <recipe> [args...]
+shadowtree --check <recipe> [args...]
+shadowtree --check --shell <recipe> [args...]
 ```
 
 Create starter config only when config should be added:
@@ -53,7 +56,22 @@ Completion criterion: chosen command is based on Shadowtree output or an existin
 - `shadowtree exec -- <cmd> [args...]`: run an explicit command as a sandboxed ad hoc recipe.
 - `shadowtree <recipe> [args...]`: run a resolved recipe.
 
-Use `--print` before commands that may write, delete, install, publish, regenerate, sync out, or use unfamiliar args. Use `--verbose` to see workspace and phase commands.
+Use `--print` before commands that may write, delete, install, publish,
+regenerate, sync out, or use unfamiliar args. `--print` prints the resolved
+plan without running commands or validating nested references. Use
+`--print --expanded` when audits need expanded `pre`, `cmd`, `post`, and
+`for_each` scripts plus resolved config path, profile, sandbox mode, workdir,
+sync-out, log settings, typed arguments, selected preset, argument values,
+computed vars, and recipe env.
+
+Use `--check <recipe> [args...]` to validate the selected resolved recipe
+without running commands. It checks resolved command forms, nested `@recipe`
+and `@path:recipe` references, reference cycles, workdir, and log paths. It
+does not check host tool availability from `requires`; real execution checks
+that before sandbox setup. Add `--shell` as `--check --shell` to parse expanded
+sh/bash scripts after placeholder expansion and shell prelude insertion.
+
+Use `--verbose` to see workspace and phase commands during real execution.
 
 Completion criterion: risky or unclear execution is inspected with `--print` before it runs.
 
@@ -207,13 +225,17 @@ required tools fail before sandbox setup and before `pre`.
 `optional_commands` prints one warning and continues. Shadowtree does not
 install tools. Missing Go tools show `go install <module>@<version>` guidance.
 Missing Node tools use detected `npm`/`pnpm`/`yarn`/`bun` to suggest installing
-the CLI globally, such as `pnpm add --global eslint@^9`. `--print` shows
-declared requirements without checking the host.
+the CLI globally, such as `pnpm add --global eslint@^9`. `--print` and
+`--check` show or validate the plan without checking host tools; real execution
+checks declared requirements before sandbox setup.
 
 Requirement names are static, not placeholders. Included or overriding recipes
 that specify `requires` replace the inherited `requires` block as a whole.
 
-Completion criterion: run `shadowtree --print <recipe>` to inspect declared requirements before running recipes that depend on host tools.
+Completion criterion: run `shadowtree --print --expanded <recipe>` to inspect
+declared requirements and resolved values before running recipes that depend on
+host tools; use `shadowtree --check --shell <recipe>` when auditing references
+and expanded shell syntax.
 
 ## Command Forms
 

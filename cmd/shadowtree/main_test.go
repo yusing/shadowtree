@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,7 +21,7 @@ func stageCommands(commands ...recipe.Command) recipe.StageCommands {
 }
 
 func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
-	opts, rest, err := parseGlobal([]string{"--profile", "go", "--print", "test", "./..."})
+	opts, rest, err := parseGlobal([]string{"--profile", "go", "--print", "--expanded", "test", "./..."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +31,68 @@ func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
 	if !opts.printOnly {
 		t.Fatal("printOnly = false")
 	}
+	if !opts.expanded {
+		t.Fatal("expanded = false")
+	}
 	if !slices.Equal(rest, []string{"test", "./..."}) {
 		t.Fatalf("rest = %#v", rest)
+	}
+}
+
+func TestValidateGlobalModeRejectsInvalidCombinations(t *testing.T) {
+	tests := []struct {
+		name string
+		opts options
+		want string
+	}{
+		{
+			name: "print and check",
+			opts: options{printOnly: true, checkOnly: true},
+			want: "--print and --check cannot be used together",
+		},
+		{
+			name: "expanded without print",
+			opts: options{expanded: true},
+			want: "--expanded requires --print",
+		},
+		{
+			name: "shell without check",
+			opts: options{checkShell: true},
+			want: "--shell requires --check",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateGlobalMode(test.opts)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestHelpBypassesInvalidModeCombinations(t *testing.T) {
+	var out bytes.Buffer
+	stdout := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	defer func() { os.Stdout = stdout }()
+
+	err = run(t.Context(), []string{"--expanded", "--help"})
+	if closeErr := write.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if _, copyErr := out.ReadFrom(read); copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	if err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "usage: shadowtree") {
+		t.Fatalf("help output missing usage:\n%s", out.String())
 	}
 }
 

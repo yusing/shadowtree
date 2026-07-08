@@ -70,6 +70,8 @@ Inspect the resolved plan before running a recipe:
 
 ```sh
 shadowtree --print test
+shadowtree --print --expanded test
+shadowtree --check --shell test
 shadowtree --verbose build
 ```
 
@@ -457,9 +459,12 @@ nearest marker wins; if Go and Node markers are in the same directory, Go wins.
 Configs that omit `profile` do not receive detected built-ins. This keeps local
 config recipes exact unless the config opts into a profile.
 
-Use `shadowtree recipes` or `shadowtree --print <recipe>` to inspect exact
-built-in behavior for the current checkout. See `docs/spec.md` for the full Go
-and Node built-in recipe lists, inference rules, and override semantics.
+Use `shadowtree recipes`, `shadowtree --print <recipe>`, or
+`shadowtree --print --expanded <recipe>` to inspect exact built-in behavior for
+the current checkout. Use `shadowtree --check <recipe>` to validate references
+and resolved command forms without running commands; add `--shell` to parse
+expanded shell scripts. See `docs/spec.md` for the full Go and Node built-in
+recipe lists, inference rules, and override semantics.
 
 ## Editor Support
 

@@ -109,10 +109,8 @@ func LoadConfigWithMeta(path string, cfg recipe.Config, md toml.MetaData) (Loade
 
 func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack []string) (Loaded, error) {
 	absPath := CleanAbs(path)
-	for _, ancestor := range stack {
-		if absPath == ancestor {
-			return Loaded{}, fmt.Errorf("include cycle: %s", includeCycle(stack, absPath))
-		}
+	if slices.Contains(stack, absPath) {
+		return Loaded{}, fmt.Errorf("include cycle: %s", includeCycle(stack, absPath))
 	}
 	stack = append(stack, absPath)
 	var cfg recipe.Config

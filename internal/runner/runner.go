@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,17 +23,20 @@ import (
 )
 
 type Options struct {
-	Resolved   recipe.Resolved
-	Recipes    map[string]recipe.Recipe
-	ConfigEnv  map[string]string
-	SourceDir  string
-	PrintOnly  bool
-	Verbose    bool
-	SyncOutAll bool
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
-	stageLog   *stageLogger
+	Resolved      recipe.Resolved
+	Recipes       map[string]recipe.Recipe
+	ConfigEnv     map[string]string
+	SourceDir     string
+	PrintOnly     bool
+	PrintExpanded bool
+	CheckOnly     bool
+	CheckShell    bool
+	Verbose       bool
+	SyncOutAll    bool
+	Stdin         io.Reader
+	Stdout        io.Writer
+	Stderr        io.Writer
+	stageLog      *stageLogger
 }
 
 type ExitError struct {
@@ -241,18 +245,28 @@ func installableRequirementList(missing []installableRequirement) string {
 }
 
 func Run(ctx context.Context, options Options) (runErr error) {
-	stdout := writerOr(options.Stdout, os.Stdout)
-	stderr := writerOr(options.Stderr, os.Stderr)
-	stdin := readerOr(options.Stdin, os.Stdin)
-	if options.PrintOnly {
-		printPlan(stdout, options.Resolved)
-		return nil
-	}
+	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
 	source, err := filepath.Abs(options.SourceDir)
 	if err != nil {
 		return err
 	}
 	options.SourceDir = source
+	if options.PrintOnly {
+		if options.PrintExpanded {
+			printExpandedPlan(stdout, options.Resolved)
+			return nil
+		}
+		printPlan(stdout, options.Resolved)
+		return nil
+	}
+	if options.CheckOnly {
+		if err := validatePlan(ctx, options); err != nil {
+			return err
+		}
+		return nil
+	}
+	stderr := cmp.Or[io.Writer](options.Stderr, os.Stderr)
+	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
 	if err := checkRecipeRequirements(options.Resolved, source, env, stderr); err != nil {
 		return err
@@ -728,7 +742,7 @@ func executableNames(file string, env []string) []string {
 		pathext = ".COM;.EXE;.BAT;.CMD"
 	}
 	names := []string{file}
-	for _, ext := range strings.Split(pathext, ";") {
+	for ext := range strings.SplitSeq(pathext, ";") {
 		if ext == "" {
 			continue
 		}
@@ -817,7 +831,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 			Resolved:  recipe.Resolved{ConfigPath: opts.ConfigPath},
 			Recipes:   opts.Recipes,
 			ConfigEnv: env,
-			SourceDir: cmpSourceDir(opts.SourceDir, dir),
+			SourceDir: cmp.Or(opts.SourceDir, dir),
 		}, nil)
 		if err != nil {
 			return "", err
@@ -848,7 +862,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 		Resolved:  resolved,
 		Recipes:   opts.Recipes,
 		ConfigEnv: env,
-		SourceDir: cmpSourceDir(opts.SourceDir, dir),
+		SourceDir: cmp.Or(opts.SourceDir, dir),
 	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(opts.ConfigPath, ref.Name)})
 	if err != nil {
 		return "", err
@@ -857,7 +871,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 }
 
 func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]string, ref recipe.RecipeReferenceTarget, opts CommandOutputOptions) (string, error) {
-	sourceDir := cmpSourceDir(opts.SourceDir, dir)
+	sourceDir := cmp.Or(opts.SourceDir, dir)
 	target, err := configfile.ResolveCrossConfigReference(ctx, ref.Path, opts.ConfigPath, sourceDir, configfile.ResolveOptions{EvalDynamicVars: true})
 	if err != nil {
 		return "", fmt.Errorf("@%s: %w", ref.Target(), err)
@@ -935,13 +949,6 @@ func recipeReferenceStackKey(configPath, name string) string {
 	return configPath + ":" + name
 }
 
-func cmpSourceDir(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
 func printPlan(w io.Writer, resolved recipe.Resolved) {
 	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
 	if resolved.Profile != "" {
@@ -974,6 +981,117 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	}
 	for _, path := range resolved.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)
+	}
+}
+
+func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
+	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
+	printPlanValue(w, "config", resolved.ConfigPath)
+	printPlanValue(w, "profile", resolved.Profile)
+	fmt.Fprintf(w, "sandboxed: %t\n", resolved.Sandboxed)
+	printPlanValue(w, "workdir", cmp.Or(resolved.Recipe.Workdir, "."))
+	if len(resolved.SyncOut) == 0 {
+		fmt.Fprintln(w, "sync_out: <none>")
+	} else {
+		for _, path := range resolved.SyncOut {
+			fmt.Fprintf(w, "sync_out: %s\n", path)
+		}
+	}
+	if resolved.LogPath == "" {
+		fmt.Fprintln(w, "log: <none>")
+	} else {
+		fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
+		fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
+		fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
+	}
+	printPlanRequirements(w, resolved.Recipe.Requires)
+	if resolved.Preset != "" {
+		fmt.Fprintf(w, "preset: %s\n", resolved.Preset)
+	}
+	printStringMapSection(w, "arguments", resolved.Arguments)
+	printArgumentValueCommands(w, resolved.Recipe.Arguments)
+	if len(resolved.VariadicArgs) > 0 {
+		fmt.Fprintf(w, "variadic_args: %s\n", strings.Join(resolved.VariadicArgs, " "))
+	}
+	printStringMapSection(w, "vars", resolved.Recipe.Vars)
+	printStringMapSection(w, "env", resolved.Recipe.Env)
+	if forEach := expandedForEachCommand(resolved); len(forEach) > 0 {
+		printExpandedCommand(w, "for_each", forEach)
+	}
+	for i, command := range resolved.Recipe.Pre {
+		printExpandedStageCommand(w, fmt.Sprintf("pre[%d]", i), command)
+	}
+	printExpandedCommand(w, "main", resolved.Main)
+	for i, command := range resolved.Recipe.Post {
+		printExpandedStageCommand(w, fmt.Sprintf("post[%d]", i), command)
+	}
+}
+
+func printPlanValue(w io.Writer, key, value string) {
+	if value == "" {
+		value = "<none>"
+	}
+	fmt.Fprintf(w, "%s: %s\n", key, value)
+}
+
+func printStringMapSection(w io.Writer, name string, values map[string]string) {
+	fmt.Fprintf(w, "%s:\n", name)
+	if len(values) == 0 {
+		fmt.Fprintln(w, "  <none>")
+		return
+	}
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		fmt.Fprintf(w, "  %s: %s\n", key, values[key])
+	}
+}
+
+func printArgumentValueCommands(w io.Writer, args map[string]recipe.Argument) {
+	var names []string
+	for name, arg := range args {
+		if len(arg.Values) > 0 {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	slices.Sort(names)
+	fmt.Fprintln(w, "argument_values:")
+	for _, name := range names {
+		fmt.Fprintf(w, "  %s: %s\n", name, recipe.CommandHelpText(args[name].Values))
+	}
+}
+
+func printExpandedStageCommand(w io.Writer, label string, command recipe.StageCommand) {
+	printExpandedCommand(w, label, command.Cmd)
+	if timeout := recipe.StageTimeout(command); timeout > 0 {
+		fmt.Fprintf(w, "%s.timeout: %s\n", label, timeout)
+	}
+}
+
+func printExpandedCommand(w io.Writer, label string, command recipe.Command) {
+	if recipe.IsScriptCommand(command) {
+		if shell := recipe.ScriptShell(command); shell != "" {
+			fmt.Fprintf(w, "%s.shell: %s\n", label, shell)
+		}
+		fmt.Fprintf(w, "%s.script: |\n", label)
+		printIndentedBlock(w, recipe.ScriptBody(command), "  ")
+		return
+	}
+	fmt.Fprintf(w, "%s: %s\n", label, recipe.CommandHelpText(command))
+}
+
+func printIndentedBlock(w io.Writer, text, indent string) {
+	text = strings.TrimRight(text, "\r\n")
+	if text == "" {
+		fmt.Fprintf(w, "%s<empty>\n", indent)
+		return
+	}
+	for line := range strings.Lines(text) {
+		fmt.Fprintf(w, "%s%s", indent, line)
+		if !strings.HasSuffix(line, "\n") {
+			fmt.Fprintln(w)
+		}
 	}
 }
 
@@ -1842,18 +1960,4 @@ func envValue(env []string, name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func writerOr(w io.Writer, fallback io.Writer) io.Writer {
-	if w != nil {
-		return w
-	}
-	return fallback
-}
-
-func readerOr(r io.Reader, fallback io.Reader) io.Reader {
-	if r != nil {
-		return r
-	}
-	return fallback
 }

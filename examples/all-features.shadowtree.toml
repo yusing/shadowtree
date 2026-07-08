@@ -4,6 +4,8 @@
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml recipes
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml help kitchen-sink color=false
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print kitchen-sink target=api
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print --expanded kitchen-sink preset=smoke
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --check --shell kitchen-sink preset=smoke
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml dispatch-demo
 
 "$schema" = "../schemas/shadowtree.schema.json"

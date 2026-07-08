@@ -34,6 +34,9 @@ type options struct {
 	syncOut    multiFlag
 	syncOutAll bool
 	printOnly  bool
+	expanded   bool
+	checkOnly  bool
+	checkShell bool
 	verbose    bool
 	help       bool
 	showVer    bool
@@ -95,6 +98,9 @@ func run(ctx context.Context, args []string) error {
 		printBasicHelp(os.Stdout)
 		return nil
 	}
+	if err := validateGlobalMode(opts); err != nil {
+		return err
+	}
 	switch rest[0] {
 	case "completion":
 		if len(rest) != 2 {
@@ -136,15 +142,18 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return runner.Run(ctx, runner.Options{
-			Resolved:   resolved,
-			ConfigEnv:  loaded.Config.Env,
-			SourceDir:  mustGetwd(),
-			PrintOnly:  opts.printOnly,
-			Verbose:    opts.verbose,
-			SyncOutAll: opts.syncOutAll,
-			Stdin:      os.Stdin,
-			Stdout:     os.Stdout,
-			Stderr:     os.Stderr,
+			Resolved:      resolved,
+			ConfigEnv:     loaded.Config.Env,
+			SourceDir:     mustGetwd(),
+			PrintOnly:     opts.printOnly,
+			PrintExpanded: opts.expanded,
+			CheckOnly:     opts.checkOnly,
+			CheckShell:    opts.checkShell,
+			Verbose:       opts.verbose,
+			SyncOutAll:    opts.syncOutAll,
+			Stdin:         os.Stdin,
+			Stdout:        os.Stdout,
+			Stderr:        os.Stderr,
 		})
 	}
 	switch rest[0] {
@@ -178,18 +187,34 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return runner.Run(ctx, runner.Options{
-			Resolved:   resolved,
-			Recipes:    resolvedSet,
-			ConfigEnv:  loaded.Config.Env,
-			SourceDir:  mustGetwd(),
-			PrintOnly:  opts.printOnly,
-			Verbose:    opts.verbose,
-			SyncOutAll: opts.syncOutAll,
-			Stdin:      os.Stdin,
-			Stdout:     os.Stdout,
-			Stderr:     os.Stderr,
+			Resolved:      resolved,
+			Recipes:       resolvedSet,
+			ConfigEnv:     loaded.Config.Env,
+			SourceDir:     mustGetwd(),
+			PrintOnly:     opts.printOnly,
+			PrintExpanded: opts.expanded,
+			CheckOnly:     opts.checkOnly,
+			CheckShell:    opts.checkShell,
+			Verbose:       opts.verbose,
+			SyncOutAll:    opts.syncOutAll,
+			Stdin:         os.Stdin,
+			Stdout:        os.Stdout,
+			Stderr:        os.Stderr,
 		})
 	}
+}
+
+func validateGlobalMode(opts options) error {
+	if opts.printOnly && opts.checkOnly {
+		return errors.New("--print and --check cannot be used together")
+	}
+	if opts.expanded && !opts.printOnly {
+		return errors.New("--expanded requires --print")
+	}
+	if opts.checkShell && !opts.checkOnly {
+		return errors.New("--shell requires --check")
+	}
+	return nil
 }
 
 func parseGlobal(args []string) (options, []string, error) {
@@ -241,6 +266,12 @@ func registerGlobalFlags(flags *flag.FlagSet, opts *options) {
 			flags.BoolVar(&opts.syncOutAll, spec.Name, false, spec.Help)
 		case globalflag.Print:
 			flags.BoolVar(&opts.printOnly, spec.Name, false, spec.Help)
+		case globalflag.Expanded:
+			flags.BoolVar(&opts.expanded, spec.Name, false, spec.Help)
+		case globalflag.Check:
+			flags.BoolVar(&opts.checkOnly, spec.Name, false, spec.Help)
+		case globalflag.Shell:
+			flags.BoolVar(&opts.checkShell, spec.Name, false, spec.Help)
 		case globalflag.Verbose:
 			flags.BoolVar(&opts.verbose, spec.Name, false, spec.Help)
 		case globalflag.Help:

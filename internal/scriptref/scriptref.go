@@ -2,6 +2,7 @@ package scriptref
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -97,12 +98,7 @@ func References(file *syntax.File) []Reference {
 }
 
 func wordHasExpansion(word *syntax.Word) bool {
-	for _, part := range word.Parts {
-		if wordPartHasExpansion(part) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(word.Parts, wordPartHasExpansion)
 }
 
 func wordPartHasExpansion(part syntax.WordPart) bool {
@@ -110,10 +106,8 @@ func wordPartHasExpansion(part syntax.WordPart) bool {
 	case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp, *syntax.ProcSubst:
 		return true
 	case *syntax.DblQuoted:
-		for _, nested := range part.Parts {
-			if wordPartHasExpansion(nested) {
-				return true
-			}
+		if slices.ContainsFunc(part.Parts, wordPartHasExpansion) {
+			return true
 		}
 	}
 	return false

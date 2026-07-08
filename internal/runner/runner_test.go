@@ -2478,3 +2478,289 @@ func TestPrintPlanShowsRequirementsWithoutCheckingHost(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintExpandedPlanShowsResolvedValuesAndScripts(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"benchmark",
+		recipe.Recipe{
+			Shell:   "bash",
+			Workdir: "bench",
+			Vars: map[string]string{
+				"computed": "value",
+			},
+			Arguments: map[string]recipe.Argument{
+				"enabled": {Type: "bool", Default: false},
+				"target": {
+					Type:    "string",
+					Default: "full",
+					Values:  recipe.ScriptCommand("@enum smoke='Smoke suite' full='Full suite'"),
+				},
+			},
+			Presets: map[string]recipe.RecipePreset{
+				"smoke": {Arguments: map[string]any{"target": "smoke", "enabled": true}},
+			},
+			Pre:     stageCommands(recipe.ScriptCommand("printf 'pre %s\\n' \"{target}\"")),
+			Cmd:     recipe.ScriptCommand("printf 'run %s %s\\n' \"{target}\" \"{enabled}\""),
+			Post:    stageCommands(recipe.ScriptCommand("printf 'post\\n'")),
+			SyncOut: []string{"out/{target}.txt"},
+			Log:     "logs/{target}-{run_id}.log",
+		},
+		[]string{"preset=smoke"},
+		[]string{"report/{target}.txt"},
+		nil,
+		"/tmp/shadowtree.toml",
+		"go",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printExpandedPlan(&out, resolved)
+	text := out.String()
+	for _, want := range []string{
+		"config: /tmp/shadowtree.toml",
+		"profile: go",
+		"sandboxed: true",
+		"workdir: bench",
+		"sync_out: report/smoke.txt",
+		"sync_out: out/smoke.txt",
+		"log: logs/smoke-",
+		"preset: smoke",
+		"arguments:\n  enabled: true\n  target: smoke",
+		"argument_values:\n  target: @enum smoke='Smoke suite' full='Full suite'",
+		"vars:\n  computed: value",
+		"pre[0].shell: bash",
+		"pre[0].script: |\n  printf 'pre %s\\n' \"smoke\"",
+		"main.shell: bash",
+		"main.script: |\n  printf 'run %s %s\\n' \"smoke\" \"true\"",
+		"post[0].script: |\n  printf 'post\\n'",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expanded plan missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestCheckOnlyReportsMissingRecipeReference(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"check",
+		recipe.Recipe{Cmd: recipe.Command{"@missing"}},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"check": {Cmd: recipe.Command{"@missing"}}},
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown recipe reference: @missing") {
+		t.Fatalf("error = %v, want missing recipe reference", err)
+	}
+}
+
+func TestPrintOnlyDoesNotValidateRecipeReferences(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"check",
+		recipe.Recipe{Cmd: recipe.Command{"@missing"}},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"check": {Cmd: recipe.Command{"@missing"}}},
+		SourceDir: t.TempDir(),
+		PrintOnly: true,
+		Stdout:    &out,
+	})
+	if err != nil {
+		t.Fatalf("print failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "main: @missing") {
+		t.Fatalf("print output missing command:\n%s", out.String())
+	}
+}
+
+func TestCheckOnlyTreatsAtCommandLiteralWithoutRecipes(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"exec",
+		recipe.Recipe{Cmd: recipe.Command{"@definitely-not-real"}},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("check failed for literal @ executable: %v", err)
+	}
+}
+
+func TestCheckOnlyAcceptsForEachValueBuiltin(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"matrix",
+		recipe.Recipe{
+			ForEach: recipe.ScriptCommand("@enum smoke full"),
+			Cmd:     recipe.ScriptCommand("printf '%s\\n' \"{item}\""),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"matrix": {ForEach: recipe.ScriptCommand("@enum smoke full"), Cmd: recipe.ScriptCommand("true")}},
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("check failed for for_each builtin: %v", err)
+	}
+}
+
+func TestCheckOnlyAcceptsRetryHelper(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"setup",
+		recipe.Recipe{
+			Pre: stageCommands(recipe.ScriptCommand("@retry[count=2,delay=1ms] printf ok")),
+			Cmd: recipe.Command{"true"},
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"setup": {Cmd: recipe.Command{"true"}}},
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("check failed for retry helper: %v", err)
+	}
+}
+
+func TestPrintExpandedForEachIncludesShellPrelude(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"items",
+		recipe.Recipe{
+			Shell:        "bash",
+			ShellPrelude: "prefix() { printf prefix; }",
+			ForEach:      recipe.ScriptCommand("printf 'one\\n'"),
+			Cmd:          recipe.Command{"true"},
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printExpandedPlan(&out, resolved)
+	if text := out.String(); !strings.Contains(text, "for_each.script: |\n  prefix() { printf prefix; }\n  printf 'one\\n'") {
+		t.Fatalf("expanded plan missing for_each prelude:\n%s", text)
+	}
+}
+
+func TestCheckShellValidatesForEachShellPrelude(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"items",
+		recipe.Recipe{
+			ShellPrelude: "if then",
+			ForEach:      recipe.ScriptCommand("printf 'one\\n'"),
+			Cmd:          recipe.Command{"true"},
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:   resolved,
+		Recipes:    map[string]recipe.Recipe{"items": {Cmd: recipe.Command{"true"}}},
+		SourceDir:  t.TempDir(),
+		CheckOnly:  true,
+		CheckShell: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), `recipe "items" for_each shell`) {
+		t.Fatalf("error = %v, want for_each shell syntax error", err)
+	}
+}
+
+func TestCheckShellReportsExpandedScriptSyntax(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"bad",
+		recipe.Recipe{
+			Cmd: recipe.ScriptCommand("if then\n"),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"bad": {Cmd: recipe.ScriptCommand("if then\n")}},
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+	}
+	if err := Run(t.Context(), options); err != nil {
+		t.Fatalf("check without shell syntax failed: %v", err)
+	}
+
+	options.CheckShell = true
+	err = Run(t.Context(), options)
+	if err == nil || !strings.Contains(err.Error(), `recipe "bad" cmd shell`) {
+		t.Fatalf("error = %v, want shell syntax error", err)
+	}
+}

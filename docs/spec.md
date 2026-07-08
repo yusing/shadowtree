@@ -94,6 +94,9 @@ shadowtree __complete zsh <words...>
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
 --print             print the resolved plan without running
+--expanded          with --print, include expanded scripts and resolved values
+--check             validate the resolved recipe without running
+--shell             with --check, parse expanded shell scripts
 --verbose           show workspace and compact command boundaries
 --help              show basic CLI help
 --version           print the version
@@ -1068,6 +1071,7 @@ no `help`, Shadowtree falls back to a compact command summary.
 
 ```sh
 shadowtree --print test ./internal/runner
+shadowtree --print --expanded test ./internal/runner
 ```
 
 The plan includes these fields when present or applicable:
@@ -1083,6 +1087,19 @@ The plan includes these fields when present or applicable:
 - main command
 - post commands
 - sync-out paths for sandboxed recipes
+
+`--print --expanded` also prints normalized defaults for absent fields,
+expanded script bodies for `pre`, `cmd`, `post`, and `for_each`, the selected
+preset, resolved typed arguments, leftover variadic args, computed vars,
+recipe-local env, expanded log settings, and expanded sync-out paths.
+
+`--check` validates the selected resolved recipe without running commands. It
+checks the same command forms that resolution would run, validates nested
+`@recipe` and `@path:recipe` references, reports missing references, rejects
+reference cycles, and validates resolved log and workdir paths. It does not
+check host tool availability declared in `requires`; those are checked only
+before real execution. `--check --shell` additionally parses expanded sh/bash
+script bodies after placeholder expansion and shell prelude insertion.
 
 ## Shell Completion
 
