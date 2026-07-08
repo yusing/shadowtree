@@ -1146,6 +1146,177 @@ func TestRunRetryHelperRetriesCommand(t *testing.T) {
 	}
 }
 
+func TestRunRetryHelperComposesWithShellFunctions(t *testing.T) {
+	tests := []struct {
+		name       string
+		script     string
+		wantStdout string
+	}{
+		{
+			name: "retries shell function",
+			script: `cleanup() {
+	count=$(cat attempts 2>/dev/null || printf 0)
+	count=$((count+1))
+	printf "%s" "$count" > attempts
+	test "$count" -ge 3
+}
+@retry[count=3,delay=1ms] cleanup || status=$?
+printf 'status=%s attempts=%s' "${status:-0}" "$(cat attempts)"`,
+			wantStdout: "status=0 attempts=3",
+		},
+		{
+			name: "captures failed retry status with or",
+			script: `cleanup() { return 7; }
+@retry[count=2,delay=0s] cleanup || status=$?
+printf 'status=%s' "$status"`,
+			wantStdout: "status=7",
+		},
+		{
+			name: "captures explicit failure under errexit",
+			script: `set -e
+cleanup() {
+	false || return $?
+	printf survived
+}
+@retry[count=2,delay=0s] cleanup || status=$?
+printf 'status=%s' "$status"`,
+			wantStdout: "status=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := t.TempDir()
+			resolved, err := recipe.Resolve(
+				"test",
+				recipe.Recipe{
+					Cmd:       recipe.ScriptCommand(tt.script),
+					Sandboxed: new(false),
+				},
+				nil,
+				nil,
+				nil,
+				"",
+				"",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var stdout bytes.Buffer
+			err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stdout.String() != tt.wantStdout {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), tt.wantStdout)
+			}
+		})
+	}
+}
+
+func TestRunRetryHelperDelayDoesNotUseShellSleep(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd: recipe.ScriptCommand(`sleep() { printf shadow-sleep; return 1; }
+cleanup() {
+	count=$(cat attempts 2>/dev/null || printf 0)
+	count=$((count+1))
+	printf "%s" "$count" > attempts
+	test "$count" -ge 2
+}
+@retry[count=2,delay=1ms] cleanup
+cat attempts`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "2" {
+		t.Fatalf("stdout = %q, want Go-managed retry delay without shell sleep", stdout.String())
+	}
+}
+
+func TestRunRetryHelperRejectsGeneratedNameCollision(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd: recipe.ScriptCommand(`__shadowtree_retry_2_1_1() { return 0; }
+@retry[count=2,delay=0s] false`),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+	if err == nil || !strings.Contains(err.Error(), `@retry generated helper "__shadowtree_retry_2_1_1" conflicts with a shell function`) {
+		t.Fatalf("Run() error = %v, want generated helper collision", err)
+	}
+}
+
+func TestRunRetryHelperRetriesRecipeReference(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand(`@retry[count=3,delay=1ms] @flaky`),
+			Post:      stageCommands(recipe.ScriptCommand("cat attempts")),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"flaky": {
+				Cmd: recipe.ScriptCommand(`count=$(cat attempts 2>/dev/null || printf 0)
+count=$((count+1))
+printf "%s" "$count" > attempts
+test "$count" -ge 3`),
+			},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "3" {
+		t.Fatalf("stdout = %q, want retried recipe reference", stdout.String())
+	}
+}
+
 func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
@@ -1426,6 +1597,42 @@ func TestRunInvokesLiteralScriptRecipeReferenceInConditional(t *testing.T) {
 	}
 	if stdout.String() != "ok" {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunComposesScriptRecipeReferencesWithAndOr(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("@fail || @ok && printf done"),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"fail": {Cmd: recipe.Command{"false"}},
+			"ok":   {Cmd: recipe.Command{"printf", "ok"}},
+		},
+		SourceDir: source,
+		Stdout:    &stdout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "okdone" {
+		t.Fatalf("stdout = %q, want recipe references composed through && and ||", stdout.String())
 	}
 }
 

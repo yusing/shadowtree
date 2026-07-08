@@ -355,8 +355,15 @@ pre = "@retry[count=30,delay=1s] benchmark_prepare"
 `count` is the maximum number of attempts and `delay` is the duration to sleep
 between failed attempts. Defaults are `count=3` and `delay=1s`. The helper runs
 the remaining command words again until they succeed or attempts are exhausted.
-It can wrap external commands or literal recipe references such as
-`@retry[count=5] @prepare`.
+It can wrap external commands, shell functions, or literal recipe references
+such as `@retry[count=5] @prepare`. Because `@retry`, `@recipe`, and built-in
+recipe references remain normal shell commands inside script strings, they can
+be composed with operators such as `&&` and `||`.
+
+When retrying a shell function under `set -e`, the function must return
+failures explicitly, for example `cleanup_step || return $?`. This follows shell
+semantics: `errexit` is suppressed while command status is being tested by
+retry, `if`, `&&`, or `||`.
 
 Placeholders can be used in recipe references. Static references such as
 `@gen-swagger` and `@webui:gen-schema` can be validated by the editor; dynamic

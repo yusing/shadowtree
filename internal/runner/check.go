@@ -55,7 +55,7 @@ func validateCommandReferences(ctx context.Context, options Options, stage strin
 			return err
 		}
 	}
-	if _, target, ok, err := retryInvocation(command); ok {
+	if target, ok, err := retryInvocation(command); ok {
 		if err != nil {
 			return fmt.Errorf("recipe %q %s: %w", options.Resolved.Name, stage, err)
 		}
@@ -87,7 +87,7 @@ func validateCommandReferences(ctx context.Context, options Options, stage strin
 			}
 			command = append(command, arg.Value)
 		}
-		if _, target, ok, err := retryInvocation(command); ok {
+		if target, ok, err := retryInvocation(command); ok {
 			if err != nil {
 				return fmt.Errorf("recipe %q %s: %w", options.Resolved.Name, stage, err)
 			}

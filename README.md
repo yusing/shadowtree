@@ -303,7 +303,14 @@ pre = "@retry[count=30,delay=1s] benchmark_prepare"
 ```
 
 `count` is the maximum number of attempts and `delay` is the wait between
-failed attempts. Omitted values default to `count=3` and `delay=1s`.
+failed attempts. Omitted values default to `count=3` and `delay=1s`. The
+wrapped command runs through the shell, so it can be an external executable, a
+shell function, or a literal recipe reference such as `@prepare`, and it can be
+composed with shell operators like `&&` and `||`.
+
+When retrying a shell function under `set -e`, make failures explicit inside
+the function, for example `cleanup_step || return $?`; shells suppress
+`errexit` while a command's status is being tested by retry logic.
 
 Use shell script strings when a workflow needs shared shell logic, conditionals,
 pipes, or multiple statements.

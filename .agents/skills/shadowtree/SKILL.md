@@ -110,7 +110,7 @@ timeout = "120s"
 
 `timeout` is positive Go duration. Timeout follows normal stage order: failed `pre` skips `cmd`; `post` still runs.
 
-`@retry` wraps flaky readiness checks in sh/bash command position: `pre = "@retry[count=30,delay=1s] benchmark_prepare"`. Defaults: `count=3`, `delay=1s`. Wraps external commands or literal recipe references.
+`@retry` wraps flaky readiness checks in sh/bash command position: `pre = "@retry[count=30,delay=1s] benchmark_prepare"`. Defaults: `count=3`, `delay=1s`. Wraps external commands, shell functions, or literal recipe references; it composes with normal shell `&&`/`||` operators. Under `set -e`, retried shell functions must return failures explicitly, e.g. `cleanup_step || return $?`, because shells suppress `errexit` while command status is tested.
 
 Completion criterion: failure cleanup/reporting belongs in `post`; generated outputs copy back only on success.
 
