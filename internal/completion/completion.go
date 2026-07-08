@@ -321,13 +321,13 @@ func staticCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
 	if len(positionalWords(words)) > 0 {
 		return nil, false
 	}
-	if completesProfile(words) {
+	if completesFlagValue(words, globalflag.Profile) {
 		return []Candidate{
 			{Value: recipe.GoProfile, Help: "Go project"},
 			{Value: recipe.NodeProfile, Help: "Node project"},
 		}, true
 	}
-	if completesConfig(words) || completesSyncOut(words) {
+	if completesFlagValue(words, globalflag.Config) || completesFlagValue(words, globalflag.SyncOut) {
 		return nil, true
 	}
 	if candidates, ok := flagCandidates(spec, words); ok {
@@ -543,7 +543,7 @@ func valueCandidates(ctx context.Context, prefix, valuePrefix string, arg recipe
 }
 
 func staticValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts Options) []Candidate {
-	switch argumentType(arg) {
+	switch recipe.ArgumentType(arg) {
 	case "bool":
 		return filterPrefix([]Candidate{
 			{Value: prefix + "true", Help: "bool"},
@@ -650,7 +650,7 @@ func positionalValueCandidates(ctx context.Context, prefix, valuePrefix string, 
 }
 
 func pathValueCandidates(prefix, valuePrefix string, arg recipe.Argument, opts Options) []Candidate {
-	argType := argumentType(arg)
+	argType := recipe.ArgumentType(arg)
 	if argType == "path" && valuePrefix == "~" {
 		return []Candidate{{Value: prefix + "~/", Help: "home"}}
 	}
@@ -690,8 +690,8 @@ func includePathEntry(entry os.DirEntry, kind string) bool {
 	if entry.IsDir() {
 		return true
 	}
-	switch pathKind(kind) {
-	case "any":
+	switch kind {
+	case "", "any":
 		return true
 	case "file":
 		info, err := entry.Info()
@@ -704,13 +704,6 @@ func includePathEntry(entry os.DirEntry, kind string) bool {
 	default:
 		return true
 	}
-}
-
-func pathKind(kind string) string {
-	if kind == "" {
-		return "any"
-	}
-	return kind
 }
 
 func pathCompletionDir(valuePrefix, argType, cwd string) (string, string, string, bool) {
@@ -738,25 +731,6 @@ func pathCompletionDir(valuePrefix, argType, cwd string) (string, string, string
 		dirPart, entryPrefix := filepath.Split(valuePrefix)
 		return filepath.Join(cwd, dirPart), dirPart, entryPrefix, true
 	}
-}
-
-func argumentType(arg recipe.Argument) string {
-	if arg.Type == "" {
-		return "string"
-	}
-	return arg.Type
-}
-
-func completesProfile(words []string) bool {
-	return completesFlagValue(words, globalflag.Profile)
-}
-
-func completesConfig(words []string) bool {
-	return completesFlagValue(words, globalflag.Config)
-}
-
-func completesSyncOut(words []string) bool {
-	return completesFlagValue(words, globalflag.SyncOut)
 }
 
 func completesFlagValue(words []string, name string) bool {

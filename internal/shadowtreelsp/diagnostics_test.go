@@ -674,7 +674,7 @@ pre = [
 ]
 cmd = "go test"
 `)
-	assertOneDiagnostic(t, diagnostics, "[0]: command arrays are no longer supported; use a shell string")
+	assertOneDiagnostic(t, diagnostics, "[0]: command must be a shell string, got array")
 }
 
 func TestDocumentDiagnosticsRejectUnknownScalarRecipeReference(t *testing.T) {
@@ -964,7 +964,7 @@ values = ["@enum", "api"]
 [recipes.test]
 cmd = "go test"
 `)
-	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
+	assertOneDiagnostic(t, diagnostics, "command must be a shell string, got array")
 }
 
 func TestDocumentDiagnosticsRejectEmptyArgvArgumentValues(t *testing.T) {
@@ -974,7 +974,7 @@ values = []
 [recipes.test]
 cmd = "go test"
 `)
-	assertOneDiagnostic(t, diagnostics, "command arrays are no longer supported; use a shell string")
+	assertOneDiagnostic(t, diagnostics, "command must be a shell string, got array")
 }
 
 func TestDocumentDiagnosticsRejectShellOperatorComposedBuiltinValues(t *testing.T) {

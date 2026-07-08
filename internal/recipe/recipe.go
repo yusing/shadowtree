@@ -98,6 +98,11 @@ type StageCommand struct {
 	Timeout string  `toml:"timeout"`
 }
 
+// IsStageCommandField reports whether name is a supported structured stage command field.
+func IsStageCommandField(name string) bool {
+	return name == "cmd" || name == "timeout"
+}
+
 func (stage *StageCommand) UnmarshalTOML(value any) error {
 	decoded, err := decodeStageCommand(value)
 	if err != nil {
@@ -2542,10 +2547,8 @@ func decodeCommand(value any) (Command, error) {
 	switch value := value.(type) {
 	case string:
 		return ScriptCommand(value), nil
-	case []any, []string:
-		return nil, errors.New("command arrays are no longer supported; use a shell string")
 	default:
-		return nil, fmt.Errorf("command must be a shell string, got %T", value)
+		return nil, fmt.Errorf("command must be a shell string, got %s", tomlValueKind(value))
 	}
 }
 
@@ -2580,7 +2583,7 @@ func decodeStageCommands(value any) ([]StageCommand, error) {
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("stage commands must be a shell string, table, or array, got %T", value)
+		return nil, fmt.Errorf("stage commands must be a shell string, table, or array, got %s", tomlValueKind(value))
 	}
 }
 
@@ -2601,7 +2604,7 @@ func decodeStageCommand(value any) (StageCommand, error) {
 		if rawTimeout, ok := value["timeout"]; ok {
 			timeout, ok := rawTimeout.(string)
 			if !ok {
-				return StageCommand{}, fmt.Errorf("timeout must be a duration string, got %T", rawTimeout)
+				return StageCommand{}, fmt.Errorf("timeout must be a duration string, got %s", tomlValueKind(rawTimeout))
 			}
 			stage.Timeout = timeout
 		}
@@ -2953,7 +2956,28 @@ func ScalarValueString(value any) (string, error) {
 	case fmt.Stringer:
 		return value.String(), nil
 	default:
-		return "", fmt.Errorf("unsupported value type %T", value)
+		return "", fmt.Errorf("unsupported value type %s", tomlValueKind(value))
+	}
+}
+
+func tomlValueKind(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case int, int64:
+		return "int"
+	case float64:
+		return "float"
+	case []any, []string:
+		return "array"
+	case map[string]any:
+		return "table"
+	default:
+		return "value"
 	}
 }
 

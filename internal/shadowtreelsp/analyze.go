@@ -94,9 +94,7 @@ var stageCommandKeys = []completion{
 }
 
 func stageCommandKey(label string) bool {
-	return slices.ContainsFunc(stageCommandKeys, func(item completion) bool {
-		return item.Label == label
-	})
+	return recipe.IsStageCommandField(label)
 }
 
 var requirementKeys = []completion{

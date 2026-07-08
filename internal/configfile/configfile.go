@@ -149,7 +149,7 @@ func load(path string, overrides map[string]configOverride, overrideUsed *bool, 
 	if err := validateIncludes(cfg.Include); err != nil {
 		return Loaded{}, err
 	}
-	if err := validateRemovedFields(md); err != nil {
+	if err := validateUndecodedFields(md); err != nil {
 		return Loaded{}, err
 	}
 	if err := recipe.ValidateConfig(cfg); err != nil {
@@ -210,16 +210,21 @@ func validateIncludes(includes []string) error {
 	return nil
 }
 
-func validateRemovedFields(md toml.MetaData) error {
-	if md.IsDefined("sync_out") {
-		return errors.New("top-level sync_out is no longer supported; move sync_out under the recipe that writes those paths")
-	}
+func validateUndecodedFields(md toml.MetaData) error {
 	for _, key := range md.Undecoded() {
-		if len(key) >= 3 && key[0] == "recipes" && key[2] == "profiles" {
-			return fmt.Errorf("recipe %q profiles are no longer supported; use [recipes.%s.presets.<preset>.arguments] and preset=<preset>", key[1], key[1])
+		if len(key) == 0 || len(key) == 1 && key[0] == "$schema" || knownUndecodedStageCommandField(key) {
+			continue
 		}
+		return fmt.Errorf("unknown field %s", key.String())
 	}
 	return nil
+}
+
+func knownUndecodedStageCommandField(key toml.Key) bool {
+	return len(key) == 4 &&
+		key[0] == "recipes" &&
+		(key[2] == "pre" || key[2] == "post") &&
+		recipe.IsStageCommandField(key[3])
 }
 
 func CleanAbs(path string) string {

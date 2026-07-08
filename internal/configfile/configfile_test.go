@@ -266,7 +266,7 @@ ROOT = ["pwd"]
 				t.Fatal(err)
 			}
 			_, err := Load(path)
-			if err == nil || !strings.Contains(err.Error(), "command arrays are no longer supported") {
+			if err == nil || !strings.Contains(err.Error(), "shell string") {
 				t.Fatalf("Load() error = %v, want shell string error", err)
 			}
 		})
@@ -285,7 +285,7 @@ func TestLoadRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsTopLevelSyncOut(t *testing.T) {
+func TestLoadRejectsUnknownTopLevelSyncOut(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 sync_out = ["generated"]
@@ -297,12 +297,12 @@ cmd = "go generate ./..."
 	}
 
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "top-level sync_out is no longer supported") {
-		t.Fatalf("Load() error = %v, want top-level sync_out rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "unknown field sync_out") {
+		t.Fatalf("Load() error = %v, want unknown sync_out rejection", err)
 	}
 }
 
-func TestLoadRejectsRecipeProfiles(t *testing.T) {
+func TestLoadRejectsUnknownRecipeProfiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	if err := os.WriteFile(path, []byte(`
 [recipes.benchmark]
@@ -319,11 +319,8 @@ count = 5
 	}
 
 	_, err := Load(path)
-	if err == nil ||
-		!strings.Contains(err.Error(), `recipe "benchmark" profiles are no longer supported`) ||
-		!strings.Contains(err.Error(), `[recipes.benchmark.presets.<preset>.arguments]`) ||
-		!strings.Contains(err.Error(), `preset=<preset>`) {
-		t.Fatalf("Load() error = %v, want recipe profiles rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "unknown field recipes.benchmark.profiles.stable.arguments") {
+		t.Fatalf("Load() error = %v, want unknown profiles rejection", err)
 	}
 }
 

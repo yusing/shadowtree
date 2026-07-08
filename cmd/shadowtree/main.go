@@ -230,7 +230,7 @@ func parseGlobal(args []string) (options, []string, error) {
 			}
 			return opts, args[i+1:], nil
 		}
-		if globalFlagTakesValue(arg) {
+		if globalflag.TakesValue(arg) {
 			if !strings.Contains(arg, "=") {
 				i++
 			}
@@ -247,10 +247,6 @@ func parseGlobal(args []string) (options, []string, error) {
 		return opts, nil, err
 	}
 	return opts, flags.Args(), nil
-}
-
-func globalFlagTakesValue(arg string) bool {
-	return globalflag.TakesValue(arg)
 }
 
 func registerGlobalFlags(flags *flag.FlagSet, opts *options) {

@@ -88,7 +88,7 @@ func detectNodePackageManager(dir, packageManager string) string {
 	if name, ok := nodePackageManagerName(packageManager); ok {
 		return name
 	}
-	if name, ok := nodePackageManagerFromPackageJSONUpward(dir); ok {
+	if name, ok := nodePackageManagerFromPackageJSONUpward(filepath.Dir(dir)); ok {
 		return name
 	}
 	if name, ok := nodePackageManagerFromLockfileUpward(dir); ok {
