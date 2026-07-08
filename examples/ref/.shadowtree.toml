@@ -1,0 +1,8 @@
+[recipes.remote-echo]
+help = "Cross-config recipe target for @path:recipe examples."
+cmd = "printf 'remote message=%s\\n' \"{message}\""
+
+[recipes.remote-echo.arguments.message]
+help = "Message passed through a cross-config recipe reference."
+type = "string"
+default = "hello-from-ref"

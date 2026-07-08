@@ -1,0 +1,24 @@
+# Included by all-features.shadowtree.toml to exercise include merging.
+
+[vars]
+included_value = "from-include"
+
+[env]
+INCLUDED_ENV = "{included_value}"
+
+[var_commands]
+included_dynamic = "printf include-dynamic"
+
+[recipes.included-setup]
+help = "Recipe supplied by an included config."
+cmd = "printf 'included setup: %s %s\\n' \"{included_value}\" \"{included_dynamic}\""
+
+[recipes.inherited-merge]
+help = "Base recipe whose fields are merged by the including file."
+cmd = "printf 'base mode=%s\\n' \"{mode}\""
+
+[recipes.inherited-merge.arguments.mode]
+help = "Mode declared in the included config."
+type = "string"
+default = "base"
+values = "@enum base included"

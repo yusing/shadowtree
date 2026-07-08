@@ -1,0 +1,237 @@
+# Reference config for manual Shadowtree e2e checks.
+#
+# Try:
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml recipes
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml help kitchen-sink color=false
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print kitchen-sink target=api
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml dispatch-demo
+
+"$schema" = "../schemas/shadowtree.schema.json"
+include = ["./all-features-base.shadowtree.toml"]
+profile = "go"
+shell = "bash"
+sync_out = ["out/shared-{project_slug}.txt"]
+
+[vars]
+project_slug = "shadowtree-all-features"
+default_target = "api"
+log_dir = ".shadowtree/logs"
+
+[var_commands]
+git_branch = "git branch --show-current 2>/dev/null || printf unknown"
+generated_stamp = "printf manual-e2e"
+
+[env]
+SHADOWTREE_EXAMPLE = "{project_slug}"
+SHADOWTREE_BRANCH = "{git_branch}"
+
+shell_prelude = '''
+set -euo pipefail
+
+say_step() {
+	printf '[%s] %s\n' "{project_slug}" "$1"
+}
+'''
+
+[recipes.inherited-merge]
+help = "Included recipe overridden by field merge."
+cmd = "printf 'merged mode=%s extra=%s\\n' \"{mode}\" \"{extra}\""
+
+[recipes.inherited-merge.vars]
+extra = "including-config"
+
+[recipes.inherited-merge.arguments.mode]
+default = "merged"
+values = "@enum merged='merged default' override='override mode'"
+
+[recipes.kitchen-sink]
+help = "Exercise every recipe field in one sandboxed recipe."
+sandboxed = true
+shell = "bash"
+shell_prelude = '''
+recipe_banner() {
+	printf 'recipe=%s target=%s\n' kitchen-sink "{target}"
+}
+'''
+for_each = "@enum api='API service' worker='Background worker'"
+workdir = "."
+pre = [
+  "@included-setup",
+  { cmd = "@retry[count=2,delay=100ms] printf 'pre retry ok\\n'", timeout = "5s" },
+]
+cmd = '''
+printf '[%s] main\n' "{project_slug}"
+recipe_banner
+printf 'item=%s help=%s index=%s\n' "{item}" "{item_help}" "{item_index}"
+printf 'target=%s retries=%s ratio=%s enabled=%s path=%s timeout=%s seconds=%s leftover=%s\n' \
+  "{target}" "{retries}" "{ratio}" "{enabled}" "{input}" "{timeout}" "{seconds}" "{@}"
+mkdir -p out "{log_dir}"
+printf 'synced from {target}\n' > "out/{target}.txt"
+'''
+post = [
+  "printf 'post string stage\\n'",
+  { cmd = "printf 'post table stage\\n'", timeout = "5s" },
+]
+sync_out = ["out/{target}.txt"]
+log = "{log_dir}/kitchen-sink-{run_id}.log"
+log_stages = ["pre", "cmd", "post"]
+log_tee = true
+
+[recipes.kitchen-sink.vars]
+target = "{default_target}"
+recipe_local = "local-{project_slug}"
+
+[recipes.kitchen-sink.env]
+TARGET = "{target}"
+RECIPE_LOCAL = "{recipe_local}"
+
+[recipes.kitchen-sink.requires]
+commands = ["printf", "git"]
+optional_commands = ["tree", "jq"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+node_commands = { eslint = "eslint@^9" }
+
+[recipes.kitchen-sink.arguments.target]
+help = "Named string argument with enum values."
+type = "string"
+required = true
+default = "api"
+values = "@enum api='API service' worker='Background worker' docs='Documentation site'"
+
+[recipes.kitchen-sink.arguments.retries]
+help = "Integer argument with bounds."
+type = "int"
+default = 2
+min = 1
+max = 5
+
+[recipes.kitchen-sink.arguments.ratio]
+help = "Floating-point argument with bounds."
+type = "float"
+default = 0.5
+min = 0.1
+max = 1.0
+
+[recipes.kitchen-sink.arguments.enabled]
+help = "Boolean argument."
+type = "bool"
+default = true
+values = "@enum true false"
+
+[recipes.kitchen-sink.arguments.input]
+help = "Relative file path argument."
+type = "rel_path"
+path_kind = "file"
+position = 1
+default = "README.md"
+values = '@glob "*.md"'
+
+[recipes.kitchen-sink.arguments.output_dir]
+help = "Directory path argument."
+type = "path"
+path_kind = "dir"
+default = "out"
+
+[recipes.kitchen-sink.arguments.tool]
+help = "Executable path argument."
+type = "path"
+path_kind = "executable"
+default = "/bin/sh"
+
+[recipes.kitchen-sink.arguments.any_path]
+help = "Path argument with any path kind."
+type = "path"
+path_kind = "any"
+default = "."
+
+[recipes.kitchen-sink.arguments.timeout]
+help = "Duration argument preserved as a duration string."
+type = "duration"
+default = "2s"
+min = "100ms"
+max = "10s"
+
+[recipes.kitchen-sink.arguments.seconds]
+help = "Duration argument expanded as whole seconds."
+type = "duration:seconds"
+default = "3s"
+min = "1s"
+max = "60s"
+
+[recipes.kitchen-sink.arguments.module]
+help = "Go module completion values."
+type = "rel_path"
+default = "."
+values = "@go-modules; @enum all='all modules'"
+
+[recipes.kitchen-sink.arguments.pkg]
+help = "Go package completion values."
+type = "string"
+default = "./..."
+values = "@go-packages"
+
+[recipes.kitchen-sink.arguments.main_pkg]
+help = "Go main package completion values."
+type = "string"
+default = "./cmd/shadowtree"
+values = "@go-main-packages"
+
+[recipes.kitchen-sink.arguments.recipe_name]
+help = "Resolved recipe-name completion values."
+type = "string"
+default = "kitchen-sink"
+values = "@recipes"
+
+[recipes.kitchen-sink.arguments.placeholder_name]
+help = "Placeholder-name completion values."
+type = "string"
+default = "target"
+values = "@vars"
+
+[recipes.kitchen-sink.arguments.line_value]
+help = "Values read from all-features-values.txt."
+type = "string"
+default = "api"
+values = "@lines all-features-values.txt"
+
+[recipes.kitchen-sink.profiles.smoke.arguments]
+target = "api"
+retries = 1
+ratio = 0.25
+enabled = true
+timeout = "1s"
+seconds = "2s"
+
+[recipes.kitchen-sink.profiles.full.arguments]
+target = "worker"
+retries = 5
+ratio = 1.0
+enabled = false
+timeout = "10s"
+seconds = "30s"
+
+[recipes.stage-table]
+help = "Use single-table pre and post forms."
+pre = { cmd = "printf 'single table pre\\n'", timeout = "2s" }
+cmd = "printf 'stage-table main\\n'"
+post = { cmd = "printf 'single table post\\n'", timeout = "2s" }
+
+[recipes.dispatch-demo]
+help = "Exercise recipe references, bracket arguments, cross-config refs, and literal @ commands."
+sandboxed = false
+pre = [
+  "@inherited-merge[mode=override]",
+  "@ref:remote-echo[message=from-dispatch-demo]",
+]
+cmd = '''
+printf '[%s] dispatch\n' "{project_slug}"
+@included-setup
+@inherited-merge mode=override
+@ref:remote-echo message=from-script
+'''
+post = ["printf 'dispatch complete\\n'"]
+
+[recipes.unsandboxed-demo]
+help = "Exercise sandboxed=false; sync_out is unnecessary for direct checkout writes."
+sandboxed = false
+cmd = "printf 'unsandboxed demo only\\n'"

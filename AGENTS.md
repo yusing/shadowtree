@@ -9,7 +9,8 @@ Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point 
 Do not rely on `shadowtree` skill since you're currently working `shadowtree`.
 
 On significant changes, update (where applicable) README, spec, json schema,
-agent `SKILL.md`, lsp (syntax highlighting, autocomplete and diagnostic) and shell completion.
+agent `SKILL.md`, lsp (syntax highlighting, autocomplete and diagnostic), shell
+completion, and the reference configs under `examples/all-features*.shadowtree.toml`.
 
 Follow global duplication-control rules. In this repo, prefer these existing
 sources of truth over local copies:
@@ -22,7 +23,8 @@ sources of truth over local copies:
 - profile support: `recipe.SupportsProfile` and `recipe.Builtins`
 - global flags: `internal/globalflag.All` and `internal/globalflag.Lookup`
 - config schema surfaces: `schemas/shadowtree.schema.json`, runtime, LSP
-  completions/diagnostics, editor docs, and agent skill docs must stay aligned
+  completions/diagnostics, editor docs, agent skill docs, and the all-features
+  example configs must stay aligned
 
 ## Build, Test, and Development Commands
 
