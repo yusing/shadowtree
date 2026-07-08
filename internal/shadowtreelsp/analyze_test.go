@@ -23,6 +23,7 @@ cmd = "go build"
 	assertLabels(t, items,
 		"vars",
 		"env",
+		"requires",
 		"arguments",
 		"pre",
 		"post",
@@ -33,7 +34,14 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	text := `[recipes.build]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
-	assertLabels(t, items, "cmd", "sandboxed", "sync_out", "log", "log_stages", "log_tee")
+	assertLabels(t, items, "cmd", "requires", "sandboxed", "sync_out", "log", "log_stages", "log_tee")
+}
+
+func TestCompletionsIncludeKeysForRequiresTable(t *testing.T) {
+	text := `[recipes.build.requires]
+`
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
+	assertLabels(t, items, "commands", "optional_commands", "go_commands", "node_commands")
 }
 
 func TestCompletionsIncludeKeysForStructuredStageTable(t *testing.T) {

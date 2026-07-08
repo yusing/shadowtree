@@ -226,6 +226,36 @@ func TestPrintRecipeHelpShowsBareRecipeReferences(t *testing.T) {
 	}
 }
 
+func TestPrintRecipeHelpShowsRequirements(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "benchmark", recipe.Recipe{
+		Help: "Run benchmark.",
+		Cmd:  recipe.Command{"go", "test"},
+		Requires: recipe.Requirements{
+			Commands:         []string{"docker", "openssl"},
+			OptionalCommands: []string{"h2load"},
+			GoCommands:       map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"},
+			NodeCommands:     map[string]string{"eslint": "eslint@^9"},
+		},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"- Requires:",
+		"commands: docker, openssl",
+		"optional: h2load",
+		"go: stringer (golang.org/x/tools/cmd/stringer@latest)",
+		"node: eslint (eslint@^9)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "tidy", recipe.Recipe{

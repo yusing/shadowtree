@@ -422,6 +422,32 @@ unknown = true
 	assertDiagnosticRange(t, diagnostics[0], 2, 0, len("unknown"))
 }
 
+func TestDocumentDiagnosticsRejectUnknownRequirementField(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+commandz = ["go"]
+`)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one diagnostic", diagnostics)
+	}
+	if diagnostics[0].Message != "unknown field recipes.build.requires.commandz" {
+		t.Fatalf("message = %q", diagnostics[0].Message)
+	}
+	assertDiagnosticRange(t, diagnostics[0], 4, 0, len("commandz"))
+}
+
+func TestDocumentDiagnosticsRejectInvalidRequirementConfig(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+commands = ["go", "go"]
+`)
+	assertOneDiagnostic(t, diagnostics, `recipe "build" requires: commands[1] duplicates commands[0] "go"`)
+}
+
 func TestDocumentDiagnosticsRejectUnknownRecipeReference(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
 pre = ["echo 123", "@missing"]

@@ -410,6 +410,9 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sandboxed:"))
 		fmt.Fprintf(w, "    %s\n", colors.literal("false"))
 	}
+	if !rec.Requires.Empty() {
+		printRecipeRequirements(w, rec.Requires, colors)
+	}
 	if len(rec.Pre) > 0 {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Pre commands:"))
 		for i, command := range rec.Pre {
@@ -483,6 +486,30 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		}
 	}
 	return nil
+}
+
+func printRecipeRequirements(w io.Writer, req recipe.Requirements, colors helpColors) {
+	fmt.Fprintf(w, "\n%s\n\n", colors.section("- Requires:"))
+	if len(req.Commands) > 0 {
+		fmt.Fprintf(w, "    %s %s\n", colors.label("commands:"), colors.literal(strings.Join(req.Commands, ", ")))
+	}
+	if len(req.OptionalCommands) > 0 {
+		fmt.Fprintf(w, "    %s %s\n", colors.label("optional:"), colors.literal(strings.Join(req.OptionalCommands, ", ")))
+	}
+	if len(req.GoCommands) > 0 {
+		fmt.Fprintf(w, "    %s %s\n", colors.label("go:"), colors.literal(requirementMapHelpText(req.GoCommands)))
+	}
+	if len(req.NodeCommands) > 0 {
+		fmt.Fprintf(w, "    %s %s\n", colors.label("node:"), colors.literal(requirementMapHelpText(req.NodeCommands)))
+	}
+}
+
+func requirementMapHelpText(values map[string]string) string {
+	parts := make([]string, 0, len(values))
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		parts = append(parts, fmt.Sprintf("%s (%s)", name, values[name]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func recipeHelpText(rec recipe.Recipe) string {

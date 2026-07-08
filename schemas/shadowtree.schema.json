@@ -101,6 +101,9 @@
         "profiles": {
           "$ref": "#/definitions/recipeProfiles"
         },
+        "requires": {
+          "$ref": "#/definitions/requirements"
+        },
         "vars": {
           "$ref": "#/definitions/vars",
           "description": "Recipe-local placeholder values. These override top-level vars and may reference other vars."
@@ -162,6 +165,55 @@
       },
       "x-taplo": {
         "initKeys": ["help", "cmd", "arguments"]
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "description": "Recipe-local tool requirements checked before any recipe commands run. Required missing tools fail the recipe; optional missing tools warn and continue.",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "$ref": "#/definitions/requirementCommandList",
+          "description": "Required executable basenames, not paths, that must already be present on PATH."
+        },
+        "optional_commands": {
+          "$ref": "#/definitions/requirementCommandList",
+          "description": "Optional executable basenames, not paths. Missing entries print one warning and the recipe continues."
+        },
+        "go_commands": {
+          "$ref": "#/definitions/requirementPackageMap",
+          "description": "Required Go-installable tools keyed by executable name. Missing entries fail with go install guidance."
+        },
+        "node_commands": {
+          "$ref": "#/definitions/requirementPackageMap",
+          "description": "Required Node-installable CLI tools keyed by executable name. Missing entries fail with package-manager-specific CLI install guidance."
+        }
+      },
+      "x-taplo": {
+        "initKeys": ["commands", "optional_commands", "go_commands", "node_commands"]
+      }
+    },
+    "requirementCommandList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^\\S(?:[^/\\\\]*\\S)?$",
+        "not": {
+          "pattern": "[/\\\\]"
+        }
+      },
+      "uniqueItems": true
+    },
+    "requirementPackageMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(?!run_id$)\\S(?:[^/\\\\]*\\S)?$": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
       }
     },
     "arguments": {

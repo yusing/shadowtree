@@ -171,6 +171,7 @@ Use these fields under `[recipes.<name>]`:
 - `log`: optional recipe log file path; supports placeholders including `{run_id}`.
 - `log_stages`: optional stages logged to `log`; values are `pre`, `cmd`, `post`; omitted means all three; selected commands get compact `== stage: command ==` boundaries.
 - `log_tee`: boolean; defaults to `true`; when `false`, selected stage output goes only to the log.
+- `requires`: recipe-local tool requirements checked before sandbox setup and before `pre`.
 - `env`: recipe environment overrides.
 - `vars`: recipe placeholder values overriding top-level `vars`.
 - `shell`: recipe shell override.
@@ -181,6 +182,33 @@ Use these fields under `[recipes.<name>]`:
 Reserved recipe names: `recipes`, `init`, `config`, `exec`, `completion`, `enum`, `glob`, `go-main-packages`, `go-modules`, `go-packages`, `help`, `lines`, `retry`, `vars`, `version`, `__complete`, plus future built-in `@` command identifiers. `run` is a valid recipe name; use `shadowtree exec -- <cmd> [args...]` for the explicit-command form.
 
 Completion criterion: each recipe has `help` and `cmd`, and uses typed `arguments` plus placeholders in `cmd` instead of extra argument lists.
+
+## Tool Requirements
+
+Use `[recipes.<name>.requires]` when a recipe needs tools to exist before any
+commands run:
+
+```toml
+[recipes.benchmark.requires]
+commands = ["docker", "openssl", "go"]
+optional_commands = ["h2load"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+node_commands = { eslint = "eslint@^9" }
+```
+
+`commands`, `go_commands`, and `node_commands` are required executable checks.
+`commands` and `optional_commands` use executable basenames, not paths. Missing
+required tools fail before sandbox setup and before `pre`.
+`optional_commands` prints one warning and continues. Shadowtree does not
+install tools. Missing Go tools show `go install <module>@<version>` guidance.
+Missing Node tools use detected `npm`/`pnpm`/`yarn`/`bun` to suggest installing
+the CLI globally, such as `pnpm add --global eslint@^9`. `--print` shows
+declared requirements without checking the host.
+
+Requirement names are static, not placeholders. Included or overriding recipes
+that specify `requires` replace the inherited `requires` block as a whole.
+
+Completion criterion: run `shadowtree --print <recipe>` to inspect declared requirements before running recipes that depend on host tools.
 
 ## Command Forms
 

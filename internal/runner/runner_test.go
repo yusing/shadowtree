@@ -32,6 +32,17 @@ func stageCommands(commands ...recipe.Command) recipe.StageCommands {
 	return out
 }
 
+func writeExecutable(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	if os.Getenv("SHELL") == "" {
 		t.Setenv("SHELL", "/bin/sh")
@@ -54,6 +65,188 @@ func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	}
 	if string(data) != "host" {
 		t.Fatalf("source mutated: %q", data)
+	}
+}
+
+func TestRunMissingRequiredCommandsFailsBeforePreAndSandboxSetup(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	original := newOverlayWorkspace
+	sandboxCalled := false
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		sandboxCalled = true
+		return nil, errors.New("sandbox should not be created")
+	}
+	t.Cleanup(func() {
+		newOverlayWorkspace = original
+	})
+	resolved, err := recipe.Resolve("benchmark", recipe.Recipe{
+		Requires: recipe.Requirements{Commands: []string{"missing-tool", "other-missing-tool"}},
+		Pre:      stageCommands(recipe.Command{"missing-tool"}),
+		Cmd:      recipe.Command{"missing-tool"},
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+
+	if err == nil || !strings.Contains(err.Error(), `recipe "benchmark" missing required tools: missing-tool, other-missing-tool`) {
+		t.Fatalf("Run error = %v", err)
+	}
+	if sandboxCalled {
+		t.Fatal("sandbox was created before requirement checks")
+	}
+}
+
+func TestRunPresentRequiredCommandAllowsExecution(t *testing.T) {
+	source := t.TempDir()
+	bin := t.TempDir()
+	writeExecutable(t, bin, "shadow-ok", `printf ok > "$PWD/out.txt"`)
+	t.Setenv("PATH", bin)
+	resolved, err := recipe.Resolve("run", recipe.Recipe{
+		Requires:  recipe.Requirements{Commands: []string{"shadow-ok"}},
+		Cmd:       recipe.Command{"shadow-ok"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileContent(t, filepath.Join(source, "out.txt"), "ok")
+}
+
+func TestRunMissingOptionalCommandsWarnsAndContinues(t *testing.T) {
+	source := t.TempDir()
+	bin := t.TempDir()
+	writeExecutable(t, bin, "shadow-ok", `printf ok > "$PWD/out.txt"`)
+	t.Setenv("PATH", bin)
+	resolved, err := recipe.Resolve("benchmark", recipe.Recipe{
+		Requires: recipe.Requirements{
+			Commands:         []string{"shadow-ok"},
+			OptionalCommands: []string{"h2load"},
+		},
+		Cmd:       recipe.Command{"shadow-ok"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileContent(t, filepath.Join(source, "out.txt"), "ok")
+	if got, want := stderr.String(), `shadowtree: recipe "benchmark" optional tools not found: h2load`+"\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunMissingGoCommandReportsInstallGuidance(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	resolved, err := recipe.Resolve("generate", recipe.Recipe{
+		Requires:  recipe.Requirements{GoCommands: map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"}},
+		Cmd:       recipe.Command{"stringer"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+
+	want := `recipe "generate" missing required Go tools: stringer (go install golang.org/x/tools/cmd/stringer@latest)`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run error = %v, want %q", err, want)
+	}
+}
+
+func TestRunMissingNodeCommandReportsPackageManagerCLIInstallGuidance(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"packageManager":"pnpm@9.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	resolved, err := recipe.Resolve("lint", recipe.Recipe{
+		Requires:  recipe.Requirements{NodeCommands: map[string]string{"eslint": "eslint@^9"}},
+		Cmd:       recipe.Command{"eslint"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+
+	want := `recipe "lint" missing required Node tools: eslint (pnpm add --global eslint@^9)`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run error = %v, want %q", err, want)
+	}
+}
+
+func TestRunMissingNodeCommandGuidanceUsesStaticWorkdirPackageManager(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"packageManager":"npm@10.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frontend := filepath.Join(source, "frontend")
+	if err := os.Mkdir(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontend, "package.json"), []byte(`{"packageManager":"pnpm@9.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	resolved, err := recipe.Resolve("lint", recipe.Recipe{
+		Requires:  recipe.Requirements{NodeCommands: map[string]string{"eslint": "eslint@^9"}},
+		Workdir:   "frontend",
+		Cmd:       recipe.Command{"eslint"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source})
+
+	want := `recipe "lint" missing required Node tools: eslint (pnpm add --global eslint@^9)`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run error = %v, want %q", err, want)
+	}
+}
+
+func TestRunNestedRecipeChecksNestedRequirementsWhenReached(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	parent, err := recipe.Resolve("parent", recipe.Recipe{
+		Cmd:       recipe.Command{"@child"},
+		Sandboxed: new(false),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := recipe.Recipe{
+		Requires:  recipe.Requirements{Commands: []string{"child-tool"}},
+		Cmd:       recipe.Command{"child-tool"},
+		Sandboxed: new(false),
+	}
+
+	err = Run(t.Context(), Options{
+		Resolved:  parent,
+		Recipes:   map[string]recipe.Recipe{"child": child},
+		SourceDir: source,
+	})
+
+	want := `recipe "child" missing required tools: child-tool`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run error = %v, want %q", err, want)
 	}
 }
 
@@ -2027,5 +2220,43 @@ func TestPrintPlanHidesUnsandboxedSyncOut(t *testing.T) {
 	}
 	if strings.Contains(text, "sync_out:") {
 		t.Fatalf("plan output shows ignored sync_out:\n%s", text)
+	}
+}
+
+func TestPrintPlanShowsRequirementsWithoutCheckingHost(t *testing.T) {
+	resolved, err := recipe.Resolve(
+		"benchmark",
+		recipe.Recipe{
+			Cmd: recipe.Command{"missing-main"},
+			Requires: recipe.Requirements{
+				Commands:         []string{"missing-main"},
+				OptionalCommands: []string{"h2load"},
+				GoCommands:       map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"},
+				NodeCommands:     map[string]string{"eslint": "eslint@^9"},
+			},
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printPlan(&out, resolved)
+	text := out.String()
+	for _, want := range []string{
+		"requires.commands: missing-main",
+		"requires.optional_commands: h2load",
+		"requires.go_commands: stringer=golang.org/x/tools/cmd/stringer@latest",
+		"requires.node_commands: eslint=eslint@^9",
+		"main: missing-main",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("plan output missing %q:\n%s", want, text)
+		}
 	}
 }

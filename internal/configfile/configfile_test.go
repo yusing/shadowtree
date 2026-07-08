@@ -3,6 +3,7 @@ package configfile
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +28,12 @@ help = "Run tests."
 sandboxed = false
 cmd = "go test -count {count} {pkg} {@}"
 pre = ["go generate ./..."]
+
+[recipes.test.requires]
+commands = ["go"]
+optional_commands = ["h2load"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+node_commands = { eslint = "eslint@^9" }
 
 [recipes.test.arguments.pkg]
 type = "rel_path"
@@ -73,6 +80,19 @@ count = 5
 	}
 	if got := loaded.Config.Recipes["test"].Cmd; len(got) != 2 || got[0] != "__shadowtree_script__" {
 		t.Fatalf("cmd = %#v", got)
+	}
+	requires := loaded.Config.Recipes["test"].Requires
+	if !slices.Equal(requires.Commands, []string{"go"}) {
+		t.Fatalf("requires.commands = %#v", requires.Commands)
+	}
+	if !slices.Equal(requires.OptionalCommands, []string{"h2load"}) {
+		t.Fatalf("requires.optional_commands = %#v", requires.OptionalCommands)
+	}
+	if requires.GoCommands["stringer"] != "golang.org/x/tools/cmd/stringer@latest" {
+		t.Fatalf("requires.go_commands = %#v", requires.GoCommands)
+	}
+	if requires.NodeCommands["eslint"] != "eslint@^9" {
+		t.Fatalf("requires.node_commands = %#v", requires.NodeCommands)
 	}
 	if got := loaded.Config.Recipes["test"].Arguments["count"].Default; got == nil {
 		t.Fatal("count default is nil")
@@ -292,6 +312,10 @@ for_each = "@enum api"
 workdir = "{item}"
 cmd = "base {target}"
 
+[recipes.build.requires]
+commands = ["go"]
+optional_commands = ["h2load"]
+
 [recipes.build.vars]
 recipe_shared = "base"
 recipe_base_only = "base"
@@ -312,6 +336,9 @@ shared = "extra"
 
 [recipes.extra]
 cmd = "extra"
+
+[recipes.extra.requires]
+commands = ["node"]
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -380,6 +407,9 @@ default = "dev"
 	if build.Env["RECIPE_SHARED"] != "current" || build.Env["RECIPE_BASE_ONLY"] != "base" || build.Env["RECIPE_CURRENT_ONLY"] != "current" {
 		t.Fatalf("build env = %#v", build.Env)
 	}
+	if !slices.Equal(build.Requires.Commands, []string{"go"}) || !slices.Equal(build.Requires.OptionalCommands, []string{"h2load"}) {
+		t.Fatalf("build requires = %#v", build.Requires)
+	}
 	if _, ok := build.Arguments["target"]; !ok {
 		t.Fatalf("build arguments missing inherited target: %#v", build.Arguments)
 	}
@@ -388,6 +418,9 @@ default = "dev"
 	}
 	if _, ok := cfg.Recipes["extra"]; !ok {
 		t.Fatalf("missing recipe from later include: %#v", cfg.Recipes)
+	}
+	if !slices.Equal(cfg.Recipes["extra"].Requires.Commands, []string{"node"}) {
+		t.Fatalf("extra requires = %#v", cfg.Recipes["extra"].Requires)
 	}
 	if source := loaded.Sources.Recipes["extra"]; source != CleanAbs(extra) {
 		t.Fatalf("extra source = %q, want %q", source, CleanAbs(extra))
@@ -462,6 +495,104 @@ default = "."
 	arg := loaded.Config.Recipes["build"].Arguments["target"]
 	if arg.Required {
 		t.Fatalf("required = true, want false override")
+	}
+}
+
+func TestLoadIncludeRequirementsReplaceAsBlock(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.shadowtree.toml"), []byte(`
+[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+commands = ["go"]
+optional_commands = ["h2load"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+include = ["./common.shadowtree.toml"]
+
+[recipes.build.requires]
+commands = ["docker"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := loaded.Config.Recipes["build"].Requires
+	if !slices.Equal(req.Commands, []string{"docker"}) {
+		t.Fatalf("commands = %#v", req.Commands)
+	}
+	if len(req.OptionalCommands) != 0 || len(req.GoCommands) != 0 {
+		t.Fatalf("requires not replaced as block: %#v", req)
+	}
+}
+
+func TestLoadIncludeEmptyRequirementsReplaceAsBlock(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.shadowtree.toml"), []byte(`
+[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+commands = ["go"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`
+include = ["./common.shadowtree.toml"]
+
+[recipes.build.requires]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := loaded.Config.Recipes["build"].Requires; !req.Empty() {
+		t.Fatalf("requires = %#v, want empty replacement", req)
+	}
+}
+
+func TestLoadLaterIncludeEmptyRequirementsReplaceEarlierInclude(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.shadowtree.toml"), []byte(`
+[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+commands = ["go"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.shadowtree.toml"), []byte(`
+[recipes.build]
+cmd = "go build"
+
+[recipes.build.requires]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`include = ["./a.shadowtree.toml", "./b.shadowtree.toml"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := loaded.Config.Recipes["build"].Requires; !req.Empty() {
+		t.Fatalf("requires = %#v, want empty replacement from later include", req)
 	}
 }
 

@@ -158,6 +158,12 @@ log = "logs/{run_id}.log"
 log_stages = ["pre", "cmd", "post"]
 log_tee = true
 
+[recipes.<name>.requires]
+commands = ["go"]
+optional_commands = ["h2load"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+node_commands = { eslint = "eslint@^9" }
+
 [recipes.<name>.vars]
 NAME = "recipe override"
 
@@ -441,6 +447,46 @@ Each selected logged command is preceded by a boundary line of the form
 `== cmd: @build ==`, or `== post[0]: <script> ==`. Long one-line commands are
 truncated in the boundary. Multiline scripts are shown as `<script>`; full
 multiline script bodies are never dumped into boundary lines.
+
+`requires`
+: Optional recipe-local tool requirements checked before sandbox setup and
+before any `pre` command. Requirements are static declarations and are not
+placeholder-expanded. An included or overriding recipe that specifies
+`requires` replaces the previous `requires` block as a whole.
+
+`requires.commands`
+: Required executable names, not paths. Missing entries fail the recipe in one
+grouped error such as `recipe "benchmark" missing required tools: docker,
+openssl`.
+
+`requires.optional_commands`
+: Optional executable names. Missing entries print one stderr warning and the
+recipe continues, for example `shadowtree: recipe "benchmark" optional tools
+not found: h2load`.
+
+`requires.go_commands`
+: Required Go-installable tools keyed by executable name with package strings
+as values, for example `stringer =
+"golang.org/x/tools/cmd/stringer@latest"`. Shadowtree checks only for the
+executable on `PATH`; it does not run `go install`. Missing entries fail with
+guidance such as `stringer (go install
+golang.org/x/tools/cmd/stringer@latest)`.
+
+`requires.node_commands`
+: Required Node-installable CLI tools keyed by executable name with package
+strings as values, for example `eslint = "eslint@^9"`. Shadowtree checks only
+for the executable on `PATH`; it does not install packages. Missing entries use
+the detected package manager to suggest installing the CLI, such as `npm
+install -g eslint@^9`, `pnpm add --global eslint@^9`, `yarn global add
+eslint@^9`, or `bun add --global eslint@^9`.
+
+Requirement command names must be non-empty executable basenames without path
+separators or surrounding whitespace. `commands` and `optional_commands` cannot
+contain duplicates within each list. `go_commands` and `node_commands` keys use
+the same executable basename rules, excluding `run_id`, and package values must
+be non-empty strings without surrounding whitespace. Duplicate executable names
+across `commands`, `go_commands`, and `node_commands` are rejected. Overlap
+between required and optional names is rejected.
 
 ## Recipe Arguments
 
@@ -995,6 +1041,7 @@ It prints these fields when present or applicable:
 - recipe help text
 - command section
 - sandboxed section for unsandboxed recipes
+- requires section when recipe-local tool requirements are declared
 - pre command section
 - post command section
 - for_each section
@@ -1024,6 +1071,7 @@ The plan includes these fields when present or applicable:
 - profile
 - config path
 - `sandboxed: false` for unsandboxed recipes
+- declared requirements without checking the host
 - pre commands
 - for_each command
 - workdir

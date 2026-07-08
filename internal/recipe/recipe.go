@@ -130,6 +130,7 @@ type Recipe struct {
 	Help         string                   `toml:"help"`
 	Arguments    map[string]Argument      `toml:"arguments"`
 	Profiles     map[string]RecipeProfile `toml:"profiles"`
+	Requires     Requirements             `toml:"requires"`
 	Vars         map[string]string        `toml:"vars"`
 	Shell        string                   `toml:"shell"`
 	ShellPrelude string                   `toml:"shell_prelude"`
@@ -145,6 +146,14 @@ type Recipe struct {
 	LogStages    []string                 `toml:"log_stages"`
 	LogTee       *bool                    `toml:"log_tee"`
 	varsExpanded bool
+}
+
+// Requirements declares external tools a recipe expects before commands run.
+type Requirements struct {
+	Commands         []string          `toml:"commands"`
+	OptionalCommands []string          `toml:"optional_commands"`
+	GoCommands       map[string]string `toml:"go_commands"`
+	NodeCommands     map[string]string `toml:"node_commands"`
 }
 
 type Argument struct {
@@ -467,6 +476,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.Profiles != nil {
 		out.Profiles = mergeProfiles(out.Profiles, override.Profiles)
 	}
+	if !override.Requires.Empty() {
+		out.Requires = cloneRequirements(override.Requires)
+	}
 	if override.Vars != nil {
 		out.Vars = maps.Clone(override.Vars)
 	}
@@ -510,6 +522,23 @@ func MergeRecipe(base, override Recipe) Recipe {
 		out.LogTee = new(*override.LogTee)
 	}
 	return out
+}
+
+// Empty reports whether req declares no requirements.
+func (req Requirements) Empty() bool {
+	return len(req.Commands) == 0 &&
+		len(req.OptionalCommands) == 0 &&
+		len(req.GoCommands) == 0 &&
+		len(req.NodeCommands) == 0
+}
+
+func cloneRequirements(req Requirements) Requirements {
+	return Requirements{
+		Commands:         slices.Clone(req.Commands),
+		OptionalCommands: slices.Clone(req.OptionalCommands),
+		GoCommands:       maps.Clone(req.GoCommands),
+		NodeCommands:     maps.Clone(req.NodeCommands),
+	}
 }
 
 // ApplyGlobalsExpanded applies globals after expanding static vars.
@@ -783,6 +812,9 @@ func ValidateConfig(cfg Config) error {
 			}
 			return prefixConfigPath(wrapped, err, "recipes", name, "profiles")
 		}
+		if err := validateRequirements(rec.Requires); err != nil {
+			return prefixConfigPath(fmt.Errorf("recipe %q requires: %w", name, err), err, "recipes", name, "requires")
+		}
 		if err := validateVarsMapAt(fmt.Sprintf("recipe %q vars", name), []string{"recipes", name, "vars"}, rec.Vars); err != nil {
 			return err
 		}
@@ -815,6 +847,77 @@ func ValidateConfig(cfg Config) error {
 				return fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
 			}
 		}
+	}
+	return nil
+}
+
+func validateRequirements(req Requirements) error {
+	required := map[string]string{}
+	if err := validateRequirementList("commands", req.Commands); err != nil {
+		return err
+	}
+	for _, name := range req.Commands {
+		required[name] = "commands"
+	}
+	if err := validateRequirementList("optional_commands", req.OptionalCommands); err != nil {
+		return err
+	}
+	if err := validateInstallableRequirements("go_commands", req.GoCommands, required); err != nil {
+		return err
+	}
+	if err := validateInstallableRequirements("node_commands", req.NodeCommands, required); err != nil {
+		return err
+	}
+	for _, name := range req.OptionalCommands {
+		if source, ok := required[name]; ok {
+			return configValuePathError(fmt.Errorf("optional_commands overlaps required tool %q from %s", name, source), "optional_commands")
+		}
+	}
+	return nil
+}
+
+func validateRequirementList(field string, names []string) error {
+	seen := map[string]int{}
+	for i, name := range names {
+		if strings.TrimSpace(name) != name || name == "" {
+			return configValuePathError(fmt.Errorf("%s[%d] must be a non-empty executable name without surrounding whitespace", field, i), field)
+		}
+		if strings.ContainsAny(name, `/\`) {
+			return configValuePathError(fmt.Errorf("%s[%d] must be an executable name, not a path", field, i), field)
+		}
+		if first, ok := seen[name]; ok {
+			return configValuePathError(fmt.Errorf("%s[%d] duplicates %s[%d] %q", field, i, field, first, name), field)
+		}
+		seen[name] = i
+	}
+	return nil
+}
+
+func validateInstallableRequirements(field string, commands map[string]string, required map[string]string) error {
+	for name, pkg := range commands {
+		if err := validateRequirementName(field, name); err != nil {
+			return configKeyPathError(err, field, name)
+		}
+		if strings.TrimSpace(pkg) != pkg || pkg == "" {
+			return configValuePathError(fmt.Errorf("%s.%s must be a non-empty package string without surrounding whitespace", field, name), field, name)
+		}
+		if source, ok := required[name]; ok {
+			return configKeyPathError(fmt.Errorf("required tool %q declared in both %s and %s", name, source, field), field, name)
+		}
+		required[name] = field
+	}
+	return nil
+}
+
+func validateRequirementName(field, name string) error {
+	if strings.TrimSpace(name) != name || name == "" {
+		return fmt.Errorf("%s must be a non-empty executable name without surrounding whitespace", field)
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("%s must be an executable name, not a path", field)
+	}
+	if name == RunIDPlaceholder {
+		return fmt.Errorf("%s key %q is reserved", field, name)
 	}
 	return nil
 }

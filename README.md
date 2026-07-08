@@ -170,6 +170,10 @@ values = "@go-packages"
 help = "Build a Go package."
 cmd = 'go build {go_ldflags:raw} "{project}" {@}'
 
+[recipes.build.requires]
+commands = ["go"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+
 [recipes.build.arguments.project]
 help = "Go main package to build."
 type = "string"
@@ -339,6 +343,30 @@ compact boundary such as `== pre[0]: <script> ==`, `== cmd: @build ==`, or
 script bodies are not written into boundaries. A selected parent stage also
 captures output from nested `@recipe` calls; nested recipe `log` settings do not
 open a second log during that reference.
+
+Declare recipe-local tool requirements when a command should fail before any
+recipe phase runs:
+
+```toml
+[recipes.benchmark]
+cmd = "go test -bench ."
+
+[recipes.benchmark.requires]
+commands = ["docker", "openssl", "go"]
+optional_commands = ["h2load"]
+go_commands = { stringer = "golang.org/x/tools/cmd/stringer@latest" }
+node_commands = { eslint = "eslint@^9", playwright = "@playwright/test@latest" }
+```
+
+`commands` are required executable names, not paths. Missing required commands
+fail before sandbox setup and before `pre` commands. `optional_commands` print
+one warning to stderr and continue. `go_commands` and `node_commands` are required
+executable names with package guidance; Shadowtree checks only for the
+executable on `PATH` and does not install packages. Missing Go tools report
+`go install <module>@<version>` guidance. Missing Node tools use the detected
+package manager to suggest installing the CLI, such as `npm install -g
+eslint@^9`, `pnpm add --global eslint@^9`, `yarn global add eslint@^9`, or
+`bun add --global eslint@^9`.
 
 ## Typed Arguments
 

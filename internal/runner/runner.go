@@ -154,6 +154,91 @@ func logStageForPhase(phase string) string {
 	return phase
 }
 
+type installableRequirement struct {
+	name     string
+	guidance string
+}
+
+func checkRecipeRequirements(resolved recipe.Resolved, dir string, env []string, stderr io.Writer) error {
+	req := resolved.Recipe.Requires
+	if req.Empty() {
+		return nil
+	}
+	var missingCommands []string
+	for _, name := range req.Commands {
+		if !executableAvailable(name, env, dir) {
+			missingCommands = append(missingCommands, name)
+		}
+	}
+	var missingGo []installableRequirement
+	for _, name := range slices.Sorted(maps.Keys(req.GoCommands)) {
+		if !executableAvailable(name, env, dir) {
+			missingGo = append(missingGo, installableRequirement{name: name, guidance: "go install " + req.GoCommands[name]})
+		}
+	}
+	var missingNode []installableRequirement
+	nodePM := ""
+	if len(req.NodeCommands) > 0 {
+		nodePM = recipe.NodePackageManager(nodeRequirementDir(dir, resolved.Recipe))
+	}
+	for _, name := range slices.Sorted(maps.Keys(req.NodeCommands)) {
+		if !executableAvailable(name, env, dir) {
+			missingNode = append(missingNode, installableRequirement{name: name, guidance: recipe.NodeInstallCommandForPackageManager(nodePM, req.NodeCommands[name])})
+		}
+	}
+	if len(missingCommands) > 0 || len(missingGo) > 0 || len(missingNode) > 0 {
+		return missingRequirementsError(resolved.Name, missingCommands, missingGo, missingNode)
+	}
+	var missingOptional []string
+	for _, name := range req.OptionalCommands {
+		if !executableAvailable(name, env, dir) {
+			missingOptional = append(missingOptional, name)
+		}
+	}
+	if len(missingOptional) > 0 {
+		fmt.Fprintf(stderr, "shadowtree: recipe %q optional tools not found: %s\n", resolved.Name, strings.Join(missingOptional, ", "))
+	}
+	return nil
+}
+
+func executableAvailable(name string, env []string, dir string) bool {
+	_, err := lookPathEnv(name, env, dir)
+	return err == nil
+}
+
+func nodeRequirementDir(dir string, rec recipe.Recipe) string {
+	if len(rec.ForEach) > 0 || rec.Workdir == "" {
+		return dir
+	}
+	workdir, err := recipeWorkdir(dir, rec.Workdir)
+	if err != nil {
+		return dir
+	}
+	return workdir
+}
+
+func missingRequirementsError(recipeName string, commands []string, goCommands, nodeCommands []installableRequirement) error {
+	var messages []string
+	if len(commands) > 0 {
+		messages = append(messages, fmt.Sprintf("recipe %q missing required tools: %s", recipeName, strings.Join(commands, ", ")))
+	}
+	if len(goCommands) > 0 {
+		messages = append(messages, fmt.Sprintf("recipe %q missing required Go tools: %s", recipeName, installableRequirementList(goCommands)))
+	}
+	if len(nodeCommands) > 0 {
+		messages = append(messages, fmt.Sprintf("recipe %q missing required Node tools: %s", recipeName, installableRequirementList(nodeCommands)))
+	}
+	return errors.New(strings.Join(messages, "; "))
+}
+
+func installableRequirementList(missing []installableRequirement) string {
+	parts := make([]string, 0, len(missing))
+	for _, item := range missing {
+		parts = append(parts, fmt.Sprintf("%s (%s)", item.name, item.guidance))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func Run(ctx context.Context, options Options) (runErr error) {
 	stdout := writerOr(options.Stdout, os.Stdout)
 	stderr := writerOr(options.Stderr, os.Stderr)
@@ -168,6 +253,9 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	}
 	options.SourceDir = source
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
+	if err := checkRecipeRequirements(options.Resolved, source, env, stderr); err != nil {
+		return err
+	}
 	if !options.Resolved.Sandboxed {
 		if options.Verbose {
 			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
@@ -636,6 +724,9 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	nested.PrintOnly = false
 	nested.stageLog = nil
 	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
+	if err := checkRecipeRequirements(resolved, dir, nestedEnv, stderr); err != nil {
+		return err
+	}
 	return runResolvedCommands(ctx, sandbox, dir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
 
@@ -665,7 +756,11 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	nested.PrintOnly = false
 	nested.stageLog = nil
 	nestedEnv := mergedEnv(env, resolved.GlobalEnv, resolved.Recipe.Env)
-	return runResolvedCommands(ctx, sandbox, targetExecutionDir(sandbox, target.SourceDir, target.Dir), nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
+	targetDir := targetExecutionDir(sandbox, target.SourceDir, target.Dir)
+	if err := checkRecipeRequirements(resolved, targetDir, nestedEnv, stderr); err != nil {
+		return err
+	}
+	return runResolvedCommands(ctx, sandbox, targetDir, nestedEnv, nested, stdin, stdout, stderr, append(slices.Clone(stack), key))
 }
 
 func CommandOutput(ctx context.Context, dir string, env map[string]string, command recipe.Command, opts CommandOutputOptions) (string, error) {
@@ -699,6 +794,9 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	}
 	var stdout bytes.Buffer
 	envList := mergedEnv(os.Environ(), resolved.GlobalEnv, resolved.Recipe.Env)
+	if err := checkRecipeRequirements(resolved, dir, envList, io.Discard); err != nil {
+		return "", err
+	}
 	err = runResolvedCommands(ctx, nil, dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   opts.Recipes,
@@ -727,6 +825,9 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	}
 	var stdout bytes.Buffer
 	envList := mergedEnv(os.Environ(), env, resolved.GlobalEnv, resolved.Recipe.Env)
+	if err := checkRecipeRequirements(resolved, target.Dir, envList, io.Discard); err != nil {
+		return "", err
+	}
 	err = runResolvedCommands(ctx, nil, target.Dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   target.Recipes,
@@ -810,6 +911,7 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	if !resolved.Sandboxed {
 		fmt.Fprintln(w, "sandboxed: false")
 	}
+	printPlanRequirements(w, resolved.Recipe.Requires)
 	for i, command := range resolved.Recipe.Pre {
 		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.StageCommandHelpText(command))
 	}
@@ -826,6 +928,32 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	for _, path := range resolved.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)
 	}
+}
+
+func printPlanRequirements(w io.Writer, req recipe.Requirements) {
+	if req.Empty() {
+		return
+	}
+	if len(req.Commands) > 0 {
+		fmt.Fprintf(w, "requires.commands: %s\n", strings.Join(req.Commands, ", "))
+	}
+	if len(req.OptionalCommands) > 0 {
+		fmt.Fprintf(w, "requires.optional_commands: %s\n", strings.Join(req.OptionalCommands, ", "))
+	}
+	if len(req.GoCommands) > 0 {
+		fmt.Fprintf(w, "requires.go_commands: %s\n", requirementMapText(req.GoCommands))
+	}
+	if len(req.NodeCommands) > 0 {
+		fmt.Fprintf(w, "requires.node_commands: %s\n", requirementMapText(req.NodeCommands))
+	}
+}
+
+func requirementMapText(values map[string]string) string {
+	parts := make([]string, 0, len(values))
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		parts = append(parts, name+"="+values[name])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func CopyTree(srcRoot, dstRoot string) error {

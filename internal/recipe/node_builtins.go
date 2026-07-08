@@ -97,6 +97,32 @@ func detectNodePackageManager(dir, packageManager string) string {
 	return "npm"
 }
 
+// NodePackageManager reports the package manager Shadowtree detects from dir.
+func NodePackageManager(dir string) string {
+	return loadNodeProject(dir).PM
+}
+
+// NodeInstallCommandForPackageManager returns package-manager-specific guidance
+// for installing a recipe-required Node CLI package.
+func NodeInstallCommandForPackageManager(pm, pkg string) string {
+	switch pm {
+	case "pnpm":
+		return "pnpm add --global " + pkg
+	case "yarn":
+		return "yarn global add " + pkg
+	case "bun":
+		return "bun add --global " + pkg
+	default:
+		return "npm install -g " + pkg
+	}
+}
+
+// NodeInstallCommand returns package-manager-specific guidance for installing a
+// recipe-required Node CLI package from dir.
+func NodeInstallCommand(dir, pkg string) string {
+	return NodeInstallCommandForPackageManager(NodePackageManager(dir), pkg)
+}
+
 func nodePackageManagerName(packageManager string) (string, bool) {
 	name, _, _ := strings.Cut(strings.ToLower(packageManager), "@")
 	switch name {

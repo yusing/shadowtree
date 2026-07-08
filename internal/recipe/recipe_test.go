@@ -63,6 +63,148 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	}
 }
 
+func TestMergeRecipeReplacesRequirements(t *testing.T) {
+	base := Recipe{
+		Cmd: Command{"go", "test"},
+		Requires: Requirements{
+			Commands:         []string{"go"},
+			OptionalCommands: []string{"h2load"},
+		},
+	}
+	override := Recipe{
+		Requires: Requirements{
+			Commands:   []string{"docker"},
+			GoCommands: map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"},
+		},
+	}
+
+	got := MergeRecipe(base, override)
+
+	if !slices.Equal(got.Requires.Commands, []string{"docker"}) {
+		t.Fatalf("commands = %#v", got.Requires.Commands)
+	}
+	if len(got.Requires.OptionalCommands) != 0 {
+		t.Fatalf("optional_commands = %#v", got.Requires.OptionalCommands)
+	}
+	if got.Requires.GoCommands["stringer"] != "golang.org/x/tools/cmd/stringer@latest" {
+		t.Fatalf("go_commands = %#v", got.Requires.GoCommands)
+	}
+}
+
+func TestValidateConfigAcceptsRequirements(t *testing.T) {
+	cfg := Config{Recipes: map[string]Recipe{
+		"benchmark": {
+			Cmd: Command{"go", "test"},
+			Requires: Requirements{
+				Commands:         []string{"docker", "openssl", "go"},
+				OptionalCommands: []string{"h2load"},
+				GoCommands:       map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"},
+				NodeCommands: map[string]string{
+					"eslint":                "eslint@^9",
+					"openapi-generator-cli": "@openapitools/openapi-generator-cli@latest",
+					"playwright":            "@playwright/test@latest",
+				},
+			},
+		},
+	}}
+
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRequirements(t *testing.T) {
+	tests := []struct {
+		name string
+		req  Requirements
+		want string
+	}{
+		{
+			name: "empty required",
+			req:  Requirements{Commands: []string{""}},
+			want: "commands[0] must be a non-empty executable name without surrounding whitespace",
+		},
+		{
+			name: "trimmed optional",
+			req:  Requirements{OptionalCommands: []string{" h2load"}},
+			want: "optional_commands[0] must be a non-empty executable name without surrounding whitespace",
+		},
+		{
+			name: "path required",
+			req:  Requirements{Commands: []string{"./tools/docker"}},
+			want: "commands[0] must be an executable name, not a path",
+		},
+		{
+			name: "path optional",
+			req:  Requirements{OptionalCommands: []string{`tools\h2load`}},
+			want: "optional_commands[0] must be an executable name, not a path",
+		},
+		{
+			name: "duplicate required",
+			req:  Requirements{Commands: []string{"docker", "docker"}},
+			want: `commands[1] duplicates commands[0] "docker"`,
+		},
+		{
+			name: "required optional overlap",
+			req: Requirements{
+				Commands:         []string{"docker"},
+				OptionalCommands: []string{"docker"},
+			},
+			want: `optional_commands overlaps required tool "docker" from commands`,
+		},
+		{
+			name: "path go command key",
+			req:  Requirements{GoCommands: map[string]string{"tools/stringer": "example.com/tool@latest"}},
+			want: "go_commands must be an executable name, not a path",
+		},
+		{
+			name: "reserved node command key",
+			req:  Requirements{NodeCommands: map[string]string{RunIDPlaceholder: "eslint@^9"}},
+			want: `node_commands key "run_id" is reserved`,
+		},
+		{
+			name: "trimmed node command key",
+			req:  Requirements{NodeCommands: map[string]string{" eslint": "eslint@^9"}},
+			want: "node_commands must be a non-empty executable name without surrounding whitespace",
+		},
+		{
+			name: "empty go package",
+			req:  Requirements{GoCommands: map[string]string{"stringer": ""}},
+			want: "go_commands.stringer must be a non-empty package string without surrounding whitespace",
+		},
+		{
+			name: "trimmed node package",
+			req:  Requirements{NodeCommands: map[string]string{"eslint": " eslint@^9"}},
+			want: "node_commands.eslint must be a non-empty package string without surrounding whitespace",
+		},
+		{
+			name: "duplicate across required kinds",
+			req: Requirements{
+				Commands:   []string{"stringer"},
+				GoCommands: map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"},
+			},
+			want: `required tool "stringer" declared in both commands and go_commands`,
+		},
+		{
+			name: "duplicate go and node",
+			req: Requirements{
+				GoCommands:   map[string]string{"eslint": "example.com/eslint@latest"},
+				NodeCommands: map[string]string{"eslint": "eslint@^9"},
+			},
+			want: `required tool "eslint" declared in both go_commands and node_commands`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Recipes: map[string]Recipe{"test": {Cmd: Command{"true"}, Requires: tt.req}}}
+			err := ValidateConfig(cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ValidateConfig error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveExpandsRunIDEverywhere(t *testing.T) {
 	recipes := applyGlobals(t, map[string]Recipe{
 		"test": {
@@ -2286,6 +2428,36 @@ func TestNodeBuiltinsDetectPackageManager(t *testing.T) {
 
 			if body := ScriptBody(rec.Cmd); !strings.Contains(body, tt.want) {
 				t.Fatalf("install body = %q, want %q", body, tt.want)
+			}
+		})
+	}
+}
+
+func TestNodeInstallCommandUsesDetectedPackageManager(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageJSON string
+		lockfile    string
+		want        string
+	}{
+		{name: "packageManager pnpm", packageJSON: `{"packageManager":"pnpm@9.0.0"}`, want: "pnpm add --global eslint@^9"},
+		{name: "packageManager yarn", packageJSON: `{"packageManager":"yarn@4.0.0"}`, want: "yarn global add eslint@^9"},
+		{name: "packageManager bun", packageJSON: `{"packageManager":"bun@1.1.0"}`, want: "bun add --global eslint@^9"},
+		{name: "pnpm lockfile", packageJSON: `{}`, lockfile: "pnpm-lock.yaml", want: "pnpm add --global eslint@^9"},
+		{name: "default npm", packageJSON: `{}`, want: "npm install -g eslint@^9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeNodePackage(t, dir, tt.packageJSON)
+			if tt.lockfile != "" {
+				if err := os.WriteFile(filepath.Join(dir, tt.lockfile), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if got := NodeInstallCommand(dir, "eslint@^9"); got != tt.want {
+				t.Fatalf("NodeInstallCommand() = %q, want %q", got, tt.want)
 			}
 		})
 	}

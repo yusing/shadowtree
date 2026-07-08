@@ -18,9 +18,10 @@ import (
 var Names = []string{".shadowtree.toml"}
 
 type Loaded struct {
-	Path    string
-	Config  recipe.Config
-	Sources SourceMap
+	Path                 string
+	Config               recipe.Config
+	Sources              SourceMap
+	explicitRecipeFields map[string]explicitRecipeFields
 }
 
 // SourceMap records the config file that last supplied user-facing names.
@@ -34,6 +35,11 @@ type SourceMap struct {
 	RecipeEnv    map[string]map[string]string
 	Arguments    map[string]map[string]string
 	ArgumentHelp map[string]map[string]string
+}
+
+type explicitRecipeFields struct {
+	RequiredArguments map[string]bool
+	Requires          bool
 }
 
 func (sources SourceMap) RecipeHelpSource(name string) string {
@@ -139,12 +145,15 @@ func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack
 		if err != nil {
 			return Loaded{}, fmt.Errorf("include %q from %s: %w", include, path, err)
 		}
-		loaded.Config = mergeConfigs(loaded.Config, included.Config, nil)
+		loaded.Config = mergeConfigs(loaded.Config, included.Config, included.explicitRecipeFields)
 		loaded.Sources = mergeSourceMaps(loaded.Sources, included.Sources)
+		loaded.explicitRecipeFields = mergeExplicitRecipeFields(loaded.explicitRecipeFields, included.explicitRecipeFields)
 	}
 	cfg.Include = nil
-	loaded.Config = mergeConfigs(loaded.Config, cfg, explicitRequiredFields(cfg, md))
+	explicitFields := explicitRecipeFieldsFromMeta(cfg, md)
+	loaded.Config = mergeConfigs(loaded.Config, cfg, explicitFields)
 	loaded.Sources = mergeSourceMaps(loaded.Sources, sourceMapForConfig(cfg, md, absPath))
+	loaded.explicitRecipeFields = mergeExplicitRecipeFields(loaded.explicitRecipeFields, explicitFields)
 	if err := recipe.ValidateConfig(loaded.Config); err != nil {
 		return Loaded{}, err
 	}
@@ -203,7 +212,7 @@ func includeCycle(stack []string, path string) string {
 	return strings.Join(cycle, " -> ")
 }
 
-func mergeConfigs(base, override recipe.Config, requiredFields map[string]map[string]bool) recipe.Config {
+func mergeConfigs(base, override recipe.Config, explicitFields map[string]explicitRecipeFields) recipe.Config {
 	out := base
 	if override.Profile != "" {
 		out.Profile = override.Profile
@@ -216,11 +225,11 @@ func mergeConfigs(base, override recipe.Config, requiredFields map[string]map[st
 	}
 	out.ShellPrelude = recipe.JoinShell(out.ShellPrelude, override.ShellPrelude)
 	out.SyncOut = append(slices.Clone(out.SyncOut), override.SyncOut...)
-	out.Recipes = mergeRecipeMaps(out.Recipes, override.Recipes, requiredFields)
+	out.Recipes = mergeRecipeMaps(out.Recipes, override.Recipes, explicitFields)
 	return out
 }
 
-func mergeRecipeMaps(base, override map[string]recipe.Recipe, requiredFields map[string]map[string]bool) map[string]recipe.Recipe {
+func mergeRecipeMaps(base, override map[string]recipe.Recipe, explicitFields map[string]explicitRecipeFields) map[string]recipe.Recipe {
 	if len(base) == 0 && len(override) == 0 {
 		return nil
 	}
@@ -229,20 +238,23 @@ func mergeRecipeMaps(base, override map[string]recipe.Recipe, requiredFields map
 		out = map[string]recipe.Recipe{}
 	}
 	for name, rec := range override {
-		out[name] = mergeIncludedRecipe(out[name], rec, requiredFields[name])
+		out[name] = mergeIncludedRecipe(out[name], rec, explicitFields[name])
 	}
 	return out
 }
 
-func mergeIncludedRecipe(base, override recipe.Recipe, requiredFields map[string]bool) recipe.Recipe {
+func mergeIncludedRecipe(base, override recipe.Recipe, fields explicitRecipeFields) recipe.Recipe {
 	out := recipe.MergeRecipe(base, override)
+	if fields.Requires {
+		out.Requires = override.Requires
+	}
 	if override.Vars != nil {
 		out.Vars = mergeStringMaps(base.Vars, override.Vars)
 	}
 	if override.Env != nil {
 		out.Env = mergeStringMaps(base.Env, override.Env)
 	}
-	for argName := range requiredFields {
+	for argName := range fields.RequiredArguments {
 		arg := out.Arguments[argName]
 		arg.Required = override.Arguments[argName].Required
 		out.Arguments[argName] = arg
@@ -276,20 +288,65 @@ func mergeCommandMaps(base, override map[string]recipe.Command) map[string]recip
 	return out
 }
 
-func explicitRequiredFields(cfg recipe.Config, md toml.MetaData) map[string]map[string]bool {
-	fields := map[string]map[string]bool{}
+func explicitRecipeFieldsFromMeta(cfg recipe.Config, md toml.MetaData) map[string]explicitRecipeFields {
+	fields := map[string]explicitRecipeFields{}
 	for recipeName, rec := range cfg.Recipes {
+		current := fields[recipeName]
+		if md.IsDefined("recipes", recipeName, "requires") {
+			current.Requires = true
+		}
 		for argName := range rec.Arguments {
 			if !md.IsDefined("recipes", recipeName, "arguments", argName, "required") {
 				continue
 			}
-			if fields[recipeName] == nil {
-				fields[recipeName] = map[string]bool{}
+			if current.RequiredArguments == nil {
+				current.RequiredArguments = map[string]bool{}
 			}
-			fields[recipeName][argName] = true
+			current.RequiredArguments[argName] = true
+		}
+		if current.Requires || len(current.RequiredArguments) > 0 {
+			fields[recipeName] = current
 		}
 	}
 	return fields
+}
+
+func mergeExplicitRecipeFields(base, override map[string]explicitRecipeFields) map[string]explicitRecipeFields {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := cloneExplicitRecipeFields(base)
+	if out == nil {
+		out = map[string]explicitRecipeFields{}
+	}
+	for recipeName, fields := range override {
+		current := out[recipeName]
+		current.Requires = current.Requires || fields.Requires
+		if len(fields.RequiredArguments) > 0 {
+			if current.RequiredArguments == nil {
+				current.RequiredArguments = map[string]bool{}
+			}
+			for argName := range fields.RequiredArguments {
+				current.RequiredArguments[argName] = true
+			}
+		}
+		out[recipeName] = current
+	}
+	return out
+}
+
+func cloneExplicitRecipeFields(values map[string]explicitRecipeFields) map[string]explicitRecipeFields {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]explicitRecipeFields, len(values))
+	for recipeName, fields := range values {
+		out[recipeName] = explicitRecipeFields{
+			RequiredArguments: maps.Clone(fields.RequiredArguments),
+			Requires:          fields.Requires,
+		}
+	}
+	return out
 }
 
 func sourceMapForConfig(cfg recipe.Config, md toml.MetaData, path string) SourceMap {

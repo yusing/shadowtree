@@ -76,6 +76,7 @@ var recipeKeys = []completion{
 	{Label: "help", InsertText: `help = ""`, Kind: completionKindKeyword, Detail: "Recipe help text"},
 	{Label: "shell", InsertText: `shell = "sh"`, Kind: completionKindKeyword, Detail: "Recipe shell"},
 	{Label: "shell_prelude", InsertText: "shell_prelude = '''\n\n'''", Kind: completionKindKeyword, Detail: "Recipe shell prelude"},
+	{Label: "requires", InsertText: "requires = {}", Kind: completionKindKeyword, Detail: "Recipe tool requirements"},
 	{Label: "sandboxed", InsertText: "sandboxed = true", Kind: completionKindKeyword, Detail: "Run in disposable workspace"},
 	{Label: "for_each", InsertText: `for_each = ""`, Kind: completionKindKeyword, Detail: "Run main command once per value"},
 	{Label: "workdir", InsertText: `workdir = ""`, Kind: completionKindKeyword, Detail: "Relative main-command working directory"},
@@ -91,6 +92,13 @@ var recipeKeys = []completion{
 var stageCommandKeys = []completion{
 	{Label: "cmd", InsertText: `cmd = ""`, Kind: completionKindKeyword, Detail: "Stage command"},
 	{Label: "timeout", InsertText: `timeout = "30s"`, Kind: completionKindKeyword, Detail: "Stage timeout"},
+}
+
+var requirementKeys = []completion{
+	{Label: "commands", InsertText: "commands = []", Kind: completionKindKeyword, Detail: "Required executable names"},
+	{Label: "optional_commands", InsertText: "optional_commands = []", Kind: completionKindKeyword, Detail: "Optional executable names"},
+	{Label: "go_commands", InsertText: "go_commands = {}", Kind: completionKindKeyword, Detail: "Required Go-installable tools"},
+	{Label: "node_commands", InsertText: "node_commands = {}", Kind: completionKindKeyword, Detail: "Required Node-installable tools"},
 }
 
 var argumentKeys = []completion{
@@ -1244,6 +1252,7 @@ func recipeSubtableCompletions() []completion {
 	return []completion{
 		{Label: "vars", InsertText: "vars]", Kind: completionKindVariable, Detail: "Recipe placeholders"},
 		{Label: "env", InsertText: "env]", Kind: completionKindField, Detail: "Recipe environment"},
+		{Label: "requires", InsertText: "requires]", Kind: completionKindField, Detail: "Recipe tool requirements"},
 		{Label: "arguments", InsertText: "arguments.", Kind: completionKindField, Detail: "Recipe argument"},
 		{Label: "profiles", InsertText: "profiles.", Kind: completionKindField, Detail: "Recipe profile"},
 		{Label: "pre", InsertText: "pre]", Kind: completionKindFunction, Detail: "Structured pre command"},
@@ -1268,6 +1277,9 @@ func keyCompletions(analysis documentAnalysis, table string, opts completionOpti
 		}
 		if stageCommandTable(table) {
 			return stageCommandKeys
+		}
+		if len(parts) == 3 && parts[2] == "requires" {
+			return requirementKeys
 		}
 		if len(parts) == 4 && parts[2] == "arguments" {
 			return argumentKeys
