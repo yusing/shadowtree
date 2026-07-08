@@ -1006,11 +1006,11 @@ func completionConfigFromConfig(ctx context.Context, cfg recipe.Config, md toml.
 	if path == "" {
 		path = configfile.Names[0]
 	}
-	loaded, err := configfile.LoadConfigWithMeta(path, cfg, md)
+	loaded, err := loadConfigWithRootOverride(path, cfg, md)
 	if err != nil {
 		return configfile.Loaded{}, nil, false
 	}
-	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, completionBaseDir(opts), configfile.ResolveOptions{AllowMissingCmd: true})
+	recipes, _, err := configfile.ResolveRecipes(ctx, loaded, effectiveConfigDir(loaded, opts), configfile.ResolveOptions{AllowMissingCmd: true})
 	if err != nil {
 		return configfile.Loaded{}, nil, false
 	}

@@ -864,6 +864,35 @@ cmd = "@t"
 	assertLabels(t, items, "@test")
 }
 
+func TestCompletionsIncludeRootRecipesForIncludedSubConfig(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, ".shadowtree")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".shadowtree.toml"), []byte(`
+include = [".shadowtree/api_benchmark.shadowtree.toml"]
+profile = "go"
+
+[recipes.cloc]
+cmd = "cloc ."
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	subConfig := filepath.Join(subdir, "api_benchmark.shadowtree.toml")
+	text := `[recipes.api-benchmark]
+cmd = "@"
+`
+
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 1, Character: len(`cmd = "@`)},
+		completionOptions{ConfigPath: subConfig},
+	)
+	assertLabels(t, items, "@cloc", "@test")
+}
+
 func TestCompletionsIncludeShellVariablesInScriptRecipeReferenceArgs(t *testing.T) {
 	text := `[env]
 GOFLAGS = "-count=1"

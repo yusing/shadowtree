@@ -1738,6 +1738,36 @@ post = ["echo {INCLUDED_VAR}"]
 	}
 }
 
+func TestDocumentDiagnosticsAcceptIncludedSubConfigRecipeReferenceFromRoot(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, ".shadowtree")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".shadowtree.toml"), []byte(`
+include = [".shadowtree/api_benchmark.shadowtree.toml"]
+profile = "go"
+
+[vars]
+TARGET = "api"
+
+[recipes.test]
+post = ["echo root override"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	subConfig := filepath.Join(subdir, "api_benchmark.shadowtree.toml")
+	text := `[recipes.api-benchmark]
+pre = ["echo {TARGET}"]
+cmd = "@test"
+`
+
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), text, diagnosticOptions{URI: fileURI(subConfig)})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+}
+
 func TestDocumentDiagnosticsRejectCrossConfigMissingRecipe(t *testing.T) {
 	root := t.TempDir()
 	writeLSPTargetConfig(t, root, "gen-schema")

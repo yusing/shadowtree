@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -500,6 +501,51 @@ include = ["./nested/base.shadowtree.toml"]
 	}
 	if _, ok := loaded.Config.Recipes["leaf"]; !ok {
 		t.Fatalf("missing transitive recipe: %#v", loaded.Config.Recipes)
+	}
+}
+
+func TestLoadConfigWithMetaOverrideSubstitutesIncludedConfig(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "child.shadowtree.toml")
+	if err := os.WriteFile(child, []byte(`
+[recipes.disk]
+cmd = "disk"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(root, []byte(`
+include = ["./child.shadowtree.toml"]
+
+[recipes.root]
+cmd = "@buffer"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var cfg recipe.Config
+	md, err := toml.Decode(`
+[recipes.buffer]
+cmd = "buffer"
+`, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, used, err := LoadConfigWithMetaOverride(root, child, cfg, md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !used {
+		t.Fatal("override was not used")
+	}
+	if _, ok := loaded.Config.Recipes["buffer"]; !ok {
+		t.Fatalf("recipes = %#v, want buffer recipe from override", loaded.Config.Recipes)
+	}
+	if _, ok := loaded.Config.Recipes["disk"]; ok {
+		t.Fatalf("recipes = %#v, want disk recipe replaced by override", loaded.Config.Recipes)
+	}
+	if source := loaded.Sources.Recipes["buffer"]; source != CleanAbs(child) {
+		t.Fatalf("buffer source = %q, want %q", source, CleanAbs(child))
 	}
 }
 

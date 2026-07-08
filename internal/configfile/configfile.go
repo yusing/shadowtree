@@ -99,15 +99,33 @@ type CrossConfigTarget struct {
 }
 
 func Load(path string) (Loaded, error) {
-	return load(path, nil, nil, nil)
+	return load(path, nil, nil)
 }
 
 // LoadConfigWithMeta expands includes for an already-decoded root config with TOML field metadata.
 func LoadConfigWithMeta(path string, cfg recipe.Config, md toml.MetaData) (Loaded, error) {
-	return load(path, &cfg, &md, nil)
+	loaded, _, err := LoadConfigWithMetaOverride(path, path, cfg, md)
+	return loaded, err
 }
 
-func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack []string) (Loaded, error) {
+// LoadConfigWithMetaOverride expands path while substituting overridePath with an
+// already-decoded config and TOML field metadata. The returned bool reports
+// whether overridePath was reached through path's include graph.
+func LoadConfigWithMetaOverride(path, overridePath string, cfg recipe.Config, md toml.MetaData) (Loaded, bool, error) {
+	overrides := map[string]configOverride{
+		CleanAbs(overridePath): {Config: cfg, Meta: md},
+	}
+	used := false
+	loaded, err := load(path, overrides, &used)
+	return loaded, used, err
+}
+
+type configOverride struct {
+	Config recipe.Config
+	Meta   toml.MetaData
+}
+
+func load(path string, overrides map[string]configOverride, overrideUsed *bool, stack ...string) (Loaded, error) {
 	absPath := CleanAbs(path)
 	if slices.Contains(stack, absPath) {
 		return Loaded{}, fmt.Errorf("include cycle: %s", includeCycle(stack, absPath))
@@ -116,10 +134,11 @@ func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack
 	var cfg recipe.Config
 	var md toml.MetaData
 	var err error
-	if rootConfig != nil {
-		cfg = *rootConfig
-		if rootMeta != nil {
-			md = *rootMeta
+	if override, ok := overrides[absPath]; ok {
+		cfg = override.Config
+		md = override.Meta
+		if overrideUsed != nil {
+			*overrideUsed = true
 		}
 	} else {
 		cfg, md, err = read(path)
@@ -143,7 +162,7 @@ func load(path string, rootConfig *recipe.Config, rootMeta *toml.MetaData, stack
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(filepath.Dir(path), includePath)
 		}
-		included, err := load(includePath, nil, nil, stack)
+		included, err := load(includePath, overrides, overrideUsed, stack...)
 		if err != nil {
 			return Loaded{}, fmt.Errorf("include %q from %s: %w", include, path, err)
 		}

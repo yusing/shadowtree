@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -254,14 +255,14 @@ func (resolver *diagnosticRecipeResolver) Loaded() (configfile.Loaded, map[strin
 	if path == "" {
 		path = configfile.Names[0]
 	}
-	loaded, err := configfile.LoadConfigWithMeta(path, resolver.cfg, resolver.md)
+	loaded, err := loadConfigWithRootOverride(path, resolver.cfg, resolver.md)
 	if err != nil {
 		resolver.err = err
 		resolver.resolved = true
 		return resolver.loaded, resolver.recipes, false
 	}
 	resolver.loaded = loaded
-	resolver.recipes, _, resolver.err = configfile.ResolveRecipes(resolver.ctx, loaded, completionBaseDir(resolver.opts), configfile.ResolveOptions{AllowMissingCmd: true})
+	resolver.recipes, _, resolver.err = configfile.ResolveRecipes(resolver.ctx, loaded, effectiveConfigDir(loaded, resolver.opts), configfile.ResolveOptions{AllowMissingCmd: true})
 	resolver.ok = resolver.err == nil
 	resolver.resolved = true
 	return resolver.loaded, resolver.recipes, resolver.ok
@@ -272,6 +273,44 @@ func (resolver *diagnosticRecipeResolver) Err() error {
 		resolver.Loaded()
 	}
 	return resolver.err
+}
+
+func mayUseRootConfigContext(path string) bool {
+	_, ok := rootConfigPathForSubConfig(path)
+	return ok
+}
+
+func loadConfigWithRootOverride(path string, cfg recipe.Config, md toml.MetaData) (configfile.Loaded, error) {
+	if rootPath, ok := rootConfigPathForSubConfig(path); ok {
+		loaded, used, err := configfile.LoadConfigWithMetaOverride(rootPath, path, cfg, md)
+		if err == nil && used {
+			return loaded, nil
+		}
+	}
+	return configfile.LoadConfigWithMeta(path, cfg, md)
+}
+
+func rootConfigPathForSubConfig(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	absPath := configfile.CleanAbs(path)
+	dir := filepath.Dir(absPath)
+	if filepath.Base(dir) != ".shadowtree" {
+		return "", false
+	}
+	rootPath := filepath.Join(filepath.Dir(dir), configfile.Names[0])
+	if _, err := os.Stat(rootPath); err != nil {
+		return "", false
+	}
+	return rootPath, true
+}
+
+func effectiveConfigDir(loaded configfile.Loaded, opts completionOptions) string {
+	if loaded.Path != "" {
+		return filepath.Dir(loaded.Path)
+	}
+	return completionBaseDir(opts)
 }
 
 func commandReferenceDiagnostics(ctx context.Context, text string, resolver *diagnosticRecipeResolver) []lspDiagnostic {
@@ -472,7 +511,7 @@ func placeholderDiagnostics(text string, cfg recipe.Config, resolver *diagnostic
 	}
 	var recipes map[string]recipe.Recipe
 	effectiveCfg := cfg
-	if len(cfg.Include) > 0 {
+	if len(cfg.Include) > 0 || mayUseRootConfigContext(resolver.opts.ConfigPath) {
 		loaded, resolvedRecipes, ok := resolver.Loaded()
 		if !ok {
 			return nil
