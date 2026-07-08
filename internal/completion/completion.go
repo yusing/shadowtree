@@ -95,12 +95,49 @@ func fishScript(w io.Writer) error {
     shadowtree __complete fish $tokens $current
 end
 
+function __shadowtree_global_options
+    set -l skip_next 0
+    for token in (commandline -opc)[2..-1]
+        if test $skip_next -eq 1
+            set skip_next 0
+            continue
+        end
+        switch $token
+            case --
+                return 1
+`); err != nil {
+		return err
+	}
+	var valueFlags []string
+	for _, spec := range globalflag.All() {
+		if spec.TakesValue() {
+			valueFlags = append(valueFlags, "--"+spec.Name)
+		}
+	}
+	if len(valueFlags) > 0 {
+		if _, err := fmt.Fprintf(w, "            case %s\n", strings.Join(valueFlags, " ")); err != nil {
+			return err
+		}
+	}
+	if _, err := io.WriteString(w, `                if not string match -q -- '*=*' $token
+                    set skip_next 1
+                end
+                continue
+            case '-*'
+                continue
+            case '*'
+                return 1
+        end
+    end
+    return 0
+end
+
 complete -c shadowtree -f -a '(__shadowtree_complete)'
 `); err != nil {
 		return err
 	}
 	for _, spec := range globalflag.All() {
-		if _, err := fmt.Fprintf(w, "complete -c shadowtree -l %s", spec.Name); err != nil {
+		if _, err := fmt.Fprintf(w, "complete -c shadowtree -n __shadowtree_global_options -l %s", spec.Name); err != nil {
 			return err
 		}
 		if spec.FishOptions != "" {
@@ -799,6 +836,10 @@ func positionalWords(words []string) []string {
 			continue
 		}
 		if word == "" {
+			continue
+		}
+		if len(positionals) > 0 {
+			positionals = append(positionals, word)
 			continue
 		}
 		if skipValue {

@@ -222,13 +222,27 @@ func parseGlobal(args []string) (options, []string, error) {
 	flags := flag.NewFlagSet("shadowtree", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	registerGlobalFlags(flags, &opts)
+	boundary := globalFlagBoundary(args)
+	if boundary < len(args) {
+		if err := flags.Parse(args[:boundary]); err != nil {
+			return opts, nil, err
+		}
+		if args[boundary] == "--" {
+			return opts, args[boundary+1:], nil
+		}
+		return opts, args[boundary:], nil
+	}
+	if err := flags.Parse(args); err != nil {
+		return opts, nil, err
+	}
+	return opts, flags.Args(), nil
+}
+
+func globalFlagBoundary(args []string) int {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
-			if err := flags.Parse(args[:i]); err != nil {
-				return opts, nil, err
-			}
-			return opts, args[i+1:], nil
+			return i
 		}
 		if globalflag.TakesValue(arg) {
 			if !strings.Contains(arg, "=") {
@@ -237,16 +251,10 @@ func parseGlobal(args []string) (options, []string, error) {
 			continue
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
-			if err := flags.Parse(args[:i]); err != nil {
-				return opts, nil, err
-			}
-			return opts, args[i:], nil
+			return i
 		}
 	}
-	if err := flags.Parse(args); err != nil {
-		return opts, nil, err
-	}
-	return opts, flags.Args(), nil
+	return len(args)
 }
 
 func registerGlobalFlags(flags *flag.FlagSet, opts *options) {
@@ -352,16 +360,21 @@ func runComplete(ctx context.Context, args []string) error {
 
 func completionOptions(words []string) options {
 	var opts options
-	for i := 0; i < len(words); i++ {
-		name, value, hasValue := strings.Cut(words[i], "=")
+	if len(words) <= 1 {
+		return opts
+	}
+	args := words[1:]
+	for i, boundary := 0, globalFlagBoundary(args); i < boundary; i++ {
+		word := args[i]
+		name, value, hasValue := strings.Cut(word, "=")
 		switch name {
 		case "--" + globalflag.Config:
 			if hasValue {
 				opts.configPath = value
 				continue
 			}
-			if i+1 < len(words) {
-				opts.configPath = words[i+1]
+			if i+1 < len(args) {
+				opts.configPath = args[i+1]
 				i++
 			}
 		case "--" + globalflag.Profile:
@@ -369,8 +382,8 @@ func completionOptions(words []string) options {
 				opts.profile = value
 				continue
 			}
-			if i+1 < len(words) {
-				opts.profile = words[i+1]
+			if i+1 < len(args) {
+				opts.profile = args[i+1]
 				i++
 			}
 		}

@@ -20,6 +20,37 @@ func stageCommands(commands ...recipe.Command) recipe.StageCommands {
 	return out
 }
 
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+	var out bytes.Buffer
+	stdout := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	defer func() { os.Stdout = stdout }()
+
+	err = fn()
+	if closeErr := write.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if _, copyErr := out.ReadFrom(read); copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	if err != nil {
+		t.Fatalf("function returned error: %v", err)
+	}
+	return out.String()
+}
+
+func writeTextFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
 	opts, rest, err := parseGlobal([]string{"--profile", "go", "--print", "--expanded", "test", "./..."})
 	if err != nil {
@@ -72,27 +103,11 @@ func TestValidateGlobalModeRejectsInvalidCombinations(t *testing.T) {
 }
 
 func TestHelpBypassesInvalidModeCombinations(t *testing.T) {
-	var out bytes.Buffer
-	stdout := os.Stdout
-	read, write, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = write
-	defer func() { os.Stdout = stdout }()
-
-	err = run(t.Context(), []string{"--expanded", "--help"})
-	if closeErr := write.Close(); closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	if _, copyErr := out.ReadFrom(read); copyErr != nil {
-		t.Fatal(copyErr)
-	}
-	if err != nil {
-		t.Fatalf("run returned error: %v", err)
-	}
-	if !strings.Contains(out.String(), "usage: shadowtree") {
-		t.Fatalf("help output missing usage:\n%s", out.String())
+	out := captureStdout(t, func() error {
+		return run(t.Context(), []string{"--expanded", "--help"})
+	})
+	if !strings.Contains(out, "usage: shadowtree") {
+		t.Fatalf("help output missing usage:\n%s", out)
 	}
 }
 
@@ -103,6 +118,79 @@ func TestParseGlobalStopsAfterRecipe(t *testing.T) {
 	}
 	if !slices.Equal(rest, []string{"test", "-v", "./..."}) {
 		t.Fatalf("rest = %#v", rest)
+	}
+}
+
+func TestCompletionOptionsFollowGlobalBoundary(t *testing.T) {
+	opts := completionOptions([]string{"shadowtree", "--sync-out", "dist", "--profile", "go", "test", "--config", "other.toml"})
+
+	if opts.profile != "go" {
+		t.Fatalf("profile = %q, want go", opts.profile)
+	}
+	if opts.configPath != "" {
+		t.Fatalf("configPath = %q, want post-recipe config ignored", opts.configPath)
+	}
+}
+
+func TestRunCompleteIgnoresPostRecipeConfigFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `
+[recipes.test]
+cmd = "go test"
+
+[recipes.test.arguments.local]
+help = "Current config argument."
+`)
+	writeTextFile(t, filepath.Join(dir, "other.toml"), `
+[recipes.test]
+cmd = "go test"
+
+[recipes.test.arguments.other]
+help = "Other config argument."
+`)
+
+	out := captureStdout(t, func() error {
+		return runComplete(t.Context(), []string{"fish", "shadowtree", "test", "--config", "other.toml", ""})
+	})
+
+	if !strings.Contains(out, "local=\tCurrent config argument.") {
+		t.Fatalf("completion output = %q, want current config argument", out)
+	}
+	if strings.Contains(out, "other=") {
+		t.Fatalf("completion output = %q, want no other config argument", out)
+	}
+}
+
+func TestRunCompleteTreatsPostRecipeProfileFlagAsRecipeArguments(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `
+[recipes.test]
+cmd = "go test"
+
+[recipes.test.arguments.first]
+position = 1
+values = "@enum first"
+
+[recipes.test.arguments.second]
+position = 2
+values = "@enum second"
+
+[recipes.test.arguments.third]
+position = 3
+values = "@enum third"
+`)
+
+	out := captureStdout(t, func() error {
+		return runComplete(t.Context(), []string{"fish", "shadowtree", "test", "--profile", "node", ""})
+	})
+
+	if !strings.Contains(out, "third\t") {
+		t.Fatalf("completion output = %q, want third positional argument value", out)
+	}
+	if strings.Contains(out, "first\t") || strings.Contains(out, "second\t") {
+		t.Fatalf("completion output = %q, want --profile node consumed as recipe arguments", out)
 	}
 }
 

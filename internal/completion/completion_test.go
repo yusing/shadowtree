@@ -3,12 +3,14 @@ package completion
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/yusing/shadowtree/internal/configfile"
+	"github.com/yusing/shadowtree/internal/globalflag"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
@@ -1021,6 +1023,79 @@ func TestZshScriptCallsInternalCompletion(t *testing.T) {
 	}
 	if !strings.Contains(script, "_describe -t commands 'shadowtree candidate' nospace_records -S ''") {
 		t.Fatalf("zsh script = %q, want no-space completions for argument names and directories", script)
+	}
+}
+
+func TestFishScriptGuardsStaticGlobalCompletions(t *testing.T) {
+	var out bytes.Buffer
+	if err := Script(&out, "fish"); err != nil {
+		t.Fatal(err)
+	}
+
+	script := out.String()
+	if !strings.Contains(script, "function __shadowtree_global_options") {
+		t.Fatalf("fish script = %q, want global option guard function", script)
+	}
+	var valueFlags []string
+	for _, spec := range globalflag.All() {
+		if spec.TakesValue() {
+			valueFlags = append(valueFlags, "--"+spec.Name)
+		}
+	}
+	if !strings.Contains(script, "case "+strings.Join(valueFlags, " ")) {
+		t.Fatalf("fish script = %q, want one value-taking flag case", script)
+	}
+	if !strings.Contains(script, "set skip_next 1") {
+		t.Fatalf("fish script = %q, want value-taking flag boundary handling", script)
+	}
+	if !strings.Contains(script, "case '*'") || !strings.Contains(script, "return 1") {
+		t.Fatalf("fish script = %q, want positional boundary handling", script)
+	}
+	if !strings.Contains(script, "complete -c shadowtree -n __shadowtree_global_options -l profile") {
+		t.Fatalf("fish script = %q, want guarded global option registration", script)
+	}
+}
+
+func TestFishScriptCompletesGlobalsAfterGlobalFlagValues(t *testing.T) {
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish not installed")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "shadowtree.fish")
+	var script bytes.Buffer
+	if err := Script(&script, "fish"); err != nil {
+		t.Fatal(err)
+	}
+	writeTextFile(t, scriptPath, script.String())
+	binDir := filepath.Join(dir, "bin")
+	mkdirAll(t, binDir)
+	shadowtreePath := filepath.Join(binDir, "shadowtree")
+	writeTextFile(t, shadowtreePath, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(shadowtreePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, line := range []string{
+		"shadowtree --config .shadowtree.toml --p",
+		"shadowtree --profile go --p",
+		"shadowtree --sync-out dist --p",
+	} {
+		t.Run(line, func(t *testing.T) {
+			cmd := exec.Command(fish, "--no-config", "-c", `source "$SCRIPT_PATH"; complete -C "$COMPLETE_LINE"`)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"SCRIPT_PATH="+scriptPath,
+				"COMPLETE_LINE="+line,
+			)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("fish complete failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "--profile") || !strings.Contains(string(out), "--print") {
+				t.Fatalf("fish complete output = %q, want profile and print globals", out)
+			}
+		})
 	}
 }
 
