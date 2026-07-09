@@ -396,6 +396,23 @@ func TestReadMessageRejectsOversizedContentLength(t *testing.T) {
 	}
 }
 
+func TestReadMessageRejectsOversizedHeaderLine(t *testing.T) {
+	header := "X-Shadowtree: " + strings.Repeat("x", maxLSPHeaderLineBytes) + "\r\n\r\n"
+	_, err := readMessage(bufio.NewReader(strings.NewReader(header)))
+	if err == nil || !strings.Contains(err.Error(), "header line exceeds limit") {
+		t.Fatalf("err = %v, want header line limit", err)
+	}
+}
+
+func TestReadMessageRejectsOversizedHeaders(t *testing.T) {
+	line := "X-Shadowtree: x\r\n"
+	header := strings.Repeat(line, maxLSPHeaderTotalBytes/len(line)+1) + "\r\n"
+	_, err := readMessage(bufio.NewReader(strings.NewReader(header)))
+	if err == nil || !strings.Contains(err.Error(), "headers exceed limit") {
+		t.Fatalf("err = %v, want aggregate header limit", err)
+	}
+}
+
 func TestDocumentDiagnosticsRejectSyntaxError(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = [

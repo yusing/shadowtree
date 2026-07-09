@@ -57,7 +57,11 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-const maxLSPMessageBytes = 4 << 20
+const (
+	maxLSPMessageBytes     = 4 << 20
+	maxLSPHeaderLineBytes  = 8 << 10
+	maxLSPHeaderTotalBytes = 64 << 10
+)
 
 type methodNotFoundError struct {
 	method string
@@ -543,12 +547,12 @@ func lineByteStart(lines []string, line int) int {
 
 func readMessage(reader *bufio.Reader) ([]byte, error) {
 	var contentLength int
+	var headerBytes int
 	for {
-		line, err := reader.ReadString('\n')
+		line, err := readHeaderLine(reader, &headerBytes)
 		if err != nil {
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			break
 		}
@@ -573,6 +577,31 @@ func readMessage(reader *bufio.Reader) ([]byte, error) {
 	body := make([]byte, contentLength)
 	_, err := io.ReadFull(reader, body)
 	return body, err
+}
+
+func readHeaderLine(reader *bufio.Reader, headerBytes *int) (string, error) {
+	var line []byte
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if err != nil && err != bufio.ErrBufferFull {
+			return "", err
+		}
+		*headerBytes += len(fragment)
+		if *headerBytes > maxLSPHeaderTotalBytes {
+			return "", fmt.Errorf("lsp headers exceed limit %d", maxLSPHeaderTotalBytes)
+		}
+		if len(line)+len(fragment) > maxLSPHeaderLineBytes {
+			return "", fmt.Errorf("lsp header line exceeds limit %d", maxLSPHeaderLineBytes)
+		}
+		if err == nil {
+			if line == nil {
+				return strings.TrimRight(string(fragment), "\r\n"), nil
+			}
+			line = append(line, fragment...)
+			return strings.TrimRight(string(line), "\r\n"), nil
+		}
+		line = append(line, fragment...)
+	}
 }
 
 func writeMessage(writer io.Writer, value any) error {
