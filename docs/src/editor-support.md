@@ -6,6 +6,8 @@ editor integration files for Zed and VS Code under `editors/`.
 The Zed extension provides a dedicated `Shadowtree TOML` language, syntax
 highlighting, Shadowtree-specific highlighting, shell semantic highlighting for
 script-valued fields, and LSP completion, diagnostics, and semantic tokens.
+The bundled Zed language association covers `.shadowtree.toml`; TOML files
+under `.shadowtree/` need the user `file_types` setting below.
 
 The VS Code extension binds the shared schema to Shadowtree TOML files through
 Even Better TOML. Completion, hover, and validation come from that extension.
@@ -39,6 +41,9 @@ implementation details.
 ```
 
 ## Zed Config
+
+Use this when Zed classifies a Shadowtree config as plain `TOML`, or when you
+keep Shadowtree config fragments under `.shadowtree/*.toml`.
 
 ```json
 "file_types": {

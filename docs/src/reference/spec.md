@@ -1209,6 +1209,9 @@ Zed completion, diagnostics, and semantic tokens are provided by
 The Zed extension starts `shadowtree-lsp` from `PATH`; when developing inside
 the Shadowtree checkout, it runs `go run ./cmd/shadowtree-lsp` so local LSP
 changes take effect before an installed binary on `PATH`.
+The bundled Zed language association covers `.shadowtree.toml`; TOML files
+under `.shadowtree/` require user `file_types` settings because extension
+`path_suffixes` do not support glob patterns.
 
 VS Code support:
 

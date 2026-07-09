@@ -40,7 +40,10 @@ servers owned by the reloaded extension and may leave the existing buffer with a
 lifecycle issue, not a `shadowtree-lsp` path problem.
 
 The following settings still remove startup ambiguity and let the server attach
-when Zed classifies an already-open Shadowtree config as plain `TOML`:
+when Zed classifies an already-open Shadowtree config as plain `TOML`. They are
+also required for TOML config fragments under `.shadowtree/*.toml`, because
+Zed extension `path_suffixes` are suffix associations rather than glob
+patterns:
 
 ```json
 {
