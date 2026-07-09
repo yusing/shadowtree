@@ -44,6 +44,23 @@ func writeExecutable(t *testing.T, dir, name, body string) {
 	}
 }
 
+func waitForFile(t *testing.T, path, failure string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case <-deadline:
+			t.Fatal(failure)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestRunDoesNotMutateSourceWithoutSyncOut(t *testing.T) {
 	if os.Getenv("SHELL") == "" {
 		t.Setenv("SHELL", "/bin/sh")
@@ -1203,14 +1220,22 @@ func TestRunPostReceivesTimeoutStatus(t *testing.T) {
 	assertFileContent(t, filepath.Join(source, "status.txt"), "1:")
 }
 
-func TestRunPostRunsAfterContextCancellation(t *testing.T) {
+func TestRunPostRunsWithEOFStdinAfterContextCancellation(t *testing.T) {
 	source := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
+	stdin, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = stdinWriter.Close()
+	})
 	resolved, err := recipe.Resolve(
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf ready > ready.txt; sleep 10"),
-			Post:      stageCommands(recipe.ScriptCommand("printf post > post.txt")),
+			Post:      stageCommands(recipe.ScriptCommand("if read value; then printf got; else printf eof; fi > post.txt")),
 			Sandboxed: new(false),
 		},
 		nil,
@@ -1225,38 +1250,95 @@ func TestRunPostRunsAfterContextCancellation(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Run(ctx, Options{Resolved: resolved, SourceDir: source})
+		errc <- Run(ctx, Options{Resolved: resolved, SourceDir: source, Stdin: stdin})
 	}()
 	done := false
 	t.Cleanup(func() {
 		if !done {
 			cancel()
-			<-errc
+			_ = stdinWriter.Close()
+			select {
+			case <-errc:
+			case <-time.After(2 * time.Second):
+				t.Error("Run did not return during cleanup")
+			}
 		}
 	})
 
-	ready := filepath.Join(source, "ready.txt")
-	deadline := time.After(2 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
-		select {
-		case <-deadline:
-			t.Fatal("main command did not start")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	waitForFile(t, filepath.Join(source, "ready.txt"), "main command did not start")
 
 	cancel()
-	err = <-errc
-	done = true
+	select {
+	case err = <-errc:
+		done = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
 	if err == nil {
 		t.Fatal("Run succeeded, want cancellation failure")
 	}
-	assertFileContent(t, filepath.Join(source, "post.txt"), "post")
+	assertFileContent(t, filepath.Join(source, "post.txt"), "eof")
+}
+
+func TestRunPostStopsOnLaterContextCancellation(t *testing.T) {
+	source := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	stdin, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = stdinWriter.Close()
+	})
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("exit 1"),
+			Post:      stageCommands(recipe.ScriptCommand("printf ready > post-ready.txt; read value; printf got > post.txt")),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Run(ctx, Options{Resolved: resolved, SourceDir: source, Stdin: stdin})
+	}()
+	done := false
+	t.Cleanup(func() {
+		if !done {
+			cancel()
+			_ = stdinWriter.Close()
+			select {
+			case <-errc:
+			case <-time.After(2 * time.Second):
+				t.Error("Run did not return during cleanup")
+			}
+		}
+	})
+
+	waitForFile(t, filepath.Join(source, "post-ready.txt"), "post command did not start")
+	cancel()
+	select {
+	case err = <-errc:
+		done = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop post after later cancellation")
+	}
+	if err == nil {
+		t.Fatal("Run succeeded, want main failure")
+	}
+	if _, err := os.Stat(filepath.Join(source, "post.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("post.txt stat error = %v, want not exist", err)
+	}
 }
 
 func TestRunPostRecipeReferenceReceivesStatus(t *testing.T) {
