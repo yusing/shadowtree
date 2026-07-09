@@ -2541,6 +2541,23 @@ func TestValidateConfigRejectsBuiltinReferenceRecipeName(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsUnsupportedProfile(t *testing.T) {
+	err := ValidateConfig(Config{Profile: "python"})
+	if err == nil || err.Error() != "unsupported profile: python" {
+		t.Fatalf("ValidateConfig() error = %v, want unsupported profile error", err)
+	}
+	pathErr, ok := errors.AsType[*ConfigPathError](err)
+	if !ok {
+		t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+	}
+	if got := pathErr.ConfigPath(); !slices.Equal(got, []string{"profile"}) {
+		t.Fatalf("ConfigPath() = %#v, want profile", got)
+	}
+	if got := pathErr.Target(); got != ConfigErrorTargetValue {
+		t.Fatalf("Target() = %q, want value", got)
+	}
+}
+
 func TestValidateConfigRejectsUnsupportedGlobalShell(t *testing.T) {
 	err := ValidateConfig(Config{Shell: "fish"})
 	if err == nil || !strings.Contains(err.Error(), `shell must be sh or bash, got "fish"`) {

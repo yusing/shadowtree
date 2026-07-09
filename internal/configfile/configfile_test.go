@@ -324,6 +324,22 @@ count = 5
 	}
 }
 
+func TestLoadRejectsUnsupportedProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte(`profile = "python"
+
+[recipes.test]
+cmd = "pytest"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil || err.Error() != "unsupported profile: python" {
+		t.Fatalf("Load() error = %v, want unsupported profile error", err)
+	}
+}
+
 func TestLoadMergesIncludesBeforeCurrentConfig(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "base.shadowtree.toml")

@@ -553,6 +553,16 @@ cmd = "@fmt"
 	}
 }
 
+func TestDocumentDiagnosticsRejectUnsupportedProfile(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `profile = "python"
+
+[recipes.test]
+cmd = "pytest"
+`)
+	assertOneDiagnostic(t, diagnostics, "unsupported profile: python")
+	assertDiagnosticRange(t, diagnostics[0], 0, len(`profile = `), len(`profile = "python"`))
+}
+
 func TestDocumentDiagnosticsAcceptNodeBuiltinWhenConfigSetsProfile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"vitest"}}`), 0o644); err != nil {

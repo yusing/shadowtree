@@ -800,6 +800,9 @@ func RecipeSandboxed(rec Recipe) bool {
 }
 
 func ValidateConfig(cfg Config) error {
+	if cfg.Profile != "" && !SupportsProfile(cfg.Profile) {
+		return configValuePathError(fmt.Errorf("unsupported profile: %s", cfg.Profile), "profile")
+	}
 	if !scriptref.SupportedShell(cfg.Shell) {
 		return configValuePathError(fmt.Errorf("shell must be sh or bash, got %q", cfg.Shell), "shell")
 	}
