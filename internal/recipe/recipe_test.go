@@ -2068,29 +2068,34 @@ func TestResolveRejectsInvalidPostStageStatusPlaceholder(t *testing.T) {
 
 func TestValidateConfigRejectsInvalidLogSettings(t *testing.T) {
 	cases := []struct {
-		name string
-		rec  Recipe
-		want string
+		name     string
+		rec      Recipe
+		want     string
+		wantPath []string
 	}{
 		{
-			name: "log stages without log",
-			rec:  Recipe{Cmd: Command{"true"}, LogStages: []string{LogStageCmd}},
-			want: "log_stages requires log",
+			name:     "log stages without log",
+			rec:      Recipe{Cmd: Command{"true"}, LogStages: []string{LogStageCmd}},
+			want:     "log_stages requires log",
+			wantPath: []string{"recipes", "test", "log_stages"},
 		},
 		{
-			name: "log tee without log",
-			rec:  Recipe{Cmd: Command{"true"}, LogTee: new(false)},
-			want: "log_tee requires log",
+			name:     "log tee without log",
+			rec:      Recipe{Cmd: Command{"true"}, LogTee: new(false)},
+			want:     "log_tee requires log",
+			wantPath: []string{"recipes", "test", "log_tee"},
 		},
 		{
-			name: "bad stage",
-			rec:  Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{"cleanup"}},
-			want: `unsupported stage "cleanup"`,
+			name:     "bad stage",
+			rec:      Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{"cleanup"}},
+			want:     `unsupported stage "cleanup"`,
+			wantPath: []string{"recipes", "test", "log_stages"},
 		},
 		{
-			name: "empty stages",
-			rec:  Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{}},
-			want: "log_stages must not be empty",
+			name:     "empty stages",
+			rec:      Recipe{Cmd: Command{"true"}, Log: "run.log", LogStages: []string{}},
+			want:     "log_stages must not be empty",
+			wantPath: []string{"recipes", "test", "log_stages"},
 		},
 	}
 	for _, tc := range cases {
@@ -2098,6 +2103,80 @@ func TestValidateConfigRejectsInvalidLogSettings(t *testing.T) {
 			err := ValidateConfig(Config{Recipes: map[string]Recipe{"test": tc.rec}})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ValidateConfig() error = %v, want %q", err, tc.want)
+			}
+			pathErr, ok := errors.AsType[*ConfigPathError](err)
+			if !ok {
+				t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+			}
+			if got := pathErr.ConfigPath(); !slices.Equal(got, tc.wantPath) {
+				t.Fatalf("ConfigPath() = %#v, want %#v", got, tc.wantPath)
+			}
+			if got := pathErr.Target(); got != ConfigErrorTargetValue {
+				t.Fatalf("Target() = %q, want value", got)
+			}
+		})
+	}
+}
+
+func TestValidateConfigStageErrorsIncludePath(t *testing.T) {
+	cases := []struct {
+		name     string
+		rec      Recipe
+		want     string
+		wantPath []string
+	}{
+		{
+			name:     "pre variadic args placeholder",
+			rec:      Recipe{Cmd: Command{"true"}, Pre: stageCommands(ScriptCommand("echo {@}"))},
+			want:     "pre[0]: {@} is supported only in cmd",
+			wantPath: []string{"recipes", "test", "pre", "0", "cmd"},
+		},
+		{
+			name:     "post variadic args placeholder",
+			rec:      Recipe{Cmd: Command{"true"}, Post: stageCommands(ScriptCommand("echo {@}"))},
+			want:     "post[0]: {@} is supported only in cmd",
+			wantPath: []string{"recipes", "test", "post", "0", "cmd"},
+		},
+		{
+			name: "pre timeout",
+			rec: Recipe{
+				Cmd: Command{"true"},
+				Pre: StageCommands{{
+					Cmd:     ScriptCommand("echo pre"),
+					Timeout: "0s",
+				}},
+			},
+			want:     "pre[0]: timeout must be greater than zero",
+			wantPath: []string{"recipes", "test", "pre", "0", "timeout"},
+		},
+		{
+			name: "post timeout",
+			rec: Recipe{
+				Cmd: Command{"true"},
+				Post: StageCommands{{
+					Cmd:     ScriptCommand("echo post"),
+					Timeout: "0s",
+				}},
+			},
+			want:     "post[0]: timeout must be greater than zero",
+			wantPath: []string{"recipes", "test", "post", "0", "timeout"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateConfig(Config{Recipes: map[string]Recipe{"test": tc.rec}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateConfig() error = %v, want %q", err, tc.want)
+			}
+			pathErr, ok := errors.AsType[*ConfigPathError](err)
+			if !ok {
+				t.Fatalf("ValidateConfig() error = %T %[1]v, want ConfigPathError", err)
+			}
+			if got := pathErr.ConfigPath(); !slices.Equal(got, tc.wantPath) {
+				t.Fatalf("ConfigPath() = %#v, want %#v", got, tc.wantPath)
+			}
+			if got := pathErr.Target(); got != ConfigErrorTargetValue {
+				t.Fatalf("Target() = %q, want value", got)
 			}
 		})
 	}

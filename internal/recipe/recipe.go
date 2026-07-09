@@ -850,18 +850,18 @@ func ValidateConfig(cfg Config) error {
 		}
 		for i, command := range rec.Pre {
 			if containsVariadicArgsPlaceholder(command.Cmd) {
-				return fmt.Errorf("recipe %q pre[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
+				return configValuePathError(fmt.Errorf("recipe %q pre[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder), "recipes", name, "pre", strconv.Itoa(i), "cmd")
 			}
 			if err := ValidateStageCommand(command); err != nil {
-				return fmt.Errorf("recipe %q pre[%d]: %w", name, i, err)
+				return prefixConfigPath(fmt.Errorf("recipe %q pre[%d]: %w", name, i, err), err, "recipes", name, "pre", strconv.Itoa(i))
 			}
 		}
 		for i, command := range rec.Post {
 			if containsVariadicArgsPlaceholder(command.Cmd) {
-				return fmt.Errorf("recipe %q post[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder)
+				return configValuePathError(fmt.Errorf("recipe %q post[%d]: %s is supported only in cmd", name, i, variadicArgsPlaceholder), "recipes", name, "post", strconv.Itoa(i), "cmd")
 			}
 			if err := ValidateStageCommand(command); err != nil {
-				return fmt.Errorf("recipe %q post[%d]: %w", name, i, err)
+				return prefixConfigPath(fmt.Errorf("recipe %q post[%d]: %w", name, i, err), err, "recipes", name, "post", strconv.Itoa(i))
 			}
 		}
 	}
@@ -1306,19 +1306,19 @@ func validateIdentifierKey(section, key string) error {
 func ValidateLogSettings(name string, rec Recipe) error {
 	if rec.Log == "" {
 		if len(rec.LogStages) > 0 {
-			return fmt.Errorf("recipe %q log_stages requires log", name)
+			return configValuePathError(fmt.Errorf("recipe %q log_stages requires log", name), "recipes", name, "log_stages")
 		}
 		if rec.LogTee != nil {
-			return fmt.Errorf("recipe %q log_tee requires log", name)
+			return configValuePathError(fmt.Errorf("recipe %q log_tee requires log", name), "recipes", name, "log_tee")
 		}
 		return nil
 	}
 	if rec.LogStages != nil && len(rec.LogStages) == 0 {
-		return fmt.Errorf("recipe %q log_stages must not be empty", name)
+		return configValuePathError(fmt.Errorf("recipe %q log_stages must not be empty", name), "recipes", name, "log_stages")
 	}
 	for _, stage := range rec.LogStages {
 		if !ValidLogStage(stage) {
-			return fmt.Errorf("recipe %q log_stages: unsupported stage %q", name, stage)
+			return configValuePathError(fmt.Errorf("recipe %q log_stages: unsupported stage %q", name, stage), "recipes", name, "log_stages")
 		}
 	}
 	return nil
@@ -1380,7 +1380,7 @@ func ValidateStageCommand(command StageCommand) error {
 		return err
 	}
 	if _, err := stageTimeout(command.Timeout); err != nil {
-		return err
+		return configValuePathError(err, "timeout")
 	}
 	return nil
 }

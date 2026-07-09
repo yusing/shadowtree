@@ -510,6 +510,117 @@ cmd = "true"
 	}
 }
 
+func TestDocumentDiagnosticsRangeInvalidStageTimeout(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		message string
+		line    int
+		start   int
+		end     int
+	}{
+		{
+			name: "structured table",
+			text: `[recipes.test]
+cmd = "go test"
+
+[recipes.test.pre]
+cmd = "printf pre"
+timeout = "0s"
+`,
+			message: `recipe "test" pre[0]: timeout must be greater than zero`,
+			line:    5,
+			start:   len(`timeout = `),
+			end:     len(`timeout = "0s"`),
+		},
+		{
+			name: "inline table",
+			text: `[recipes.test]
+cmd = "go test"
+pre = { cmd = "printf pre", timeout = "0s" }
+`,
+			message: `recipe "test" pre[0]: timeout must be greater than zero`,
+			line:    2,
+			start:   len(`pre = { cmd = "printf pre", timeout = `),
+			end:     len(`pre = { cmd = "printf pre", timeout = "0s"`),
+		},
+		{
+			name: "second array item",
+			text: `[recipes.test]
+cmd = "go test"
+pre = [
+  { cmd = "printf first", timeout = "5s" },
+  { cmd = "printf second", timeout = "0s" },
+]
+`,
+			message: `recipe "test" pre[1]: timeout must be greater than zero`,
+			line:    4,
+			start:   len(`  { cmd = "printf second", timeout = `),
+			end:     len(`  { cmd = "printf second", timeout = "0s"`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			assertOneDiagnostic(t, diagnostics, tc.message)
+			assertDiagnosticRange(t, diagnostics[0], tc.line, tc.start, tc.end)
+		})
+	}
+}
+
+func TestDocumentDiagnosticsRangeInvalidLogSettings(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		message string
+		line    int
+		start   int
+		end     int
+	}{
+		{
+			name: "log stages without log",
+			text: `[recipes.test]
+cmd = "go test"
+log_stages = ["cmd"]
+`,
+			message: `recipe "test" log_stages requires log`,
+			line:    2,
+			start:   len(`log_stages = `),
+			end:     len(`log_stages = ["cmd"]`),
+		},
+		{
+			name: "log tee without log",
+			text: `[recipes.test]
+cmd = "go test"
+log_tee = false
+`,
+			message: `recipe "test" log_tee requires log`,
+			line:    2,
+			start:   len(`log_tee = `),
+			end:     len(`log_tee = false`),
+		},
+		{
+			name: "unsupported log stage",
+			text: `[recipes.test]
+cmd = "go test"
+log = "run.log"
+log_stages = ["cleanup"]
+`,
+			message: `recipe "test" log_stages: unsupported stage "cleanup"`,
+			line:    3,
+			start:   len(`log_stages = `),
+			end:     len(`log_stages = ["cleanup"]`),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diagnostics := documentDiagnostics(t.Context(), tc.text)
+			assertOneDiagnostic(t, diagnostics, tc.message)
+			assertDiagnosticRange(t, diagnostics[0], tc.line, tc.start, tc.end)
+		})
+	}
+}
+
 func TestDocumentDiagnosticsRejectInvalidRequirementConfig(t *testing.T) {
 	diagnostics := documentDiagnostics(t.Context(), `[recipes.build]
 cmd = "go build"

@@ -1064,6 +1064,9 @@ func diagnosticRange(diagnostic lspDiagnostic) (diagnosticTextRange, bool) {
 }
 
 func configPathDiagnostic(index tomlRangeIndex, path []string, target recipe.ConfigErrorTarget, message string) (lspDiagnostic, bool) {
+	if diagnostic, ok := indexedConfigPathDiagnostic(index, path, target, message); ok {
+		return diagnostic, true
+	}
 	key := tomlPathKey(path)
 	switch target {
 	case recipe.ConfigErrorTargetKey:
@@ -1090,9 +1093,38 @@ func configPathDiagnostic(index tomlRangeIndex, path []string, target recipe.Con
 	return lspDiagnostic{}, false
 }
 
+func indexedConfigPathDiagnostic(index tomlRangeIndex, path []string, target recipe.ConfigErrorTarget, message string) (lspDiagnostic, bool) {
+	if target != recipe.ConfigErrorTargetValue || len(path) < 3 {
+		return lspDiagnostic{}, false
+	}
+	field := path[len(path)-1]
+	itemIndex, err := strconv.Atoi(path[len(path)-2])
+	if err != nil {
+		return lspDiagnostic{}, false
+	}
+	parentPath := path[:len(path)-2]
+	fieldPath := slices.Concat(parentPath, []string{field})
+	if item, ok := index.fields[tomlPathKey(fieldPath)]; ok {
+		return item.diagnostic(item.valueOrKey(), message), true
+	}
+	if item, ok := index.fields[tomlPathKey(parentPath)]; ok {
+		if targetLine, start, end, ok := inlineValueDiagnosticSpan(index.lines, item.key.line, field, itemIndex); ok {
+			return lspDiagnostic{
+				Range:    lspRange(lineAt(index.lines, targetLine), targetLine, start, end),
+				Severity: diagnosticSeverityError,
+				Source:   "shadowtree",
+				Message:  message,
+			}, true
+		}
+		return item.diagnostic(item.valueOrKey(), message), true
+	}
+	return lspDiagnostic{}, false
+}
+
 type tomlRangeIndex struct {
 	fields map[string]tomlFieldRange
 	tables map[string]tomlTableRange
+	lines  []string
 }
 
 type tomlTextRange struct {
@@ -1142,6 +1174,7 @@ func newTOMLRangeIndex(text string) tomlRangeIndex {
 	index := tomlRangeIndex{
 		fields: map[string]tomlFieldRange{},
 		tables: map[string]tomlTableRange{},
+		lines:  lines,
 	}
 	var tablePath []string
 	inMultiline := ""
@@ -1519,6 +1552,55 @@ func inlineKeyDiagnosticSpan(lines []string, startLine int, key string) (int, in
 		}
 	}
 	return 0, 0, 0, false
+}
+
+func inlineValueDiagnosticSpan(lines []string, startLine int, key string, occurrence int) (int, int, int, bool) {
+	for lineNo := startLine; lineNo < len(lines); lineNo++ {
+		line := lines[lineNo]
+		start := 0
+		if lineNo == startLine {
+			if equals := strings.IndexByte(line, '='); equals >= 0 {
+				start = equals + 1
+			}
+		} else {
+			if _, ok := completeTableHeader(line); ok {
+				break
+			}
+			if topLevelPairLine(line) {
+				break
+			}
+		}
+		search := line[start:]
+		for offset := 0; offset < len(search); {
+			keyStart, keyEnd, ok := inlineKeySpan(search[offset:], key)
+			if !ok {
+				break
+			}
+			keyStart += offset
+			keyEnd += offset
+			if occurrence == 0 {
+				valueStart, valueEnd, ok := inlineValueSpanAfterKey(line, start+keyEnd)
+				if ok {
+					return lineNo, valueStart, valueEnd, true
+				}
+				break
+			}
+			occurrence--
+			offset = keyStart + len(key)
+		}
+	}
+	return 0, 0, 0, false
+}
+
+func inlineValueSpanAfterKey(line string, keyEnd int) (int, int, bool) {
+	i := keyEnd
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	if i >= len(line) || line[i] != '=' {
+		return 0, 0, false
+	}
+	return tomlValueSpan(line, i+1)
 }
 
 func topLevelPairLine(line string) bool {
