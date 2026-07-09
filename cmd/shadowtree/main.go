@@ -106,6 +106,9 @@ func run(ctx context.Context, args []string) error {
 	case "__complete":
 		return runComplete(ctx, rest[1:])
 	case "init":
+		if len(rest) > 2 {
+			return errors.New("usage: shadowtree init [path]")
+		}
 		path := ".shadowtree.toml"
 		if len(rest) > 1 {
 			path = rest[1]
@@ -712,6 +715,7 @@ func printBasicHelp(w io.Writer) {
        shadowtree [flags] exec -- <cmd> [args...]
        shadowtree help [recipe [color=false]]
        shadowtree recipes
+       shadowtree config
        shadowtree init [path]
        shadowtree completion bash|fish|zsh
 

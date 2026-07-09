@@ -111,6 +111,23 @@ func TestHelpBypassesInvalidModeCombinations(t *testing.T) {
 	}
 }
 
+func TestRunInitRejectsExtraOperands(t *testing.T) {
+	err := run(t.Context(), []string{"init", "a", "b"})
+	if err == nil || err.Error() != "usage: shadowtree init [path]" {
+		t.Fatalf("error = %v, want init usage", err)
+	}
+}
+
+func TestBasicHelpIncludesConfigCommand(t *testing.T) {
+	var out bytes.Buffer
+	printBasicHelp(&out)
+
+	text := out.String()
+	if !strings.Contains(text, "shadowtree config") {
+		t.Fatalf("help output missing config command:\n%s", text)
+	}
+}
+
 func TestParseGlobalStopsAfterRecipe(t *testing.T) {
 	_, rest, err := parseGlobal([]string{"test", "-v", "./..."})
 	if err != nil {
