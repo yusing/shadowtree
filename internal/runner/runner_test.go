@@ -1203,6 +1203,62 @@ func TestRunPostReceivesTimeoutStatus(t *testing.T) {
 	assertFileContent(t, filepath.Join(source, "status.txt"), "1:")
 }
 
+func TestRunPostRunsAfterContextCancellation(t *testing.T) {
+	source := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	resolved, err := recipe.Resolve(
+		"test",
+		recipe.Recipe{
+			Cmd:       recipe.ScriptCommand("printf ready > ready.txt; sleep 10"),
+			Post:      stageCommands(recipe.ScriptCommand("printf post > post.txt")),
+			Sandboxed: new(false),
+		},
+		nil,
+		nil,
+		nil,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Run(ctx, Options{Resolved: resolved, SourceDir: source})
+	}()
+	done := false
+	t.Cleanup(func() {
+		if !done {
+			cancel()
+			<-errc
+		}
+	})
+
+	ready := filepath.Join(source, "ready.txt")
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case <-deadline:
+			t.Fatal("main command did not start")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	err = <-errc
+	done = true
+	if err == nil {
+		t.Fatal("Run succeeded, want cancellation failure")
+	}
+	assertFileContent(t, filepath.Join(source, "post.txt"), "post")
+}
+
 func TestRunPostRecipeReferenceReceivesStatus(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(

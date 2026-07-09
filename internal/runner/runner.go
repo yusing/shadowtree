@@ -527,6 +527,7 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 		}
 		cmdStatus = statusValue(firstErr)
 	}
+	postCtx := context.WithoutCancel(ctx)
 	for i, command := range options.Resolved.Recipe.Post {
 		if recipe.CommandContainsStageStatusPlaceholder(command.Cmd) {
 			expanded, err := recipe.ExpandStageStatusPlaceholders(command.Cmd, stageStatusValues(preStatus, cmdStatus))
@@ -538,7 +539,7 @@ func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir str
 			}
 			command.Cmd = expanded
 		}
-		if err := runStageCommand(ctx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
+		if err := runStageCommand(postCtx, sandbox, dir, env, command, stdin, stdout, stderr, options, phasePost, i, stack); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

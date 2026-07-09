@@ -22,6 +22,8 @@ writes already target the host checkout.
 
 - If a `pre` command fails, the main command is skipped.
 - `post` commands still run after a `pre` or main command failure.
+- `post` commands run as cleanup after the run context is canceled, such as by
+  SIGINT.
 - Sync-out does not run after failure.
 - The process exits with the first failing command's exit code when available.
 - Recursive recipe references fail with a cycle error.

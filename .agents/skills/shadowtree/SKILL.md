@@ -88,7 +88,7 @@ For recipe:
 
 1. `pre` commands run in order.
 2. If all `pre` commands succeed, resolved `cmd` runs once, or once per `for_each` value.
-3. `post` commands run even after `pre` or main failure.
+3. `post` commands run even after `pre` or main failure, including cancellation such as SIGINT.
 4. First pre/main error wins unless only `post` failed.
 5. Sandboxed sync-out runs only after all recipe commands succeed.
 

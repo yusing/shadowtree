@@ -69,7 +69,11 @@ func (flag *multiFlag) Set(value string) error {
 func main() {
 	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	stopAfterCancel := context.AfterFunc(ctx, stop)
+	defer func() {
+		stopAfterCancel()
+		stop()
+	}()
 	if len(os.Args) > 1 && os.Args[1] == runner.OverlayHelperCommand {
 		os.Exit(runner.OverlayHelperMain(ctx, os.Args[2:]))
 	}
