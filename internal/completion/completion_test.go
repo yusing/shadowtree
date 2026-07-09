@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/globalflag"
@@ -328,6 +329,31 @@ func TestCandidatesCompleteDynamicArgumentValuesExpandPreludePlaceholders(t *tes
 
 	if len(candidates) != 1 || candidates[0].Value != "build[project=cmd/api" || candidates[0].Help != "from command" {
 		t.Fatalf("candidates = %#v, want cmd/api value", candidates)
+	}
+}
+
+func TestCandidatesSkipTimedOutCommandBackedArgumentValues(t *testing.T) {
+	start := time.Now()
+	candidates := completeWithOptions(t, []string{"shadowtree", "build", "project="}, map[string]recipe.Recipe{
+		"build": {
+			Cmd: recipe.Command{"go", "build"},
+			Arguments: map[string]recipe.Argument{
+				"project": {
+					Type:   "string",
+					Values: recipe.ScriptCommand("sleep 5; printf 'late\\n'"),
+				},
+			},
+		},
+	}, Options{
+		Dir:                       t.TempDir(),
+		CommandBackedValueTimeout: 20 * time.Millisecond,
+	})
+
+	if len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, want none after timeout", candidates)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("completion took %s, want bounded timeout", elapsed)
 	}
 }
 

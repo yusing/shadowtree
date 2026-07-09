@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/globalflag"
 	"github.com/yusing/shadowtree/internal/recipe"
@@ -26,7 +27,11 @@ type Options struct {
 	ConfigPath                 string
 	Env                        map[string]string
 	DisableCommandBackedValues bool
+	CommandBackedValueTimeout  time.Duration
 }
+
+// DefaultCommandBackedValueTimeout bounds shell commands used to produce argument values.
+const DefaultCommandBackedValueTimeout = 5 * time.Second
 
 type Request struct {
 	Shell       string
@@ -626,7 +631,13 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 		env = map[string]string{}
 	}
 	maps.Copy(env, rec.Env)
-	output, err := runner.CommandOutput(ctx, opts.Dir, env, command, runner.CommandOutputOptions{
+	timeout := opts.CommandBackedValueTimeout
+	if timeout == 0 {
+		timeout = DefaultCommandBackedValueTimeout
+	}
+	valueCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, runner.CommandOutputOptions{
 		Recipes:    recipes,
 		ConfigPath: opts.ConfigPath,
 		SourceDir:  opts.Dir,

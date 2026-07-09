@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/yusing/shadowtree/internal/completion"
 	"github.com/yusing/shadowtree/internal/configfile"
@@ -23,10 +22,7 @@ import (
 	"github.com/yusing/shadowtree/internal/runner"
 )
 
-const (
-	version               = "0.1.0"
-	argumentValuesTimeout = 5 * time.Second
-)
+const version = "0.1.0"
 
 type options struct {
 	configPath string
@@ -679,7 +675,7 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 			env = map[string]string{}
 		}
 		maps.Copy(env, rec.Env)
-		valueCtx, cancel := context.WithTimeout(ctx, argumentValuesTimeout)
+		valueCtx, cancel := context.WithTimeout(ctx, completion.DefaultCommandBackedValueTimeout)
 		defer cancel()
 		output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, runner.CommandOutputOptions{
 			Recipes:    opts.Recipes,
