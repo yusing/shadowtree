@@ -22,6 +22,7 @@ post = ["command -v deadcode >/dev/null && deadcode ./..."]
 help = "Run the Pages workflow build job locally with act."
 sandboxed = false
 cmd = '''
+actionlint .github/workflows/*.yml
 ACT=true act push \
   -W .github/workflows/pages.yml \
   -j build \
@@ -29,7 +30,7 @@ ACT=true act push \
 '''
 
 [recipes.ci-test.requires]
-commands = ["act", "docker"]
+commands = ["act", "actionlint", "docker"]
 
 [recipes.install]
 help = "Install the Shadowtree CLI and language server."
