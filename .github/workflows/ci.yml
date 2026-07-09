@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.4
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: LSP tests
+        run: go test ./internal/shadowtreelsp
+
+  editor-schema:
+    name: Editor and schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate JSON manifests
+        run: |
+          node -e "for (const path of ['schemas/shadowtree.schema.json','editors/vscode-shadowtree/package.json']) JSON.parse(require('fs').readFileSync(path, 'utf8'));"
+
+      - name: Install Taplo
+        run: cargo +stable install taplo-cli --version 0.10.0 --locked
+
+      - name: Validate editor TOML
+        run: taplo check editors/zed-shadowtree/extension.toml editors/zed-shadowtree/languages/shadowtree-toml/config.toml
+
+      - name: Check Zed extension
+        run: cargo +stable check --manifest-path editors/zed-shadowtree/Cargo.toml
