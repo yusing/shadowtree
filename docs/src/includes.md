@@ -19,6 +19,7 @@ Includes are global mixins. These surfaces participate in the effective config:
 - `shell_prelude`
 - `vars`
 - `var_commands`
+- `enum_sets`
 - `env`
 - `recipes`
 

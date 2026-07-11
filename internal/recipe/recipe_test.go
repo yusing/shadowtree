@@ -27,6 +27,59 @@ func stageCommands(commands ...Command) StageCommands {
 	return out
 }
 
+func TestEnumSetValues(t *testing.T) {
+	enumSets := map[string]Command{
+		"service": ScriptCommand("@enum api='API service' worker='Background worker'"),
+	}
+	values, ok, err := BuiltinValues(ScriptCommand("@enum_set service"), ValueBuiltinOptions{EnumSets: enumSets})
+	if err != nil || !ok {
+		t.Fatalf("BuiltinValues() = %v, %v, want values", err, ok)
+	}
+	if got := []string{values[0].Value, values[1].Value}; !slices.Equal(got, []string{"api", "worker"}) {
+		t.Fatalf("values = %v", got)
+	}
+	prefixedValues, ok, err := BuiltinValues(ScriptCommand("@enum_set service"), ValueBuiltinOptions{EnumSets: enumSets, ValuePrefix: "wo"})
+	if err != nil || !ok {
+		t.Fatalf("BuiltinValues() with prefix = %v, %v, want values", err, ok)
+	}
+	if got := []string{prefixedValues[0].Value}; !slices.Equal(got, []string{"worker"}) {
+		t.Fatalf("prefixed values = %v", got)
+	}
+
+	cfg := Config{EnumSets: enumSets, Recipes: map[string]Recipe{
+		"deploy": {
+			Arguments: map[string]Argument{"target": {Values: ScriptCommand("@enum_set service")}},
+			ForEach:   ScriptCommand("@enum_set service"),
+		},
+	}}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEnumSetReferences(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateArgumentAcceptedValue("target", cfg.Recipes["deploy"].Arguments["target"], "web", ValueBuiltinOptions{EnumSets: enumSets}); err == nil {
+		t.Fatal("ValidateArgumentAcceptedValue() accepted invalid enum set value")
+	}
+}
+
+func TestEnumSetValidation(t *testing.T) {
+	for _, command := range []Command{ScriptCommand("@lines values.txt"), ScriptCommand("@enum")} {
+		if err := ValidateConfig(Config{EnumSets: map[string]Command{"service": command}}); err == nil {
+			t.Fatalf("ValidateConfig(%q) succeeded", ScriptBody(command))
+		}
+	}
+	cfg := Config{Recipes: map[string]Recipe{
+		"deploy": {Arguments: map[string]Argument{"target": {Values: ScriptCommand("@enum_set missing")}}},
+	}}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig() = %v, want unresolved reference accepted", err)
+	}
+	if err := ValidateEnumSetReferences(cfg); err == nil {
+		t.Fatal("ValidateEnumSetReferences() accepted unknown enum set")
+	}
+}
+
 func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:       Command{"go", "test", "{pkg}", "{@}"},

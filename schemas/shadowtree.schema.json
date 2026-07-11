@@ -40,6 +40,9 @@
     "var_commands": {
       "$ref": "#/definitions/commandsMap"
     },
+    "enum_sets": {
+      "$ref": "#/definitions/enumSets"
+    },
     "recipes": {
       "$ref": "#/definitions/recipes"
     }
@@ -73,12 +76,22 @@
         }
       }
     },
+    "enumSets": {
+      "type": "object",
+      "description": "Named static enum commands shared by argument values and for_each. Values use command syntax; runtime requires each to be one non-empty direct @enum command.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
+          "$ref": "#/definitions/command"
+        }
+      }
+    },
     "recipes": {
       "type": "object",
       "description": "Named development recipes. Reserved names such as recipes, init, config, exec, completion, enum, glob, go-main-packages, go-modules, go-packages, help, lines, retry, vars, version, __complete, and built-in @ command identifiers are not valid recipe names.",
       "additionalProperties": false,
       "patternProperties": {
-        "^(?!(?:__complete|completion|config|enum|exec|glob|go-main-packages|go-modules|go-packages|help|init|lines|recipes|retry|vars|version)$).*$": {
+        "^(?!(?:__complete|completion|config|enum|enum_set|exec|glob|go-main-packages|go-modules|go-packages|help|init|lines|recipes|retry|vars|version)$).*$": {
           "$ref": "#/definitions/recipe"
         }
       },
@@ -316,7 +329,7 @@
         },
         "values": {
           "$ref": "#/definitions/command",
-          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @lines, @glob, @go-modules, @go-packages, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side, for example @enum all='all modules'."
+          "description": "Command that prints completion candidates, one per line. Each line may contain value<TAB>help. Supports argument-values builtins such as @enum, @enum_set, @lines, @glob, @go-modules, @go-packages, @go-main-packages, @recipes, and @vars. @enum entries may use value=help text when help contains whitespace; quote the help side, for example @enum all='all modules'."
         }
       },
       "x-taplo": {

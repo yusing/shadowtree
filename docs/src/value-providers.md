@@ -26,6 +26,22 @@ values = '@enum api worker "admin ui"'
 values = "@enum api='API service' worker='Worker service'"
 ```
 
+`@enum_set`
+: Values from a named top-level enum set. Definitions reuse `@enum` syntax and
+may be shared by argument `values` and `for_each`.
+
+```toml
+[enum_sets]
+service = "@enum api='API service' worker='Worker service'"
+
+[recipes.deploy.arguments.target]
+values = "@enum_set service"
+```
+
+Enum sets are merged with includes: the including config replaces a same-named
+included set. Definitions must be one non-empty `@enum` command; enum sets do
+not nest.
+
 `@lines`
 : Reads candidates from a text file using the same `value<TAB>help` format.
 

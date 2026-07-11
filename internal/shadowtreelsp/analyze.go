@@ -484,7 +484,7 @@ func commandListRecipeReferenceCompletions(ctx context.Context, text string, ana
 			return groupedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, span.Start, opts), true
 		}
 		if strings.ContainsAny(prefix, " \t") {
-			return spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, span.Start, opts), true
+			return spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, span.Start, false, opts), true
 		}
 		items := recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, prefix, false, opts)
 		for i := range items {
@@ -510,7 +510,7 @@ func scriptRecipeReferenceCompletions(ctx context.Context, text string, analysis
 		return items, true
 	}
 	if strings.ContainsAny(prefix, " \t") {
-		items := spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, opts)
+		items := spacedScriptRecipeReferenceCompletions(ctx, text, prefix, pos, start, valueBuiltinReferenceContext(region.Table, region.Key), opts)
 		return items, true
 	}
 	items := recipeReferenceCompletionsWithOptions(ctx, text, analysis.Recipes, prefix, valueBuiltinReferenceContext(region.Table, region.Key), opts)
@@ -559,7 +559,7 @@ func groupedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix s
 	return recipeArgumentCompletions(candidates, start+1, pos.Character, targetSources, ref.Name, targetOpts)
 }
 
-func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, opts completionOptions) []completion {
+func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix string, pos lspPosition, start int, includeValueBuiltins bool, opts completionOptions) []completion {
 	name, argsText, ok := strings.Cut(prefix, " ")
 	if !ok {
 		name, argsText, ok = strings.Cut(prefix, "\t")
@@ -570,6 +570,22 @@ func spacedScriptRecipeReferenceCompletions(ctx context.Context, text, prefix st
 	loaded, recipes, ok := completionConfig(ctx, text, opts)
 	if !ok {
 		return nil
+	}
+	if includeValueBuiltins && name == "enum_set" {
+		setPrefix := strings.TrimLeft(argsText, " \t")
+		var items []completion
+		for _, setName := range slices.Sorted(maps.Keys(loaded.Config.EnumSets)) {
+			if strings.HasPrefix(setName, setPrefix) {
+				items = append(items, completion{
+					Label:      setName,
+					InsertText: setName,
+					Kind:       completionKindValue,
+					Detail:     "Named static argument values",
+					Edit:       &completionEdit{Start: start + 1 + len(name) + 1, End: pos.Character},
+				})
+			}
+		}
+		return items
 	}
 	ref := recipeReferenceForCompletion(name)
 	rec, ok := recipes[ref.Name]
@@ -1127,6 +1143,16 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fal
 		names = slices.Clone(fallbackRecipeNames)
 	}
 	if includeValueBuiltins {
+		if setPrefix, ok := enumSetReferencePrefix(prefix); ok {
+			names := slices.Sorted(maps.Keys(loaded.Config.EnumSets))
+			var items []completion
+			for _, name := range names {
+				if strings.HasPrefix(name, setPrefix) {
+					items = append(items, completion{Label: name, InsertText: name, Kind: completionKindValue, Detail: "Named static argument values"})
+				}
+			}
+			return items
+		}
 		for _, name := range recipe.BuiltinReferenceNames() {
 			names = appendUnique(names, name)
 		}
@@ -1147,6 +1173,14 @@ func recipeReferenceCompletionsWithOptions(ctx context.Context, text string, fal
 	}
 	items = append(items, crossConfigDirectoryCompletions(prefix, opts)...)
 	return items
+}
+
+func enumSetReferencePrefix(prefix string) (string, bool) {
+	setPrefix, ok := strings.CutPrefix(prefix, "enum_set")
+	if !ok || setPrefix != "" && !strings.HasPrefix(setPrefix, " ") {
+		return "", false
+	}
+	return strings.TrimLeft(setPrefix, " "), true
 }
 
 func crossConfigDirectoryCompletions(prefix string, opts completionOptions) []completion {

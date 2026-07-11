@@ -45,6 +45,7 @@ type recipeHelpOptions struct {
 	ConfigPath string
 	Env        map[string]string
 	Recipes    map[string]recipe.Recipe
+	EnumSets   map[string]recipe.Command
 	Color      bool
 }
 
@@ -171,6 +172,7 @@ func run(ctx context.Context, args []string) error {
 				ConfigPath: loaded.Path,
 				Env:        loaded.Config.Env,
 				Recipes:    resolvedSet,
+				EnumSets:   loaded.Config.EnumSets,
 				Color:      recipeHelpColor,
 			})
 		}
@@ -185,13 +187,14 @@ func run(ctx context.Context, args []string) error {
 		if !ok {
 			return fmt.Errorf("unknown recipe: %s", name)
 		}
-		resolved, err := recipe.ResolveWithOptions(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile, recipe.ResolveOptions{Recipes: resolvedSet})
+		resolved, err := recipe.ResolveWithOptions(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile, recipe.ResolveOptions{Recipes: resolvedSet, EnumSets: loaded.Config.EnumSets})
 		if err != nil {
 			return err
 		}
 		return runner.Run(ctx, runner.Options{
 			Resolved:      resolved,
 			Recipes:       resolvedSet,
+			EnumSets:      loaded.Config.EnumSets,
 			ConfigEnv:     loaded.Config.Env,
 			SourceDir:     mustGetwd(),
 			PrintOnly:     opts.printOnly,
@@ -353,6 +356,7 @@ func runComplete(ctx context.Context, args []string) error {
 		Dir:        mustGetwd(),
 		ConfigPath: loaded.Path,
 		Env:        loaded.Config.Env,
+		EnumSets:   loaded.Config.EnumSets,
 	})
 	if err != nil {
 		return err
@@ -663,6 +667,7 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 			ConfigPath: opts.ConfigPath,
 			Recipe:     rec,
 			Recipes:    opts.Recipes,
+			EnumSets:   opts.EnumSets,
 		}); ok {
 			if err != nil {
 				return nil, err
@@ -686,6 +691,7 @@ func argumentValues(ctx context.Context, arg recipe.Argument, rec recipe.Recipe,
 		defer cancel()
 		output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, runner.CommandOutputOptions{
 			Recipes:    opts.Recipes,
+			EnumSets:   opts.EnumSets,
 			ConfigPath: opts.ConfigPath,
 			SourceDir:  opts.Dir,
 		})

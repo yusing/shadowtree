@@ -555,6 +555,7 @@ argument-values builtin:
 ```toml
 values = '@enum api worker "admin ui"'
 values = "@enum api='API service' worker='Worker service'"
+values = "@enum_set service"
 values = '@lines config/targets.txt'
 values = '@glob "cmd/*"'
 values = "@go-modules; @enum all='all modules'"

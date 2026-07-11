@@ -1042,7 +1042,7 @@ values = "@"
 cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`values = "@`)})
-	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@test", "@vars")
+	assertLabels(t, items, "@enum", "@enum_set", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@test", "@vars")
 	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
 }
 
@@ -1052,7 +1052,7 @@ for_each = "@"
 cmd = "true"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`for_each = "@`)})
-	assertLabels(t, items, "@enum", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@vars")
+	assertLabels(t, items, "@enum", "@enum_set", "@glob", "@go-main-packages", "@go-modules", "@go-packages", "@lines", "@recipes", "@vars")
 	assertCompletionDetail(t, items, "@go-modules", "Go module directories (builtin)")
 }
 
@@ -1066,8 +1066,30 @@ values = '''
 cmd = "go test"
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 2, Character: len(`@e`)})
-	assertLabels(t, items, "@enum")
+	assertLabels(t, items, "@enum", "@enum_set")
 	assertCompletionDetail(t, items, "@enum", "Static argument values (builtin)")
+}
+
+func TestCompletionsIncludeEnumSetNames(t *testing.T) {
+	text := `[enum_sets]
+service = "@enum api worker"
+
+[recipes.test.arguments.target]
+values = "@enum_set service"
+
+[recipes.test]
+	cmd = "go test"
+`
+	loaded, _, ok := completionConfig(t.Context(), text, completionOptions{})
+	if !ok || loaded.Config.EnumSets["service"] == nil {
+		t.Fatalf("completion config = %#v, want enum set", loaded.Config.EnumSets)
+	}
+	analysis := analyzeDocument(text, 4)
+	prefix := linePrefix(lineAt(analysis.Lines, 4), len(`values = "@enum_set `))
+	gotPrefix, gotKey, gotReference := recipeReferencePrefix(analysis.CurrentTable, prefix)
+	t.Logf("table=%q prefix=%q reference=%q key=%q ok=%v value-provider=%v", analysis.CurrentTable, prefix, gotPrefix, gotKey, gotReference, valueBuiltinReferenceContext(analysis.CurrentTable, gotKey))
+	items := completionsAt(t.Context(), text, lspPosition{Line: 4, Character: len(`values = "@enum_set `)})
+	assertLabels(t, items, "service")
 }
 
 func TestCompletionsExcludeEnumOutsideArgumentValuesReferences(t *testing.T) {

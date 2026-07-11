@@ -484,6 +484,89 @@ default = "dev"
 	}
 }
 
+func TestLoadEnumSetsMergeAfterIncludes(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.shadowtree.toml")
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(base, []byte(`
+[enum_sets]
+service = "@enum api worker"
+
+[recipes.included]
+cmd = "true"
+
+[recipes.included.arguments.target]
+values = "@enum_set service"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`
+include = ["base.shadowtree.toml"]
+
+[enum_sets]
+service = "@enum web"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.ScriptBody(loaded.Config.EnumSets["service"]); got != "@enum web" {
+		t.Fatalf("enum set = %q, want current config override", got)
+	}
+}
+
+func TestLoadIncludedRecipeUsesParentEnumSet(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.shadowtree.toml")
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(base, []byte(`
+[recipes.included]
+cmd = "true"
+
+[recipes.included.arguments.target]
+values = "@enum_set service"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`
+include = ["base.shadowtree.toml"]
+
+[enum_sets]
+service = "@enum api worker"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadRejectsUnknownEnumSetAfterIncludes(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.shadowtree.toml")
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(base, []byte(`
+[recipes.included]
+cmd = "true"
+
+[recipes.included.arguments.target]
+values = "@enum_set missing"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("include = [\"base.shadowtree.toml\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), `unknown enum set "missing"`) {
+		t.Fatalf("Load() error = %v, want unknown enum set", err)
+	}
+}
+
 func TestLoadIncludesAreRelativeToIncludingConfig(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "nested")

@@ -321,13 +321,15 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 	completionOpts := resolver.opts
 	crossConfigRecipes := map[string]diagnosticCrossConfigResult{}
 	var recipes map[string]recipe.Recipe
+	var enumSets map[string]recipe.Command
 	recipesLoaded := false
 	loadRecipes := func() bool {
 		if recipesLoaded {
 			return recipes != nil
 		}
-		var ok bool
-		recipes, ok = resolver.Recipes()
+		loaded, resolvedRecipes, ok := resolver.Loaded()
+		recipes = resolvedRecipes
+		enumSets = loaded.Config.EnumSets
 		recipesLoaded = true
 		if !ok {
 			recipes = nil
@@ -361,7 +363,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 			if strings.Contains(ref.Path, "{") {
 				continue
 			}
-			crossRecipes, _, err := diagnosticCrossConfigRecipes(ctx, ref.Path, completionOpts, crossConfigRecipes)
+			crossRecipes, crossEnumSets, _, err := diagnosticCrossConfigRecipes(ctx, ref.Path, completionOpts, crossConfigRecipes)
 			if err != nil {
 				diagnostics = append(diagnostics, lspDiagnostic{
 					Range:    lspRange(lineAt(lines, ref.Line), ref.Line, ref.Start, ref.TargetEnd),
@@ -384,7 +386,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 				})
 				continue
 			}
-			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes)...)
+			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, crossRecipes, crossEnumSets)...)
 			continue
 		}
 		rec, ok := recipes[ref.Name]
@@ -397,7 +399,7 @@ func commandReferenceDiagnostics(ctx context.Context, text string, resolver *dia
 			})
 			continue
 		}
-		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes)...)
+		diagnostics = append(diagnostics, commandReferenceArgumentDiagnostics(ctx, lines, ref, rec, recipes, enumSets)...)
 	}
 	return diagnostics
 }
@@ -413,7 +415,7 @@ func (ref commandReferenceSpan) isValueBuiltin() bool {
 	return valueBuiltinReferenceContext(ref.Table, ref.Key)
 }
 
-func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe) []lspDiagnostic {
+func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, ref commandReferenceSpan, rec recipe.Recipe, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command) []lspDiagnostic {
 	if len(ref.Args) == 0 || len(rec.Arguments) == 0 && len(rec.Presets) == 0 {
 		return nil
 	}
@@ -477,7 +479,7 @@ func commandReferenceArgumentDiagnostics(ctx context.Context, lines []string, re
 			continue
 		}
 		value = unquoteRecipeReferenceArgumentValue(value)
-		if err := validateRecipeReferenceArgumentValue(ctx, name, arg, value, rec, recipes); err != nil {
+		if err := validateRecipeReferenceArgumentValue(ctx, name, arg, value, rec, recipes, enumSets); err != nil {
 			diagnostics = append(diagnostics, commandReferenceArgumentDiagnostic(lines, argSpan, err.Error()))
 			continue
 		}
@@ -934,14 +936,15 @@ func placeholderNames(value string) []string {
 	return names
 }
 
-func validateRecipeReferenceArgumentValue(ctx context.Context, name string, arg recipe.Argument, value string, rec recipe.Recipe, recipes map[string]recipe.Recipe) error {
+func validateRecipeReferenceArgumentValue(ctx context.Context, name string, arg recipe.Argument, value string, rec recipe.Recipe, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command) error {
 	if err := recipe.ValidateArgumentValue(name, arg, value); err != nil {
 		return err
 	}
 	return recipe.ValidateArgumentAcceptedValue(name, arg, value, recipe.ValueBuiltinOptions{
-		Context: ctx,
-		Recipe:  rec,
-		Recipes: recipes,
+		Context:  ctx,
+		Recipe:   rec,
+		Recipes:  recipes,
+		EnumSets: enumSets,
 	})
 }
 
@@ -957,15 +960,16 @@ func unquoteRecipeReferenceArgumentValue(value string) string {
 }
 
 type diagnosticCrossConfigResult struct {
-	recipes map[string]recipe.Recipe
-	opts    completionOptions
-	err     error
+	recipes  map[string]recipe.Recipe
+	enumSets map[string]recipe.Command
+	opts     completionOptions
+	err      error
 }
 
-func diagnosticCrossConfigRecipes(ctx context.Context, path string, opts completionOptions, cache map[string]diagnosticCrossConfigResult) (map[string]recipe.Recipe, completionOptions, error) {
+func diagnosticCrossConfigRecipes(ctx context.Context, path string, opts completionOptions, cache map[string]diagnosticCrossConfigResult) (map[string]recipe.Recipe, map[string]recipe.Command, completionOptions, error) {
 	base := completionBaseDir(opts)
 	if base == "" {
-		return nil, completionOptions{}, nil
+		return nil, nil, completionOptions{}, nil
 	}
 	keyPath := path
 	if !filepath.IsAbs(keyPath) {
@@ -973,16 +977,16 @@ func diagnosticCrossConfigRecipes(ctx context.Context, path string, opts complet
 	}
 	key := filepath.Clean(keyPath)
 	if result, ok := cache[key]; ok {
-		return result.recipes, result.opts, result.err
+		return result.recipes, result.enumSets, result.opts, result.err
 	}
 	target, err := configfile.ResolveCrossConfigReference(ctx, path, opts.ConfigPath, base, configfile.ResolveOptions{AllowMissingCmd: true})
 	if err != nil {
 		cache[key] = diagnosticCrossConfigResult{err: err}
-		return nil, completionOptions{}, err
+		return nil, nil, completionOptions{}, err
 	}
 	targetOpts := completionOptions{Dir: target.Dir, ConfigPath: target.Loaded.Path}
-	cache[key] = diagnosticCrossConfigResult{recipes: target.Recipes, opts: targetOpts}
-	return target.Recipes, targetOpts, nil
+	cache[key] = diagnosticCrossConfigResult{recipes: target.Recipes, enumSets: target.Loaded.Config.EnumSets, opts: targetOpts}
+	return target.Recipes, target.Loaded.Config.EnumSets, targetOpts, nil
 }
 
 func parseDiagnostic(text string, err error) lspDiagnostic {

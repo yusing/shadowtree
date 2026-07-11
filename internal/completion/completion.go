@@ -26,6 +26,7 @@ type Options struct {
 	Dir                        string
 	ConfigPath                 string
 	Env                        map[string]string
+	EnumSets                   map[string]recipe.Command
 	DisableCommandBackedValues bool
 	CommandBackedValueTimeout  time.Duration
 }
@@ -605,6 +606,7 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 		ConfigPath:  opts.ConfigPath,
 		Recipe:      rec,
 		Recipes:     recipes,
+		EnumSets:    opts.EnumSets,
 		ValuePrefix: valuePrefix,
 	}); ok {
 		if err != nil {
@@ -639,6 +641,7 @@ func dynamicValueCandidates(ctx context.Context, prefix, valuePrefix string, arg
 	defer cancel()
 	output, err := runner.CommandOutput(valueCtx, opts.Dir, env, command, runner.CommandOutputOptions{
 		Recipes:    recipes,
+		EnumSets:   opts.EnumSets,
 		ConfigPath: opts.ConfigPath,
 		SourceDir:  opts.Dir,
 	})

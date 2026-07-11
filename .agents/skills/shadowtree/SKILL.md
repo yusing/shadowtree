@@ -285,7 +285,7 @@ Fields under `[recipes.<name>.arguments.<arg>]`:
 - `default`: string, integer, number, or boolean; converted to string then type-validated.
 - `min` / `max`: inclusive bounds for `int`, `float`, `duration`, `duration:seconds`; duration bounds use Go duration strings.
 - `values`: shell string printing completion/help candidates, one per line as `value` or `value<TAB>help`; TOML arrays invalid, including `values = []`.
-  Use builtins for static/contextual values: `@enum a b "c d"`, `@enum api='API service'`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-packages`, `@go-main-packages`, `@recipes`, `@vars`.
+  Use builtins for static/contextual values: `@enum a b "c d"`, `@enum api='API service'`, `@enum_set service`, `@lines config/targets.txt`, `@glob "cmd/*"`, `@go-modules`, `@go-packages`, `@go-main-packages`, `@recipes`, `@vars`. Define reusable sets with `[enum_sets] service = "@enum ..."`; sets work in `values` and `for_each`.
   `@enum` attaches help for `value=help text` when help side has whitespace; quote help side, e.g. `@enum all='all modules'`. Single-token values like `GOOS=linux` stay literal.
   `@go-modules` returns dirs containing `go.mod`, using `.` for config-dir module and module paths as help. `@go-packages` runs `go list` in config-dir module and, with `go.work`, workspace modules; returns package args like `./internal/recipe` with import paths as help. `@go-main-packages` returns dirs containing non-test Go files with `package main`, using package comments as help when available. Go builtins are filesystem-backed and skip common generated/vendor dirs where applicable.
   Scalar value exactly `@recipe` or `@path:recipe` invokes recipe directly. Pass args with brackets, e.g. `values = "@targets[kind=go]"`.

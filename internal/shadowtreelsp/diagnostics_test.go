@@ -2035,6 +2035,38 @@ cmd = "@webui:minify[component=foo]"
 	assertDiagnosticRange(t, diagnostics[0], 1, len(`cmd = "@webui:minify[`), len(`cmd = "@webui:minify[component=foo`))
 }
 
+func TestDocumentDiagnosticsValidateCrossConfigEnumSetValue(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetConfig := `[enum_sets]
+component = "@enum api worker"
+
+[recipes.minify.arguments.component]
+type = "string"
+values = "@enum_set component"
+
+[recipes.minify]
+cmd = "true"
+`
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(targetConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	valid := `[recipes.test]
+cmd = "@webui:minify[component=api]"
+`
+	if diagnostics := documentDiagnosticsWithOptions(t.Context(), valid, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))}); len(diagnostics) != 0 {
+		t.Fatalf("valid diagnostics = %#v, want none", diagnostics)
+	}
+	invalid := `[recipes.test]
+cmd = "@webui:minify[component=web]"
+`
+	diagnostics := documentDiagnosticsWithOptions(t.Context(), invalid, diagnosticOptions{URI: fileURI(filepath.Join(root, ".shadowtree.toml"))})
+	assertOneDiagnostic(t, diagnostics, `component: invalid value "web"`)
+}
+
 func TestDocumentDiagnosticsDoNotRunCommandBackedArgumentValues(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	text := `[recipes.build.arguments.component]

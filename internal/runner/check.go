@@ -130,7 +130,7 @@ func validateRecipeReference(ctx context.Context, options Options, stage string,
 	if dynamicArgs {
 		return nil
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes, EnumSets: options.EnumSets})
 	if err != nil {
 		return fmt.Errorf("recipe %q %s @%s: %w", options.Resolved.Name, stage, ref.Target(), err)
 	}
@@ -156,13 +156,14 @@ func validateCrossConfigReference(ctx context.Context, options Options, stage st
 	if dynamicArgs {
 		return nil
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes, EnumSets: target.Loaded.Config.EnumSets})
 	if err != nil {
 		return fmt.Errorf("recipe %q %s @%s: %w", options.Resolved.Name, stage, ref.Target(), err)
 	}
 	nested := options
 	nested.Resolved = resolved
 	nested.Recipes = target.Recipes
+	nested.EnumSets = target.Loaded.Config.EnumSets
 	nested.ConfigEnv = target.Loaded.Config.Env
 	nested.SourceDir = filepath.Clean(target.Dir)
 	return validateResolvedPlan(ctx, nested, append(slices.Clone(stack), key))

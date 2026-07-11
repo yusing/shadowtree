@@ -91,6 +91,7 @@ type namespaceScriptPayload struct {
 	Env       []string
 	Resolved  recipe.Resolved
 	Recipes   map[string]recipe.Recipe
+	EnumSets  map[string]recipe.Command
 	ConfigEnv map[string]string
 	SourceDir string
 	Verbose   bool
@@ -98,9 +99,10 @@ type namespaceScriptPayload struct {
 }
 
 type namespaceValueBuiltinPayload struct {
-	Command recipe.Command
-	Recipe  recipe.Recipe
-	Recipes map[string]recipe.Recipe
+	Command  recipe.Command
+	Recipe   recipe.Recipe
+	Recipes  map[string]recipe.Recipe
+	EnumSets map[string]recipe.Command
 }
 
 func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, env []string, dir string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, stack []string) error {
@@ -109,6 +111,7 @@ func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, 
 		Env:       env,
 		Resolved:  options.Resolved,
 		Recipes:   options.Recipes,
+		EnumSets:  options.EnumSets,
 		ConfigEnv: options.ConfigEnv,
 		SourceDir: options.SourceDir,
 		Verbose:   options.Verbose,
@@ -142,9 +145,10 @@ func (sandbox *sandboxWorkspace) runNamespaceScriptCommand(ctx context.Context, 
 
 func (sandbox *sandboxWorkspace) runNamespaceValueBuiltinCommand(ctx context.Context, env []string, dir string, command recipe.Command, stderr io.Writer, options Options) ([]recipe.ValueCandidate, error) {
 	payload := namespaceValueBuiltinPayload{
-		Command: command,
-		Recipe:  options.Resolved.Recipe,
-		Recipes: options.Recipes,
+		Command:  command,
+		Recipe:   options.Resolved.Recipe,
+		Recipes:  options.Recipes,
+		EnumSets: options.EnumSets,
 	}
 	file, err := os.CreateTemp(sandbox.workDir, "values-*.json")
 	if err != nil {
@@ -275,10 +279,11 @@ func overlayHelperValuesMain(ctx context.Context, dir, path string) int {
 		return 125
 	}
 	values, _, err := recipe.BuiltinValues(payload.Command, recipe.ValueBuiltinOptions{
-		Context: ctx,
-		Dir:     dir,
-		Recipe:  payload.Recipe,
-		Recipes: payload.Recipes,
+		Context:  ctx,
+		Dir:      dir,
+		Recipe:   payload.Recipe,
+		Recipes:  payload.Recipes,
+		EnumSets: payload.EnumSets,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shadowtree overlay helper: values: %v\n", err)
@@ -306,6 +311,7 @@ func overlayHelperScriptMain(ctx context.Context, dir, path string) int {
 	options := Options{
 		Resolved:  payload.Resolved,
 		Recipes:   payload.Recipes,
+		EnumSets:  payload.EnumSets,
 		ConfigEnv: payload.ConfigEnv,
 		SourceDir: payload.SourceDir,
 		Verbose:   payload.Verbose,

@@ -99,7 +99,14 @@ type CrossConfigTarget struct {
 }
 
 func Load(path string) (Loaded, error) {
-	return load(path, nil, nil)
+	loaded, err := load(path, nil, nil)
+	if err != nil {
+		return Loaded{}, err
+	}
+	if err := recipe.ValidateEnumSetReferences(loaded.Config); err != nil {
+		return Loaded{}, err
+	}
+	return loaded, nil
 }
 
 // LoadConfigWithMeta expands includes for an already-decoded root config with TOML field metadata.
@@ -117,6 +124,12 @@ func LoadConfigWithMetaOverride(path, overridePath string, cfg recipe.Config, md
 	}
 	used := false
 	loaded, err := load(path, overrides, &used)
+	if err != nil {
+		return Loaded{}, used, err
+	}
+	if err := recipe.ValidateEnumSetReferences(loaded.Config); err != nil {
+		return Loaded{}, used, err
+	}
 	return loaded, used, err
 }
 
@@ -258,6 +271,7 @@ func mergeConfigs(base, override recipe.Config, explicitFields map[string]explic
 	out.Env = mergeStringMaps(out.Env, override.Env)
 	out.Vars = mergeStringMaps(out.Vars, override.Vars)
 	out.VarCommands = mergeCommandMaps(out.VarCommands, override.VarCommands)
+	out.EnumSets = mergeCommandMaps(out.EnumSets, override.EnumSets)
 	if override.Shell != "" {
 		out.Shell = override.Shell
 	}

@@ -130,6 +130,7 @@ type Config struct {
 	Env          map[string]string  `toml:"env"`
 	Vars         map[string]string  `toml:"vars"`
 	VarCommands  map[string]Command `toml:"var_commands"`
+	EnumSets     map[string]Command `toml:"enum_sets"`
 	Shell        string             `toml:"shell"`
 	ShellPrelude string             `toml:"shell_prelude"`
 	Recipes      map[string]Recipe  `toml:"recipes"`
@@ -201,8 +202,9 @@ type Resolved struct {
 }
 
 type ResolveOptions struct {
-	RunID   string
-	Recipes map[string]Recipe
+	RunID    string
+	Recipes  map[string]Recipe
+	EnumSets map[string]Command
 }
 
 type ConfigErrorTarget string
@@ -598,7 +600,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	runtimeValues := map[string]string{RunIDPlaceholder: runID}
-	presetName, argValues, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes})
+	presetName, argValues, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets})
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
@@ -812,6 +814,14 @@ func ValidateConfig(cfg Config) error {
 	if err := validateCommandsMapAt("var_commands", []string{"var_commands"}, cfg.VarCommands); err != nil {
 		return err
 	}
+	for name, command := range cfg.EnumSets {
+		if err := validateIdentifierKey("enum_sets", name); err != nil {
+			return configKeyPathError(err, "enum_sets", name)
+		}
+		if err := validateEnumSet(command); err != nil {
+			return configValuePathError(fmt.Errorf("enum set %q: %w", name, err), "enum_sets", name)
+		}
+	}
 	for name, rec := range cfg.Recipes {
 		if IsReservedRecipeName(name) {
 			return configTablePathError(fmt.Errorf("recipe name %q is reserved", name), "recipes", name)
@@ -863,6 +873,21 @@ func ValidateConfig(cfg Config) error {
 			if err := ValidateStageCommand(command); err != nil {
 				return prefixConfigPath(fmt.Errorf("recipe %q post[%d]: %w", name, i, err), err, "recipes", name, "post", strconv.Itoa(i))
 			}
+		}
+	}
+	return nil
+}
+
+// ValidateEnumSetReferences validates named enum references after config includes merge.
+func ValidateEnumSetReferences(cfg Config) error {
+	for name, rec := range cfg.Recipes {
+		for argName, arg := range rec.Arguments {
+			if err := validateEnumSetReference(arg.Values, cfg.EnumSets); err != nil {
+				return configValuePathError(fmt.Errorf("recipe %q argument %q values: %w", name, argName, err), "recipes", name, "arguments", argName, "values")
+			}
+		}
+		if err := validateEnumSetReference(rec.ForEach, cfg.EnumSets); err != nil {
+			return configValuePathError(fmt.Errorf("recipe %q for_each: %w", name, err), "recipes", name, "for_each")
 		}
 	}
 	return nil
@@ -946,11 +971,6 @@ func validateRequirementName(field, name string) error {
 		return fmt.Errorf("%s key %q is reserved", field, name)
 	}
 	return nil
-}
-
-func ResolveArguments(rec Recipe, cliArgs []string) (map[string]string, []string, error) {
-	_, values, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{})
-	return values, variadicArgs, err
 }
 
 func extractRecipePreset(rec Recipe, cliArgs []string) (string, []string, error) {

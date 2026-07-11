@@ -22,6 +22,9 @@ log_dir = ".shadowtree/logs"
 git_branch = "git branch --show-current 2>/dev/null || printf unknown"
 generated_stamp = "printf manual-e2e"
 
+[enum_sets]
+service = "@enum api='API service' worker='Background worker'"
+
 [env]
 SHADOWTREE_EXAMPLE = "{project_slug}"
 SHADOWTREE_BRANCH = "{git_branch}"
@@ -54,7 +57,7 @@ recipe_banner() {
 	printf 'recipe=%s target=%s\n' kitchen-sink "{target}"
 }
 '''
-for_each = "@enum api='API service' worker='Background worker'"
+for_each = "@enum_set service"
 workdir = "."
 pre = [
   "@included-setup",
@@ -99,7 +102,7 @@ help = "Named string argument with enum values."
 type = "string"
 required = true
 default = "api"
-values = "@enum api='API service' worker='Background worker' docs='Documentation site'"
+values = "@enum_set service"
 
 [recipes.kitchen-sink.arguments.retries]
 help = "Integer argument with bounds."

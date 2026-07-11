@@ -24,6 +24,7 @@ import (
 
 const (
 	enumValuesName           = "enum"
+	enumSetValuesName        = "enum_set"
 	globValuesName           = "glob"
 	goMainPackagesValuesName = "go-main-packages"
 	goModulesValuesName      = "go-modules"
@@ -37,6 +38,7 @@ const goListTimeout = 5 * time.Second
 
 var builtinReferenceDetails = map[string]string{
 	enumValuesName:           "Static argument values",
+	enumSetValuesName:        "Named static argument values",
 	globValuesName:           "Globbed filesystem values",
 	goMainPackagesValuesName: "Go main package arguments",
 	goModulesValuesName:      "Go module directories",
@@ -57,6 +59,7 @@ type ValueBuiltinOptions struct {
 	ConfigPath  string
 	Recipe      Recipe
 	Recipes     map[string]Recipe
+	EnumSets    map[string]Command
 	ValuePrefix string
 }
 
@@ -97,10 +100,11 @@ func ValidateValueBuiltin(command Command) (string, bool, error) {
 	return calls[0].name, true, nil
 }
 
-// ArgumentHasEnumValues reports whether arg is constrained by a static @enum.
+// ArgumentHasEnumValues reports whether arg is constrained by static enum values,
+// directly or through @enum_set.
 func ArgumentHasEnumValues(arg Argument) bool {
 	name, ok, err := ValidateValueBuiltin(arg.Values)
-	return ok && err == nil && name == enumValuesName
+	return ok && err == nil && (name == enumValuesName || name == enumSetValuesName)
 }
 
 // ValueBuiltinUsesFilesystem reports whether command is a filesystem-backed value builtin.
@@ -169,6 +173,10 @@ func acceptedValueCandidates(command Command, opts ValueBuiltinOptions) ([]Value
 			if opts.Recipes == nil {
 				return nil, true, nil
 			}
+		case enumSetValuesName:
+			if opts.EnumSets == nil {
+				return nil, true, nil
+			}
 		}
 		callValues, err := builtinValuesForCall(call, opts)
 		if err != nil {
@@ -185,6 +193,19 @@ func builtinValuesForCall(call valueBuiltinCall, opts ValueBuiltinOptions) ([]Va
 	switch name {
 	case enumValuesName:
 		return filterValueCandidates(enumCandidates(args), opts.ValuePrefix), nil
+	case enumSetValuesName:
+		command, ok := opts.EnumSets[args[0]]
+		if !ok {
+			return nil, fmt.Errorf("unknown enum set %q", args[0])
+		}
+		values, ok, err := BuiltinValues(command, opts)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("enum set %q must use @enum", args[0])
+		}
+		return filterValueCandidates(values, opts.ValuePrefix), nil
 	case globValuesName:
 		return globCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
 	case goMainPackagesValuesName:
@@ -221,6 +242,10 @@ func validateValueBuiltinArgs(name string, args []string) (string, bool, error) 
 	switch name {
 	case enumValuesName:
 		return name, true, nil
+	case enumSetValuesName:
+		if len(args) != 1 {
+			return name, true, fmt.Errorf("@%s requires one argument", name)
+		}
 	case globValuesName, linesValuesName:
 		if len(args) != 1 {
 			return name, true, fmt.Errorf("@%s requires one argument", name)
@@ -237,6 +262,35 @@ func validateValueBuiltinArgs(name string, args []string) (string, bool, error) 
 		return name, false, nil
 	}
 	return name, true, nil
+}
+
+func validateEnumSet(command Command) error {
+	calls, ok, err := validatedValueBuiltinInvocations(command)
+	if err != nil {
+		return err
+	}
+	if !ok || len(calls) != 1 || calls[0].name != enumValuesName {
+		return errors.New("must use a single @enum command")
+	}
+	if len(calls[0].args) == 0 {
+		return errors.New("must not be empty")
+	}
+	return nil
+}
+
+func validateEnumSetReference(command Command, enumSets map[string]Command) error {
+	calls, ok, err := validatedValueBuiltinInvocations(command)
+	if err != nil || !ok {
+		return err
+	}
+	for _, call := range calls {
+		if call.name == enumSetValuesName {
+			if _, ok := enumSets[call.args[0]]; !ok {
+				return fmt.Errorf("unknown enum set %q", call.args[0])
+			}
+		}
+	}
+	return nil
 }
 
 func valueBuiltinInvocations(command Command) ([]valueBuiltinCall, bool, error) {

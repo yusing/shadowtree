@@ -25,6 +25,7 @@ import (
 type Options struct {
 	Resolved      recipe.Resolved
 	Recipes       map[string]recipe.Recipe
+	EnumSets      map[string]recipe.Command
 	ConfigEnv     map[string]string
 	SourceDir     string
 	PrintOnly     bool
@@ -46,6 +47,7 @@ type ExitError struct {
 // CommandOutputOptions controls recipe references inside output-producing commands.
 type CommandOutputOptions struct {
 	Recipes    map[string]recipe.Recipe
+	EnumSets   map[string]recipe.Command
 	ConfigPath string
 	SourceDir  string
 }
@@ -653,10 +655,11 @@ func builtinValues(ctx context.Context, sandbox *sandboxWorkspace, dir string, e
 		return sandbox.runNamespaceValueBuiltinCommand(ctx, env, dir, command, stderr, options)
 	}
 	values, _, err := recipe.BuiltinValues(command, recipe.ValueBuiltinOptions{
-		Context: ctx,
-		Dir:     dir,
-		Recipe:  options.Resolved.Recipe,
-		Recipes: options.Recipes,
+		Context:  ctx,
+		Dir:      dir,
+		Recipe:   options.Resolved.Recipe,
+		Recipes:  options.Recipes,
+		EnumSets: options.EnumSets,
 	})
 	return values, err
 }
@@ -849,7 +852,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, options.ConfigEnv, options.Resolved.ConfigPath, options.Resolved.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: options.Recipes, EnumSets: options.EnumSets})
 	if err != nil {
 		return err
 	}
@@ -879,13 +882,14 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	if !ok {
 		return fmt.Errorf("unknown recipe reference: @%s", ref.Target())
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes, EnumSets: target.Loaded.Config.EnumSets})
 	if err != nil {
 		return err
 	}
 	nested := options
 	nested.Resolved = resolved
 	nested.Recipes = target.Recipes
+	nested.EnumSets = target.Loaded.Config.EnumSets
 	nested.ConfigEnv = target.Loaded.Config.Env
 	nested.SyncOutAll = false
 	nested.PrintOnly = false
@@ -923,7 +927,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	if !ok {
 		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Name)
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, env, opts.ConfigPath, "", recipe.ResolveOptions{Recipes: opts.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, env, opts.ConfigPath, "", recipe.ResolveOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets})
 	if err != nil {
 		return "", err
 	}
@@ -935,6 +939,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	err = runResolvedCommands(ctx, nil, dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   opts.Recipes,
+		EnumSets:  opts.EnumSets,
 		ConfigEnv: env,
 		SourceDir: cmp.Or(opts.SourceDir, dir),
 	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(opts.ConfigPath, ref.Name)})
@@ -954,7 +959,7 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	if !ok {
 		return "", fmt.Errorf("unknown recipe reference: @%s", ref.Target())
 	}
-	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{Recipes: target.Recipes})
+	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{Recipes: target.Recipes, EnumSets: target.Loaded.Config.EnumSets})
 	if err != nil {
 		return "", err
 	}
@@ -966,6 +971,7 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	err = runResolvedCommands(ctx, nil, target.Dir, envList, Options{
 		Resolved:  resolved,
 		Recipes:   target.Recipes,
+		EnumSets:  target.Loaded.Config.EnumSets,
 		ConfigEnv: target.Loaded.Config.Env,
 		SourceDir: sourceDir,
 	}, nil, &stdout, io.Discard, []string{recipeReferenceStackKey(target.Loaded.Path, ref.Name)})
