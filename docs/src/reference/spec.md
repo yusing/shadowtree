@@ -107,8 +107,10 @@ recipe name are passed to the recipe's main command.
 
 ## Config Discovery
 
-Shadowtree discovers config upward from the current directory until the git root
-or filesystem root.
+Shadowtree discovers config upward from the current directory until the outer
+Git repository boundary or filesystem root. Registered submodules continue into
+their superprojects when they contain no nearer config. Independent nested
+repositories and linked worktrees remain boundaries.
 
 Discovery order:
 

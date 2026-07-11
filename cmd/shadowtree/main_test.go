@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -48,6 +49,93 @@ func writeTextFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func TestRunConfigReportsSuperprojectConfigFromSubmodule(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, source, "init", "-q")
+	runGitCommand(t, source, "config", "user.email", "shadowtree@example.com")
+	runGitCommand(t, source, "config", "user.name", "Shadowtree Test")
+	writeTextFile(t, filepath.Join(source, "go.mod"), "module example.com/source\n")
+	runGitCommand(t, source, "add", ".")
+	runGitCommand(t, source, "commit", "-qm", "source")
+
+	superproject := filepath.Join(root, "superproject")
+	if err := os.MkdirAll(superproject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, superproject, "init", "-q")
+	runGitCommand(t, superproject, "config", "user.email", "shadowtree@example.com")
+	runGitCommand(t, superproject, "config", "user.name", "Shadowtree Test")
+	configPath := filepath.Join(superproject, ".shadowtree.toml")
+	writeTextFile(t, configPath, "profile = \"go\"\n")
+	runGitCommand(t, superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "submodule")
+	runGitCommand(t, superproject, "add", ".")
+	runGitCommand(t, superproject, "commit", "-qm", "superproject")
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(superproject, "submodule")); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	out := captureStdout(t, func() error { return run(t.Context(), []string{"config"}) })
+	if !strings.Contains(out, "config: "+configPath) {
+		t.Fatalf("config output missing superproject config %q:\n%s", configPath, out)
+	}
+}
+
+func TestRunConfigUsesExplicitConfig(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "nested")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTextFile(t, filepath.Join(cwd, ".shadowtree.toml"), "profile = \"node\"\n")
+	explicit := filepath.Join(root, "explicit.toml")
+	writeTextFile(t, explicit, "profile = \"go\"\n")
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldwd); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	out := captureStdout(t, func() error {
+		return run(t.Context(), []string{"--config", explicit, "config"})
+	})
+	if !strings.Contains(out, "config: "+explicit) {
+		t.Fatalf("config output missing explicit config %q:\n%s", explicit, out)
 	}
 }
 

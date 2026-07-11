@@ -2,6 +2,7 @@ package configfile
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,6 +11,295 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/yusing/shadowtree/internal/recipe"
 )
+
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func initGitRepo(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, path, "init", "-q")
+	runGit(t, path, "config", "user.email", "shadowtree@example.com")
+	runGit(t, path, "config", "user.name", "Shadowtree Test")
+}
+
+func commitGitRepo(t *testing.T, path string) {
+	t.Helper()
+	runGit(t, path, "add", ".")
+	runGit(t, path, "commit", "--allow-empty", "-qm", "test")
+}
+
+func addSubmodule(t *testing.T, parent, source, path string) {
+	t.Helper()
+	runGit(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, path)
+	commitGitRepo(t, parent)
+}
+
+func replaceWithSymlink(t *testing.T, path, target string) {
+	t.Helper()
+	if err := os.Rename(path, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+}
+
+func writeDiscoveryConfig(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte("profile = \"go\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func assertFoundConfig(t *testing.T, cwd, want string) {
+	t.Helper()
+	loaded, ok, err := Find(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("Find returned no config")
+	}
+	if loaded.Path != want {
+		t.Fatalf("config path = %q, want %q", loaded.Path, want)
+	}
+}
+
+func TestFindDiscoversSuperprojectConfigFromSubmodule(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	initGitRepo(t, source)
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitGitRepo(t, source)
+
+	superproject := filepath.Join(root, "superproject")
+	initGitRepo(t, superproject)
+	want := writeDiscoveryConfig(t, superproject)
+	addSubmodule(t, superproject, source, "submodule")
+
+	assertFoundConfig(t, filepath.Join(superproject, "submodule"), want)
+}
+
+func TestFindDiscoversSuperprojectConfigWithoutGitBinary(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	initGitRepo(t, source)
+	commitGitRepo(t, source)
+
+	superproject := filepath.Join(root, "superproject")
+	initGitRepo(t, superproject)
+	want := writeDiscoveryConfig(t, superproject)
+	addSubmodule(t, superproject, source, "submodule")
+
+	t.Setenv("PATH", t.TempDir())
+	assertFoundConfig(t, filepath.Join(superproject, "submodule"), want)
+}
+
+func TestFindDiscoversSuperprojectConfigFromSymlinkedSubmodule(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	initGitRepo(t, source)
+	commitGitRepo(t, source)
+
+	superproject := filepath.Join(root, "superproject")
+	initGitRepo(t, superproject)
+	want := writeDiscoveryConfig(t, superproject)
+	addSubmodule(t, superproject, source, "submodule")
+
+	mount := filepath.Join(superproject, "submodule")
+	replaceWithSymlink(t, mount, filepath.Join(root, "submodule-target"))
+	assertFoundConfig(t, mount, want)
+}
+
+func TestFindPrefersSubmoduleConfig(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	initGitRepo(t, source)
+	commitGitRepo(t, source)
+
+	superproject := filepath.Join(root, "superproject")
+	initGitRepo(t, superproject)
+	writeDiscoveryConfig(t, superproject)
+	addSubmodule(t, superproject, source, "submodule")
+	want := writeDiscoveryConfig(t, filepath.Join(superproject, "submodule"))
+
+	assertFoundConfig(t, filepath.Join(superproject, "submodule"), want)
+}
+
+func TestFindPrefersConfigBetweenSubmoduleAndSuperproject(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	initGitRepo(t, source)
+	commitGitRepo(t, source)
+
+	superproject := filepath.Join(root, "superproject")
+	initGitRepo(t, superproject)
+	writeDiscoveryConfig(t, superproject)
+	if err := os.Mkdir(filepath.Join(superproject, "tools"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := writeDiscoveryConfig(t, filepath.Join(superproject, "tools"))
+	addSubmodule(t, superproject, source, "tools/submodule")
+
+	assertFoundConfig(t, filepath.Join(superproject, "tools", "submodule"), want)
+}
+
+func TestFindDiscoversOuterConfigFromNestedSubmodule(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	leaf := filepath.Join(root, "leaf")
+	initGitRepo(t, leaf)
+	commitGitRepo(t, leaf)
+
+	middle := filepath.Join(root, "middle")
+	initGitRepo(t, middle)
+	addSubmodule(t, middle, leaf, "nested")
+
+	outer := filepath.Join(root, "outer")
+	initGitRepo(t, outer)
+	want := writeDiscoveryConfig(t, outer)
+	addSubmodule(t, outer, middle, "submodule")
+	runGit(t, outer, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+
+	assertFoundConfig(t, filepath.Join(outer, "submodule", "nested"), want)
+}
+
+func TestFindDoesNotCrossIndependentGitRepository(t *testing.T) {
+	requireGit(t)
+	parent := t.TempDir()
+	writeDiscoveryConfig(t, parent)
+	child := filepath.Join(parent, "child")
+	initGitRepo(t, child)
+	commitGitRepo(t, child)
+
+	loaded, ok, err := Find(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("Find returned %q, want no config beyond independent repository", loaded.Path)
+	}
+}
+
+func TestFindDoesNotCrossStaleSubmoduleDeclaration(t *testing.T) {
+	requireGit(t)
+	parent := t.TempDir()
+	initGitRepo(t, parent)
+	writeDiscoveryConfig(t, parent)
+	if err := os.WriteFile(filepath.Join(parent, ".gitmodules"), []byte("[submodule \"nested\"]\n\tpath = nested\n\turl = ../nested\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitGitRepo(t, parent)
+
+	nested := filepath.Join(parent, "nested")
+	initGitRepo(t, nested)
+	commitGitRepo(t, nested)
+
+	loaded, ok, err := Find(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("Find returned %q, want no config beyond independent repository", loaded.Path)
+	}
+}
+
+func TestFindDoesNotCrossSymlinkedIndependentGitRepository(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	initGitRepo(t, parent)
+	writeDiscoveryConfig(t, parent)
+	commitGitRepo(t, parent)
+
+	nested := filepath.Join(root, "nested")
+	initGitRepo(t, nested)
+	commitGitRepo(t, nested)
+	mount := filepath.Join(parent, "nested")
+	if err := os.Symlink(nested, mount); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+
+	loaded, ok, err := Find(mount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("Find returned %q, want no config beyond independent repository", loaded.Path)
+	}
+}
+
+func TestFindDoesNotCrossLinkedWorktree(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	primary := filepath.Join(root, "primary")
+	initGitRepo(t, primary)
+	commitGitRepo(t, primary)
+	writeDiscoveryConfig(t, root)
+	worktree := filepath.Join(root, "worktree")
+	runGit(t, primary, "worktree", "add", "-q", worktree)
+
+	loaded, ok, err := Find(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("Find returned %q, want no config beyond linked worktree", loaded.Path)
+	}
+}
+
+func TestFindPreservesNonGitAndOrdinaryRepositoryBoundaries(t *testing.T) {
+	t.Run("non-Git", func(t *testing.T) {
+		root := t.TempDir()
+		want := writeDiscoveryConfig(t, root)
+		cwd := filepath.Join(root, "nested", "dir")
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertFoundConfig(t, cwd, want)
+	})
+
+	t.Run("ordinary repository", func(t *testing.T) {
+		requireGit(t)
+		root := t.TempDir()
+		writeDiscoveryConfig(t, root)
+		repository := filepath.Join(root, "repository")
+		initGitRepo(t, repository)
+		commitGitRepo(t, repository)
+
+		loaded, ok, err := Find(repository)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Fatalf("Find returned %q, want no config beyond repository", loaded.Path)
+		}
+	})
+}
 
 func TestLoadTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".shadowtree.toml")

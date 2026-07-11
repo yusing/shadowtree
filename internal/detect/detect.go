@@ -3,6 +3,10 @@ package detect
 import (
 	"os"
 	"path/filepath"
+	"strings"
+
+	git "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
 )
 
 const (
@@ -30,6 +34,57 @@ func RepoRoot(cwd string) string {
 		}
 		root = parent
 	}
+}
+
+// SuperprojectRoot returns the working-tree root of root's registered
+// superproject. It returns false when root is not a registered submodule.
+func SuperprojectRoot(root string) (string, bool) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", false
+	}
+
+	superproject := RepoRoot(filepath.Dir(root))
+	if superproject == "" || !isAncestor(superproject, root) {
+		return "", false
+	}
+
+	repo, err := git.PlainOpen(superproject)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = repo.Close() }()
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return "", false
+	}
+	submodules, err := worktree.Submodules()
+	if err != nil {
+		return "", false
+	}
+	index, err := repo.Storer.Index()
+	if err != nil {
+		return "", false
+	}
+	for _, submodule := range submodules {
+		path, err := filepath.Abs(filepath.Join(superproject, submodule.Config().Path))
+		if err != nil || path != root {
+			continue
+		}
+		entry, err := index.Entry(submodule.Config().Path)
+		if err == nil && entry.Mode == filemode.Submodule {
+			return superproject, true
+		}
+	}
+
+	return "", false
+}
+
+func isAncestor(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != "." && rel != ".." &&
+		!filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func nearestProfileMarker(cwd string) (string, bool) {

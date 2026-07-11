@@ -41,8 +41,10 @@ shadowtree init
 ```
 
 Shadowtree discovers `.shadowtree.toml` upward from the current directory.
-Discovery stops at the git root when the current directory is inside a Git
-repository.
+Discovery stops at the outer Git repository boundary when the current directory
+is inside a Git repository. Registered submodules continue into their
+superprojects when they contain no nearer config. Independent nested repositories
+and linked worktrees remain boundaries.
 
 ## Run Recipes
 

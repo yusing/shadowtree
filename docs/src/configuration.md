@@ -3,8 +3,11 @@
 Shadowtree config is TOML. By default, Shadowtree discovers the nearest
 `.shadowtree.toml` by walking upward from the current directory.
 
-Discovery stops at the git root when the current directory is inside a Git
-repository. An explicit `--config PATH` bypasses discovery.
+Discovery stops at the outer Git repository boundary when the current directory
+is inside a Git repository. Registered submodules continue into their
+superprojects when they contain no nearer config. Independent nested repositories
+and linked worktrees remain boundaries. An explicit `--config PATH` bypasses
+discovery.
 
 ```sh
 shadowtree --config ./ci.shadowtree.toml recipes

@@ -104,7 +104,9 @@ Shadowtree puts those workflows behind one recipe interface:
 ## Configuration
 
 Shadowtree discovers config upward from the current directory until the Git root
-or filesystem root:
+or filesystem root. Registered Git submodules continue into their superproject
+when no nearer config exists. Ordinary repositories, independently nested
+repositories, and linked worktrees remain discovery boundaries.
 
 ```text
 .shadowtree.toml

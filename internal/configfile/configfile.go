@@ -621,7 +621,13 @@ func Find(cwd string) (Loaded, bool, error) {
 			}
 		}
 		if dir == root {
-			return Loaded{}, false, nil
+			superproject, ok := detect.SuperprojectRoot(root)
+			if !ok {
+				return Loaded{}, false, nil
+			}
+			dir = filepath.Dir(root)
+			root = superproject
+			continue
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

@@ -58,7 +58,10 @@ Completion criterion: risky/unclear execution inspected with `--print` first.
 
 ## Config Discovery
 
-Discovery walks upward from cwd to git root or filesystem root:
+Discovery walks upward from cwd to the outer Git repository boundary or
+filesystem root. Registered submodules continue into their superprojects when
+they contain no nearer config. Independent nested repositories and linked
+worktrees remain boundaries:
 
 ```text
 .shadowtree.toml
