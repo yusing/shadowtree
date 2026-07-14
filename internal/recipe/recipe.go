@@ -372,6 +372,14 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 				"pkg": defaultGoPackageArgument,
 			},
 		}),
+		"install": moduleWide(Recipe{
+			Help: "Install Go package.",
+			Cmd:  Command{"go", "install", "-ldflags={ldflags}", "{pkg}"},
+			Arguments: map[string]Argument{
+				"ldflags": {Default: "-s -w"},
+				"pkg":     defaultGoMainPackageArgument,
+			},
+		}),
 		"run": {
 			Help: "Run a Go command.",
 			Cmd:  Command{"go", "-C", "{cwd}", "run", "{command}", "{@}"},

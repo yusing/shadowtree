@@ -1098,7 +1098,7 @@ func TestGoBuiltinRunPassesCwdToGoC(t *testing.T) {
 
 func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
 	builtins := go1264Builtins(t)
-	for _, name := range []string{"build", "fix", "fmt", "generate", "lint", "test", "test-race", "tidy", "vet"} {
+	for _, name := range []string{"build", "fix", "fmt", "generate", "install", "lint", "test", "test-race", "tidy", "vet"} {
 		rec := builtins[name]
 		if values := ScriptBody(rec.ForEach); values != GoModuleValuesCommand {
 			t.Fatalf("%s for_each = %q", name, values)
@@ -1106,6 +1106,22 @@ func TestGoBuiltinsRunForEachGoModule(t *testing.T) {
 		if rec.Workdir != "{item}" {
 			t.Fatalf("%s workdir = %q, want {item}", name, rec.Workdir)
 		}
+	}
+}
+
+func TestGoBuiltinInstallUsesStrippedLdflagsByDefault(t *testing.T) {
+	install := Builtins(GoProfile, BuiltinOptions{})["install"]
+	ldflags := install.Arguments["ldflags"]
+	if ldflags.Default != "-s -w" {
+		t.Fatalf("install ldflags default = %q, want -s -w", ldflags.Default)
+	}
+
+	got, err := Resolve("install", install, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "install", "-ldflags=-s -w", "./..."}) {
+		t.Fatalf("install command = %#v", got.Main)
 	}
 }
 
@@ -1122,14 +1138,16 @@ func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
 	}
 }
 
-func TestGoBuiltinBuildCompletesMainPackages(t *testing.T) {
-	build := go1264Builtins(t)["build"]
-	arg := build.Arguments["pkg"]
-	if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
-		t.Fatalf("build pkg argument = %#v", arg)
-	}
-	if values := ScriptBody(arg.Values); values != GoMainPackageValuesCommand {
-		t.Fatalf("build pkg values = %q", values)
+func TestGoBuildAndInstallBuiltinsCompleteMainPackages(t *testing.T) {
+	builtins := go1264Builtins(t)
+	for _, name := range []string{"build", "install"} {
+		arg := builtins[name].Arguments["pkg"]
+		if arg.Type != "rel_path" || arg.Position != 1 || arg.Default != "./..." {
+			t.Fatalf("%s pkg argument = %#v", name, arg)
+		}
+		if values := ScriptBody(arg.Values); values != GoMainPackageValuesCommand {
+			t.Fatalf("%s pkg values = %q", name, values)
+		}
 	}
 }
 
