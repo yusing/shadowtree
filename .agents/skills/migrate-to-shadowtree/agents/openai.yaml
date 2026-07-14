@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate to Shadowtree"
+  short_description: "Migrate project automation to Shadowtree"
+  default_prompt: "Use $migrate-to-shadowtree to migrate this project automation into simpler Shadowtree recipes."
