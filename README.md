@@ -187,7 +187,7 @@ for exact output.
 Profiles provide built-in recipes for common projects.
 
 Go projects expose recipes such as `test`, `test-race`, `vet`, `check`, `build`,
-`generate`, `lint`, `fmt`, `fix`, `tidy`, and `run`. Module-wide built-ins fan
+`generate`, `install`, `lint`, `fmt`, `fix`, `tidy`, and `run`. Module-wide built-ins fan
 out across discovered Go modules. Built-in `fix`, `fmt`, and `tidy` are
 unsandboxed because they are meant to update the checkout.
 
