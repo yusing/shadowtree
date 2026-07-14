@@ -166,6 +166,24 @@ func TestRunMissingOptionalCommandsWarnsAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunPrintsResolutionWarnings(t *testing.T) {
+	var stderr bytes.Buffer
+	err := Run(t.Context(), Options{
+		Resolved: recipe.Resolved{
+			Name:     "benchmark",
+			Warnings: []string{`target default ignored: target: invalid value ""`},
+		},
+		PrintOnly: true,
+		Stderr:    &stderr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stderr.String(), `shadowtree: warning: recipe "benchmark" args: target default ignored: target: invalid value ""`+"\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
 func TestRunMissingGoCommandReportsInstallGuidance(t *testing.T) {
 	source := t.TempDir()
 	t.Setenv("PATH", t.TempDir())

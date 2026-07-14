@@ -199,6 +199,7 @@ type Resolved struct {
 	LogPath      string
 	LogStages    []string
 	LogTee       bool
+	Warnings     []string
 }
 
 type ResolveOptions struct {
@@ -600,7 +601,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	runtimeValues := map[string]string{RunIDPlaceholder: runID}
-	presetName, argValues, variadicArgs, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets})
+	presetName, argValues, variadicArgs, warnings, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets})
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
@@ -740,6 +741,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		LogPath:      logPath,
 		LogStages:    logStages,
 		LogTee:       logTee,
+		Warnings:     warnings,
 	}, nil
 }
 
@@ -1038,35 +1040,37 @@ func ValidatePresetSelection(rec Recipe, selectedPreset, value string) error {
 	return nil
 }
 
-func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBuiltinOptions) (string, map[string]string, []string, error) {
+func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBuiltinOptions) (string, map[string]string, []string, []string, error) {
 	presetName, cliArgs, err := extractRecipePreset(rec, cliArgs)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 	valueOpts.Recipe = rec
 	usesVariadicArgs := RecipeUsesVariadicArgs(rec)
 	if len(rec.Arguments) == 0 {
 		if len(cliArgs) == 0 {
-			return presetName, map[string]string{}, nil, nil
+			return presetName, map[string]string{}, nil, nil, nil
 		}
 		if usesVariadicArgs {
 			variadicArgs := cliArgs
 			if cliArgs[0] == "--" {
 				variadicArgs = cliArgs[1:]
 			}
-			return presetName, map[string]string{}, slices.Clone(variadicArgs), nil
+			return presetName, map[string]string{}, slices.Clone(variadicArgs), nil, nil
 		}
 		if key, _, ok := strings.Cut(cliArgs[0], "="); ok && !strings.HasPrefix(key, "-") {
-			return "", nil, nil, fmt.Errorf("unknown argument %q", key)
+			return "", nil, nil, nil, fmt.Errorf("unknown argument %q", key)
 		}
-		return "", nil, nil, fmt.Errorf("unexpected positional argument %q", cliArgs[0])
+		return "", nil, nil, nil, fmt.Errorf("unexpected positional argument %q", cliArgs[0])
 	}
 	values := map[string]string{}
+	invalidDefaults := map[string]error{}
 	for name, arg := range rec.Arguments {
 		if arg.Default != nil {
 			value, err := resolvedArgumentValueString(name, arg, arg.Default, valueOpts)
 			if err != nil {
-				return "", nil, nil, fmt.Errorf("%s default: %w", name, err)
+				invalidDefaults[name] = err
+				continue
 			}
 			values[name] = value
 		}
@@ -1077,7 +1081,7 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBui
 			arg := rec.Arguments[name]
 			value, err := resolvedArgumentValueString(name, arg, raw, valueOpts)
 			if err != nil {
-				return "", nil, nil, fmt.Errorf("preset %q: %w", presetName, err)
+				return "", nil, nil, nil, fmt.Errorf("preset %q: %w", presetName, err)
 			}
 			values[name] = value
 		}
@@ -1100,11 +1104,11 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBui
 					variadicArgs = append(variadicArgs, token)
 					continue
 				}
-				return "", nil, nil, fmt.Errorf("unknown argument %q", key)
+				return "", nil, nil, nil, fmt.Errorf("unknown argument %q", key)
 			}
 			expanded, err := resolvedArgumentValueString(key, arg, value, valueOpts)
 			if err != nil {
-				return "", nil, nil, err
+				return "", nil, nil, nil, err
 			}
 			values[key] = expanded
 			continue
@@ -1118,25 +1122,33 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBui
 				variadicArgs = append(variadicArgs, token)
 				continue
 			}
-			return "", nil, nil, fmt.Errorf("unexpected positional argument %q", token)
+			return "", nil, nil, nil, fmt.Errorf("unexpected positional argument %q", token)
 		}
 		name := positionals[nextPositional]
 		nextPositional++
 		arg := rec.Arguments[name]
 		expanded, err := resolvedArgumentValueString(name, arg, token, valueOpts)
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, nil, err
 		}
 		values[name] = expanded
 	}
 	for name, arg := range rec.Arguments {
 		if arg.Required {
 			if _, ok := values[name]; !ok {
-				return "", nil, nil, fmt.Errorf("missing required argument %q", name)
+				return "", nil, nil, nil, fmt.Errorf("missing required argument %q", name)
 			}
 		}
 	}
-	return presetName, values, variadicArgs, nil
+	var warnings []string
+	for _, name := range slices.Sorted(maps.Keys(invalidDefaults)) {
+		err := invalidDefaults[name]
+		if _, overridden := values[name]; !overridden {
+			return "", nil, nil, nil, fmt.Errorf("%s default: %w", name, err)
+		}
+		warnings = append(warnings, fmt.Sprintf("%s default ignored: %v", name, err))
+	}
+	return presetName, values, variadicArgs, warnings, nil
 }
 
 func PositionalArguments(args map[string]Argument) []string {

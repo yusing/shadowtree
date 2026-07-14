@@ -2367,6 +2367,23 @@ func TestResolveArgumentValuesRejectInvalidDefaultValues(t *testing.T) {
 	}
 }
 
+func TestResolveArgumentValuesWarnsForOverriddenInvalidDefault(t *testing.T) {
+	rec := Recipe{
+		Cmd: Command{"deploy", "{target}"},
+		Arguments: map[string]Argument{
+			"target": {Default: "", Values: ScriptCommand("@enum api worker")},
+		},
+	}
+
+	resolved, err := Resolve("deploy", rec, []string{"target=api"}, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resolved.Warnings, []string{`target default ignored: target: invalid value ""`}; !slices.Equal(got, want) {
+		t.Fatalf("Warnings = %q, want %q", got, want)
+	}
+}
+
 func TestResolveArgumentValuesRejectInvalidRecipeValues(t *testing.T) {
 	rec := Recipe{
 		Cmd:       Command{"shadowtree", "{target}"},

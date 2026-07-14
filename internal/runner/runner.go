@@ -315,6 +315,10 @@ func installableRequirementList(missing []installableRequirement) string {
 
 func Run(ctx context.Context, options Options) (runErr error) {
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
+	stderr := cmp.Or[io.Writer](options.Stderr, os.Stderr)
+	for _, warning := range options.Resolved.Warnings {
+		fmt.Fprintf(stderr, "shadowtree: warning: recipe %q args: %s\n", options.Resolved.Name, warning)
+	}
 	source, err := filepath.Abs(options.SourceDir)
 	if err != nil {
 		return err
@@ -334,7 +338,6 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		}
 		return nil
 	}
-	stderr := cmp.Or[io.Writer](options.Stderr, os.Stderr)
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
 	if err := checkRecipeRequirements(options.Resolved, source, env, stderr); err != nil {
