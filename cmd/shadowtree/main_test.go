@@ -45,10 +45,57 @@ func captureStdout(t *testing.T, fn func() error) string {
 	return out.String()
 }
 
+func captureStderr(t *testing.T, fn func() error) string {
+	t.Helper()
+	var out bytes.Buffer
+	stderr := os.Stderr
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = write
+	defer func() { os.Stderr = stderr }()
+
+	err = fn()
+	if closeErr := write.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if _, copyErr := out.ReadFrom(read); copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	if err != nil {
+		t.Fatalf("function returned error: %v", err)
+	}
+	return out.String()
+}
+
 func writeTextFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunWarnsForOverriddenInvalidArgumentDefault(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	writeTextFile(t, configPath, `
+[recipes.deploy]
+cmd = ["echo", "{target}"]
+
+[recipes.deploy.arguments.target]
+default = ""
+values = "@enum api worker"
+`)
+
+	stderr := captureStderr(t, func() error {
+		captureStdout(t, func() error {
+			return run(t.Context(), []string{"--config", configPath, "--print", "deploy", "target=api"})
+		})
+		return nil
+	})
+	want := `shadowtree: warning: recipe "deploy" args: target default ignored: target: invalid value ""` + "\n"
+	if stderr != want {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
 	}
 }
 
