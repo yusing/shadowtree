@@ -5,11 +5,12 @@ description: Use and configure the Shadowtree development recipe runner. Use whe
 
 # Shadowtree
 
-Use Shadowtree for named project recipes with isolated writes by default. Read live state first; do not guess recipe names, commands, profile, sandbox mode, or sync-out.
+Use Shadowtree for named project recipes with isolated writes by default. Read live state proportionally; do not guess recipe names, commands, profile, sandbox mode, or sync-out.
 
 ## Evidence First
 
-Inspect before acting:
+Inspect only enough to resolve the current uncertainty. This is an escalation ladder,
+not a checklist:
 
 ```sh
 shadowtree config
@@ -20,6 +21,25 @@ shadowtree --print --expanded <recipe> [args...]
 shadowtree --check <recipe> [args...]
 shadowtree --check --shell <recipe> [args...]
 ```
+
+1. Run `shadowtree config` once when profile, config path, or available recipes are
+   not already known from project context.
+2. Use `shadowtree recipes` only to discover or confirm recipe names.
+3. Read the discovered config when checking whether it overrides a profile
+   built-in.
+4. Use `help <recipe>` only when the recipe's argument interface or configured
+   summary is needed.
+5. Use `--print` only when the resolved execution plan matters for safety or an
+   unfamiliar/custom recipe. Add `--expanded` only when debugging expansion,
+   environment, lifecycle stages, fan-out, or nested recipe behavior.
+6. Use `--check` only when validating recipe definitions or references; add
+   `--shell` only when expanded shell syntax needs validation.
+
+Do not batch `help`, `--print`, or `--print --expanded` across known profile
+built-ins. Once the profile is known, the built-in definitions in this skill are
+enough unless the project config overrides the relevant recipe. Run ordinary
+built-ins such as `test`, `lint`, `vet`, `check`, and `build` directly through
+Shadowtree when their documented behavior matches the task.
 
 Create starter config only when config should exist:
 
@@ -35,7 +55,8 @@ shadowtree --verbose test ./...
 shadowtree test -v ./...
 ```
 
-Completion criterion: chosen command comes from Shadowtree output or existing config.
+Completion criterion: chosen command comes from known profile behavior, Shadowtree
+output, or existing config; no redundant per-recipe probes.
 
 ## Commands
 
@@ -48,7 +69,14 @@ Completion criterion: chosen command comes from Shadowtree output or existing co
 - `shadowtree exec -- <cmd> [args...]`: sandboxed ad hoc recipe.
 - `shadowtree <recipe> [args...]`: run resolved recipe.
 
-Use `--print` before writes, deletes, installs, publishes, regeneration, sync-out, or unfamiliar args. It prints resolved plan without running commands or validating nested references. Use `--print --expanded` for expanded `pre`, `cmd`, `post`, `for_each`, config path, profile, sandbox, workdir, sync-out, logging, typed args, preset, values, computed vars, recipe env.
+Use `--print` before writes, deletes, installs, publishes, regeneration, sync-out,
+or unfamiliar args when the plan is not already established by a known built-in
+and absence of a config override. It prints the resolved plan without running
+commands or validating nested references. Use `--print --expanded` only when its
+extra details are relevant: expanded `pre`, `cmd`, `post`, `for_each`, config
+path, profile, sandbox, workdir, sync-out, logging, typed args, preset, values,
+computed vars, or recipe env. Do not run both forms unless the compact plan left
+a specific question unanswered.
 
 Use `--check <recipe> [args...]` to validate resolved command forms, nested `@recipe` / `@path:recipe`, cycles, workdir, and log paths without running. It skips `requires` host tool availability; execution checks that before sandbox setup. Add `--shell` to parse expanded sh/bash after placeholder expansion and shell prelude insertion.
 
@@ -179,7 +207,10 @@ node_commands = { eslint = "eslint@^9" }
 
 Requirement names are static, not placeholders. Included/overriding recipes replace inherited `requires` block as a whole.
 
-Completion criterion: use `shadowtree --print --expanded <recipe>` before host-tool-dependent recipes; use `shadowtree --check --shell <recipe>` for references and expanded shell syntax.
+Completion criterion: let execution check declared host tools. Use
+`--print --expanded` only to inspect unclear requirements in a custom or
+overridden recipe; use `--check --shell` only when its references or expanded
+shell syntax need validation.
 
 ## Command Forms
 
@@ -371,7 +402,9 @@ vet        for each @go-modules: go vet ./...
 
 `fix`, `fmt`, `tidy` unsandboxed by default. Module-wide Go built-ins use `for_each = "@go-modules"` and `workdir = "{item}"`; `./...` evaluates inside each module, not workspace root. `tidy` also runs `go work sync` when `go.work` exists. `build` exposes optional positional `pkg` from `@go-main-packages`; `install` exposes named `ldflags` defaulting to `-s -w` plus optional positional `pkg` from `@go-main-packages`; other package-style built-ins expose `pkg` from `@go-packages`; `fix` available when common `go.mod` directive > `1.26`; `fmt` exposes optional positional `target` from `@go-packages` plus `@glob "*.go"`. `run` has `cwd` default `.` plus required positional `command` with `rel_path`; `cwd` completes from `@go-modules`; `command` from `@go-main-packages` plus `@glob "*.go"`. Config can override built-in fields; set built-in `for_each` and `workdir` explicitly to keep module fan-out.
 
-Completion criterion: confirm built-in/override with `shadowtree recipes` or `shadowtree --print <recipe>` before relying on it.
+Completion criterion: known built-ins need no per-recipe probe. If config defines
+the same recipe, inspect that override and use `help` or `--print` only for facts
+the config does not make clear.
 
 ## Node Profile
 
