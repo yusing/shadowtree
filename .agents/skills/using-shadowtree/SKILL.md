@@ -101,6 +101,11 @@ interpreted as proof that execution capability exists. Execution and `--check`
 probe Docker, Podman, then nerdctl; read stderr for candidate diagnostics and
 the selected runtime.
 
+For a system recipe, expanded plans expose the pinned `system.base_image`, five
+immutable stages, context hashes, and any dependency-seed contract without
+building. Treat `requires.system_packages` as image inputs, not host package
+installation instructions.
+
 - Expect ordinary sandbox writes to disappear after the run.
 - Trust recipe-local `sync_out` declared by the existing recipe.
 - Add invocation-local sync-out only when the requested output must persist:

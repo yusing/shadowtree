@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ const (
 )
 
 type commandRunner func(context.Context, string, ...string) ([]byte, error)
+type streamingCommandRunner func(context.Context, io.Writer, string, ...string) ([]byte, error)
 
 type capabilityProbe struct {
 	phase           string
@@ -45,9 +47,10 @@ type capabilityProbe struct {
 var capabilityProbes = []capabilityProbe{
 	{phase: "engine reachability", args: []string{"info"}},
 	{phase: "image inspection", args: []string{"image", "inspect", "--help"}},
-	{phase: "image building", args: []string{"build", "--help"}},
+	{phase: "image tagging", args: []string{"image", "tag", "--help"}},
+	{phase: "image building", args: []string{"build", "--help"}, requiredOptions: []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg"}},
 	{phase: "labelled volumes", args: []string{"volume", "create", "--help"}, requiredOptions: []string{"--label"}},
-	{phase: "nested and read-only mounts, UID/GID, and automatic removal", args: []string{"run", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--rm"}},
+	{phase: "nested and read-only mounts, UID/GID, and automatic removal", args: []string{"run", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--rm", "--platform"}},
 	{phase: "container signalling", args: []string{"kill", "--help"}, requiredOptions: []string{"--signal"}},
 }
 
@@ -110,7 +113,45 @@ func directCommand(ctx context.Context, executable string, args ...string) ([]by
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
+	if cause := context.Cause(ctx); cause != nil {
+		return output.buf.Bytes(), cause
+	}
 	return output.buf.Bytes(), err
+}
+
+func directStreamingCommand(ctx context.Context, progress io.Writer, executable string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.WaitDelay = probeWaitDelay
+	output := commandOutput{progress: progress}
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if cause := context.Cause(ctx); cause != nil {
+		return output.Bytes(), cause
+	}
+	return output.Bytes(), err
+}
+
+type commandOutput struct {
+	mu       sync.Mutex
+	progress io.Writer
+	buf      boundedBuffer
+}
+
+func (output *commandOutput) Write(p []byte) (int, error) {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	_, _ = output.buf.Write(p)
+	if output.progress == nil {
+		return len(p), nil
+	}
+	return output.progress.Write(p)
+}
+
+func (output *commandOutput) Bytes() []byte {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return bytes.Clone(output.buf.buf.Bytes())
 }
 
 type boundedBuffer struct {

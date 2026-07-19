@@ -940,13 +940,22 @@ func TestPrintRecipeHelpShowsSystemSandboxModeAndSyncOut(t *testing.T) {
 		Cmd:       recipe.Command{"go", "build"},
 		Sandboxed: new(recipe.SandboxModeSystem),
 		SyncOut:   []string{"bin/app"},
+		System:    &recipe.SystemConfig{BaseImage: "golang:1.26.4-bookworm"},
+		Requires:  recipe.Requirements{SystemPackages: []string{"git", "ca-certificates"}},
 	}, recipeHelpOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	if !strings.Contains(text, "- Sandboxed:\n\n    system") || !strings.Contains(text, "- Sync out:\n\n    bin/app") {
-		t.Fatalf("recipe help missing system mode or sync-out:\n%s", text)
+	for _, want := range []string{
+		"- Sandboxed:\n\n    system",
+		"- Sync out:\n\n    bin/app",
+		"- System base image:\n\n    golang:1.26.4-bookworm",
+		"system: ca-certificates, git",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("recipe help missing %q:\n%s", want, text)
+		}
 	}
 }
 

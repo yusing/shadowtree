@@ -2,9 +2,11 @@ package recipe
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -32,6 +34,32 @@ type nodePackageManagerLockfile struct {
 	file string
 	pm   string
 }
+
+// NodePackageManagerInfo is the canonical Node/Bun tooling selection.
+type NodePackageManagerInfo struct {
+	Name       string
+	Version    string
+	Identity   string
+	Provenance string
+	ProjectDir string
+	Declared   bool
+}
+
+var nodePackageManagerReleaseVersions = map[string]string{
+	"npm":  "11.4.2",
+	"pnpm": "10.12.1",
+	"yarn": "4.9.2",
+	"bun":  "1.2.18",
+}
+
+const (
+	// DefaultNodeRelease is the release-pinned system-image Node default.
+	DefaultNodeRelease = "24.4.1"
+	// DefaultNodeImage is the canonical slim image for DefaultNodeRelease.
+	DefaultNodeImage = "node:" + DefaultNodeRelease + "-bookworm-slim"
+)
+
+var exactNodePackageManagerVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
 var frameworkDependencyOrder = []string{"next", "vite", "nuxt", "astro", "@sveltejs/kit"}
 
@@ -102,7 +130,112 @@ func detectNodePackageManager(dir, packageManager string) string {
 
 // NodePackageManager reports the package manager Shadowtree detects from dir.
 func NodePackageManager(dir string) string {
-	return loadNodeProject(dir).PM
+	info, err := ResolveNodePackageManager(dir)
+	if err != nil {
+		return loadNodeProject(dir).PM
+	}
+	return info.Name
+}
+
+// ResolveNodePackageManager returns name, exact version, provenance, and the
+// project directory using packageManager, lockfile, then npm precedence.
+func ResolveNodePackageManager(dir string) (NodePackageManagerInfo, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return NodePackageManagerInfo{}, err
+	}
+	boundary := filepath.VolumeName(abs) + string(filepath.Separator)
+	return resolveNodePackageManager(abs, boundary)
+}
+
+// ResolveNodePackageManagerWithin confines manager discovery to one canonical project.
+func ResolveNodePackageManagerWithin(dir, boundary string) (NodePackageManagerInfo, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return NodePackageManagerInfo{}, err
+	}
+	absBoundary, err := filepath.Abs(boundary)
+	if err != nil {
+		return NodePackageManagerInfo{}, err
+	}
+	if rel, err := filepath.Rel(absBoundary, absDir); err != nil || !filepath.IsLocal(rel) {
+		return NodePackageManagerInfo{}, fmt.Errorf("Node workdir %q is outside canonical project %q", absDir, absBoundary)
+	}
+	return resolveNodePackageManager(absDir, absBoundary)
+}
+
+func resolveNodePackageManager(dir, boundary string) (NodePackageManagerInfo, error) {
+	projectDir := dir
+	for current := dir; ; current = filepath.Dir(current) {
+		if info, err := os.Stat(filepath.Join(current, "package.json")); err == nil && !info.IsDir() {
+			projectDir = current
+			break
+		}
+		if current == boundary {
+			break
+		}
+	}
+	for current := projectDir; ; current = filepath.Dir(current) {
+		path := filepath.Join(current, "package.json")
+		data, err := os.ReadFile(path)
+		if err == nil {
+			var declaration struct {
+				PackageManager string `json:"packageManager"`
+			}
+			if err := json.Unmarshal(data, &declaration); err != nil {
+				return NodePackageManagerInfo{}, fmt.Errorf("parse %s: %w", path, err)
+			}
+			if declaration.PackageManager != "" {
+				name, version, ok, err := parseNodePackageManager(declaration.PackageManager)
+				if err != nil {
+					return NodePackageManagerInfo{}, fmt.Errorf("packageManager in %s: %w", path, err)
+				}
+				if !ok {
+					return NodePackageManagerInfo{}, fmt.Errorf("packageManager in %s uses unsupported manager %q", path, declaration.PackageManager)
+				}
+				if version == "" {
+					version = nodePackageManagerReleaseVersions[name]
+				}
+				return NodePackageManagerInfo{Name: name, Version: version, Identity: name + "@" + version, Provenance: path + "#packageManager", ProjectDir: current, Declared: true}, nil
+			}
+		}
+		parent := filepath.Dir(current)
+		if current == boundary || parent == current {
+			break
+		}
+	}
+	lockfiles := []nodePackageManagerLockfile{
+		{file: "pnpm-lock.yaml", pm: "pnpm"}, {file: "yarn.lock", pm: "yarn"},
+		{file: "bun.lockb", pm: "bun"}, {file: "bun.lock", pm: "bun"},
+		{file: "package-lock.json", pm: "npm"}, {file: "npm-shrinkwrap.json", pm: "npm"},
+	}
+	for current := projectDir; ; current = filepath.Dir(current) {
+		for _, lockfile := range lockfiles {
+			path := filepath.Join(current, lockfile.file)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				version := nodePackageManagerReleaseVersions[lockfile.pm]
+				return NodePackageManagerInfo{Name: lockfile.pm, Version: version, Identity: lockfile.pm + "@" + version, Provenance: path, ProjectDir: current}, nil
+			}
+		}
+		parent := filepath.Dir(current)
+		if current == boundary || parent == current {
+			break
+		}
+	}
+	version := nodePackageManagerReleaseVersions["npm"]
+	return NodePackageManagerInfo{Name: "npm", Version: version, Identity: "npm@" + version, Provenance: "shadowtree-default", ProjectDir: projectDir}, nil
+}
+
+func parseNodePackageManager(value string) (name, version string, ok bool, err error) {
+	name, version, _ = strings.Cut(value, "@")
+	name = strings.ToLower(name)
+	if _, supported := nodePackageManagerReleaseVersions[name]; !supported {
+		return "", "", false, nil
+	}
+	if version != "" && !exactNodePackageManagerVersion.MatchString(version) {
+		return "", "", false, fmt.Errorf("%s requires an exact version, got %q", name, version)
+	}
+	return name, version, true, nil
 }
 
 // NodeInstallCommandForPackageManager returns package-manager-specific guidance

@@ -20,7 +20,10 @@ writes already target the host checkout.
 
 `sandboxed = "system"` is a distinct sandboxed lifecycle. It retains sync-out
 semantics and never falls back to the ordinary disposable workspace or direct
-host execution. Static inspection does not probe a runtime.
+host execution. Static inspection does not probe a runtime. The current system
+backend can resolve, inspect, and build the immutable image chain, but container
+phase execution and sync-out are not available until the lifecycle increment is
+complete; execution fails explicitly at that boundary.
 
 ## Failure Behavior
 

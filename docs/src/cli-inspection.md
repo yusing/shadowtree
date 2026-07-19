@@ -77,7 +77,10 @@ are checked only before real execution.
 
 For `sandboxed = "system"`, `--check` first performs the bounded host-capability
 probe used by execution: Docker, Podman, then nerdctl. Detection progress and
-candidate failures use stderr. Static `--print` remains runtime-free.
+candidate failures use stderr. It also validates the complete immutable image
+plan without building images. Static `--print` remains runtime-free, while
+`--print --expanded` includes stage keys, metadata, context hashes, dependency
+seed contracts, and generated Containerfiles.
 
 `--check --shell` additionally parses expanded `sh` and `bash` script bodies
 after placeholder expansion and shell prelude insertion.

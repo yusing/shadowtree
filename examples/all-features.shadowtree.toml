@@ -248,3 +248,9 @@ cmd = "printf 'unsandboxed demo only\\n'"
 help = "Exercise static system-sandbox planning without probing a runtime."
 sandboxed = "system"
 cmd = "printf 'system sandbox demo only\\n'"
+
+[recipes.system-mode-demo.system]
+base_image = "ubuntu:24.04"
+
+[recipes.system-mode-demo.requires]
+system_packages = ["ca-certificates"]

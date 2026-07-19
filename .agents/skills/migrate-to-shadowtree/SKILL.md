@@ -68,6 +68,7 @@ For every legacy surface, record its destination before implementation:
 | Selected generated output | Recipe-local `sync_out` |
 | Intentional direct checkout or host mutation | `sandboxed = false` |
 | Explicit immutable system-container workflow | `sandboxed = "system"` |
+| OS packages required inside that workflow | `requires.system_packages` |
 | Shared literal or environment setting | `vars` or `env` |
 | Persistent run output | Recipe logging |
 

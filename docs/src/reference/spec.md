@@ -21,6 +21,14 @@ removal operations. Probes are bounded and state-free, report progress on
 stderr, continue after an unusable installed candidate, and aggregate all
 candidate failures when none is usable.
 
+System images form five deterministic immutable stages above a pinned external
+profile base: base metadata, exact tooling, normalized system packages, exact
+recipe packages, and locked project dependencies. Tags and full ownership/key
+labels are validated before reuse, and collisions fail without overwrite.
+`system.base_image` is a literal non-`latest` override valid only in system
+mode. Locked preparation uses manifest-only contexts and disables Node/Bun
+lifecycle scripts; unlocked projects skip automatic dependency preparation.
+
 This document describes the behavior currently implemented by the project.
 
 ## Goals

@@ -24,6 +24,10 @@ sync_out = ["internal/generated"]
   the host checkout directly, and `"system"` selects the system-container
   backend without fallback.
 - `sync_out`: sandboxed paths copied back to the host checkout after success.
+- `system.base_image`: optional literal pinned image override, valid only for
+  `sandboxed = "system"`.
+- `requires.system_packages`: exact distribution packages owned by the system
+  image's system-packages stage.
 - `for_each`: value provider that runs the main command once per candidate.
 - `workdir`: relative working directory for the main command.
 - `log`, `log_stages`, `log_tee`: recipe log output.

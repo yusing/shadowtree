@@ -83,6 +83,42 @@ func TestSandboxedSchemaHasBooleanAndSystemContract(t *testing.T) {
 	}
 }
 
+func TestSystemImageSchemaSurfacesMatchRuntimeContract(t *testing.T) {
+	data, err := os.ReadFile("shadowtree.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	definitions := schemaObject(t, schema, "definitions")
+	recipeDefinition := schemaObject(t, definitions, "recipe")
+	recipeProperties := schemaObject(t, recipeDefinition, "properties")
+	if got := schemaObject(t, recipeProperties, "system")["$ref"]; got != "#/definitions/systemConfig" {
+		t.Fatalf("recipe.system ref = %#v", got)
+	}
+	requirements := schemaObject(t, definitions, "requirements")
+	requirementProperties := schemaObject(t, requirements, "properties")
+	systemPackages := schemaObject(t, requirementProperties, "system_packages")
+	if unique, ok := systemPackages["uniqueItems"].(bool); !ok || !unique {
+		t.Fatalf("system_packages uniqueItems = %#v", systemPackages["uniqueItems"])
+	}
+	items := schemaObject(t, systemPackages, "items")
+	if got := items["pattern"]; got != `^[A-Za-z0-9][A-Za-z0-9+.:~_-]*(=[A-Za-z0-9][A-Za-z0-9+.:~_-]*)?$` {
+		t.Fatalf("system_packages pattern = %#v", got)
+	}
+	systemConfig := schemaObject(t, definitions, "systemConfig")
+	if additional, ok := systemConfig["additionalProperties"].(bool); !ok || additional {
+		t.Fatalf("systemConfig additionalProperties = %#v", systemConfig["additionalProperties"])
+	}
+	baseImage := schemaObject(t, schemaObject(t, systemConfig, "properties"), "base_image")
+	constraints, ok := baseImage["allOf"].([]any)
+	if !ok || len(constraints) != 3 {
+		t.Fatalf("base_image constraints = %#v, want literal, non-latest, and tag-or-digest rules", baseImage["allOf"])
+	}
+}
+
 func schemaPatternProperty(t *testing.T, definitionName string) string {
 	t.Helper()
 	data, err := os.ReadFile("shadowtree.schema.json")

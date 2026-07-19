@@ -136,6 +136,10 @@
           "description": "Execution isolation: true or omitted uses a disposable workspace, false runs in the host checkout, and \"system\" selects a system container runtime.",
           "default": true
         },
+        "system": {
+          "$ref": "#/definitions/systemConfig",
+          "description": "System-container image inputs. Valid only when the effective sandboxed mode is \"system\"."
+        },
         "for_each": {
           "$ref": "#/definitions/command",
           "description": "Optional value-provider command. When set, Shadowtree runs cmd once per candidate. Supports the same builtins as argument values, such as @enum, @lines, @glob, @go-modules, @go-packages, @go-main-packages, @recipes, and @vars."
@@ -196,6 +200,12 @@
           "$ref": "#/definitions/requirementCommandList",
           "description": "Optional executable basenames, not paths. Missing entries print one warning and the recipe continues."
         },
+        "system_packages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9+.:~_-]*(=[A-Za-z0-9][A-Za-z0-9+.:~_-]*)?$" },
+          "description": "Exact distribution package names installed by the system-packages image stage."
+        },
         "go_commands": {
           "$ref": "#/definitions/requirementPackageMap",
           "description": "Required Go-installable tools keyed by executable name. Missing entries fail with go install guidance."
@@ -206,8 +216,27 @@
         }
       },
       "x-taplo": {
-        "initKeys": ["commands", "optional_commands", "go_commands", "node_commands"]
+        "initKeys": ["commands", "optional_commands", "system_packages", "go_commands", "node_commands"]
       }
+    },
+    "systemConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base_image": {
+          "type": "string",
+          "allOf": [
+            { "pattern": "^[^{}\\s]+$" },
+            { "not": { "pattern": ":latest$" } },
+            { "anyOf": [
+              { "pattern": ":[^/]+$" },
+              { "pattern": "@sha256:[0-9a-fA-F]{64}$" }
+            ] }
+          ],
+          "description": "Literal non-latest base image tag or digest. Runtime arguments and variables cannot select it."
+        }
+      },
+      "x-taplo": { "initKeys": ["base_image"] }
     },
     "requirementCommandList": {
       "type": "array",

@@ -147,6 +147,7 @@ type Recipe struct {
 	Shell        string                  `toml:"shell"`
 	ShellPrelude string                  `toml:"shell_prelude"`
 	Sandboxed    *SandboxMode            `toml:"sandboxed"`
+	System       *SystemConfig           `toml:"system"`
 	ForEach      Command                 `toml:"for_each"`
 	Workdir      string                  `toml:"workdir"`
 	Cmd          Command                 `toml:"cmd"`
@@ -165,8 +166,14 @@ type Recipe struct {
 type Requirements struct {
 	Commands         []string          `toml:"commands"`
 	OptionalCommands []string          `toml:"optional_commands"`
+	SystemPackages   []string          `toml:"system_packages"`
 	GoCommands       map[string]string `toml:"go_commands"`
 	NodeCommands     map[string]string `toml:"node_commands"`
+}
+
+// SystemConfig selects system-container image inputs owned by the recipe.
+type SystemConfig struct {
+	BaseImage string `toml:"base_image"`
 }
 
 type Argument struct {
@@ -582,6 +589,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.Sandboxed != nil {
 		out.Sandboxed = new(*override.Sandboxed)
 	}
+	if override.System != nil {
+		out.System = &SystemConfig{BaseImage: override.System.BaseImage}
+	}
 	if len(override.ForEach) > 0 {
 		out.ForEach = slices.Clone(override.ForEach)
 	}
@@ -619,6 +629,7 @@ func MergeRecipe(base, override Recipe) Recipe {
 func (req Requirements) Empty() bool {
 	return len(req.Commands) == 0 &&
 		len(req.OptionalCommands) == 0 &&
+		len(req.SystemPackages) == 0 &&
 		len(req.GoCommands) == 0 &&
 		len(req.NodeCommands) == 0
 }
@@ -627,6 +638,7 @@ func cloneRequirements(req Requirements) Requirements {
 	return Requirements{
 		Commands:         slices.Clone(req.Commands),
 		OptionalCommands: slices.Clone(req.OptionalCommands),
+		SystemPackages:   slices.Clone(req.SystemPackages),
 		GoCommands:       maps.Clone(req.GoCommands),
 		NodeCommands:     maps.Clone(req.NodeCommands),
 	}
@@ -723,6 +735,9 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		return Resolved{}, fmt.Errorf("recipe %q sync_out: %s is not supported in sync_out", name, variadicArgsPlaceholder)
 	}
 	sandboxMode := RecipeSandboxMode(rec)
+	if rec.System != nil && sandboxMode != SandboxModeSystem {
+		return Resolved{}, fmt.Errorf("recipe %q system settings require sandboxed = %q", name, SandboxModeSystem)
+	}
 	var syncOut []string
 	if sandboxMode != SandboxModeHost {
 		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values, nil)
@@ -933,6 +948,9 @@ func ValidateConfig(cfg Config) error {
 		if err := validateRequirements(rec.Requires); err != nil {
 			return prefixConfigPath(fmt.Errorf("recipe %q requires: %w", name, err), err, "recipes", name, "requires")
 		}
+		if rec.System != nil && rec.Sandboxed != nil && *rec.Sandboxed != SandboxModeSystem {
+			return configTablePathError(fmt.Errorf("recipe %q system settings require sandboxed = %q", name, SandboxModeSystem), "recipes", name, "system")
+		}
 		if err := validateVarsMapAt(fmt.Sprintf("recipe %q vars", name), []string{"recipes", name, "vars"}, rec.Vars); err != nil {
 			return err
 		}
@@ -1004,6 +1022,9 @@ func validateRequirements(req Requirements) error {
 	if err := validateRequirementList("optional_commands", req.OptionalCommands); err != nil {
 		return err
 	}
+	if err := validateSystemPackages(req.SystemPackages); err != nil {
+		return err
+	}
 	if err := validateInstallableRequirements("go_commands", req.GoCommands, required); err != nil {
 		return err
 	}
@@ -1014,6 +1035,21 @@ func validateRequirements(req Requirements) error {
 		if source, ok := required[name]; ok {
 			return configValuePathError(fmt.Errorf("optional_commands overlaps required tool %q from %s", name, source), "optional_commands")
 		}
+	}
+	return nil
+}
+
+func validateSystemPackages(packages []string) error {
+	validPackage := regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*(?:=[A-Za-z0-9][A-Za-z0-9+.:~_-]*)?$`)
+	seen := map[string]struct{}{}
+	for i, pkg := range packages {
+		if strings.TrimSpace(pkg) != pkg || !validPackage.MatchString(pkg) {
+			return configValuePathError(fmt.Errorf("system_packages[%d] must be one non-empty package name", i), "system_packages")
+		}
+		if _, ok := seen[pkg]; ok {
+			return configValuePathError(fmt.Errorf("system_packages[%d] duplicates %q", i, pkg), "system_packages")
+		}
+		seen[pkg] = struct{}{}
 	}
 	return nil
 }

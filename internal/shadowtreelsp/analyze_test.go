@@ -1154,6 +1154,22 @@ sandboxed = `
 	assertLabels(t, items, "false", "system", "true")
 }
 
+func TestCompletionsIncludeSystemImageAndPackageKeys(t *testing.T) {
+	for name, text := range map[string]string{
+		"system":   "[recipes.test.system]\n",
+		"requires": "[recipes.test.requires]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
+			if name == "system" {
+				assertLabels(t, items, "base_image")
+			} else {
+				assertLabels(t, items, "system_packages")
+			}
+		})
+	}
+}
+
 func TestCompletionsIncludeRustBuiltinsWhenConfigSetsProfile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {

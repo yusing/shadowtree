@@ -142,6 +142,8 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   host location directly.
 - Set `sandboxed = "system"` only for the explicit system-container contract;
   do not use runtime names or truthy string aliases.
+- Use `system.base_image` only for a literal pinned non-`latest` override, and
+  declare distribution packages through `requires.system_packages`.
 - Never define top-level `sync_out`.
 - Prefer narrow sync-out paths; a selected path missing in the sandbox mirrors
   as a host deletion.

@@ -10,6 +10,7 @@ import (
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/scriptref"
+	"github.com/yusing/shadowtree/internal/systemsandbox"
 )
 
 func validatePlan(ctx context.Context, options Options) error {
@@ -18,7 +19,7 @@ func validatePlan(ctx context.Context, options Options) error {
 
 func validateResolvedPlan(ctx context.Context, options Options, stack []string) error {
 	resolved := options.Resolved
-	if err := validateExecutionMode(ctx, resolved, options.Stderr); err != nil {
+	if err := validateSystemCheck(ctx, options); err != nil {
 		return err
 	}
 	if resolved.LogPath != "" {
@@ -48,6 +49,23 @@ func validateResolvedPlan(ctx context.Context, options Options, stack []string) 
 		if err := validateCommandReferences(ctx, options, fmt.Sprintf("post[%d]", i), command.Cmd, stack); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateSystemCheck(ctx context.Context, options Options) error {
+	if options.Resolved.SandboxMode != recipe.SandboxModeSystem {
+		return nil
+	}
+	if _, err := systemsandbox.Detect(ctx, options.Stderr); err != nil {
+		return fmt.Errorf("recipe %q system runtime detection: %w", options.Resolved.Name, err)
+	}
+	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	if err != nil {
+		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+	}
+	if _, err := systemsandbox.PlanImages(resolved, options.SourceDir); err != nil {
+		return fmt.Errorf("recipe %q system image plan: %w", options.Resolved.Name, err)
 	}
 	return nil
 }

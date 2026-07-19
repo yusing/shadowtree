@@ -149,6 +149,13 @@ identity, signalling, and cleanup operations. Detection is bounded, reports
 progress on stderr, and creates no runtime or workspace state. It never falls
 back to workspace or host execution.
 
+System mode resolves a pinned profile image and five immutable content-keyed
+stages for base metadata, tooling, system packages, recipe tools, and locked
+project dependencies. `system.base_image` accepts a literal non-`latest`
+override; `requires.system_packages` selects normalized distribution packages.
+Expanded static plans expose every generated Containerfile without contacting
+the runtime.
+
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle
 stages, and recipe references are documented in the
 [manual](https://yusing.github.io/shadowtree/).

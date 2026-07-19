@@ -19,6 +19,43 @@ and reports progress on stderr. Unusable candidates are diagnosed before the
 next candidate is tried. Detection creates no image, volume, workspace, or
 container, and system mode never falls back.
 
+System images use a deterministic lower-to-higher chain: pinned external base,
+base metadata, profile tooling, normalized `requires.system_packages`, exact
+recipe tool packages, and locked project dependencies. Every immutable stage
+has a content key, canonical local tag, complete ownership labels, and its
+lower-stage key as an input. Existing tags are reused only when all expected
+labels match; collisions fail without overwriting the image.
+
+Profiles select pinned Debian/Ubuntu slim defaults. A recipe may set a literal
+non-`latest` override only in system mode:
+
+- Go uses an exact `toolchain` directive, the documented `1.26.4` release for
+  the supported `go 1.26` directive, or fails with `system.base_image` guidance
+  for an unsupported unpinned minor.
+- Node uses `node:24.4.1-bookworm-slim`; exact npm, pnpm, and Yarn declarations
+  select verified tooling, while Bun selects its exact slim release image.
+- Rust uses the exact resolved Rust release and verifies any declared host
+  qualifier against the selected Linux platform.
+- A recipe without a profile uses `ubuntu:24.04`.
+
+```toml
+[recipes.build]
+sandboxed = "system"
+cmd = "go build ./..."
+
+[recipes.build.system]
+base_image = "golang:1.26.4-bookworm"
+
+[recipes.build.requires]
+system_packages = ["ca-certificates", "git"]
+```
+
+Locked dependency preparation runs only when the recognized lockfile exists:
+`go mod download`, `cargo fetch --locked`, npm/pnpm/Yarn/Bun frozen installs
+with package lifecycle scripts disabled. Generated Containerfiles use
+manifest-only contexts; ordinary project source and private credentials are
+never image inputs.
+
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
 workspace with the same isolation contract.

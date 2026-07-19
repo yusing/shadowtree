@@ -47,25 +47,25 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-004
     title: REQ-SBOX-004 — Build five ordered immutable stages
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-005
     title: REQ-SBOX-005 — Give each immutable stage one owner
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-006
     title: REQ-SBOX-006 — Prepare dependencies deterministically and safely
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-007
     title: REQ-SBOX-007 — Persist mutable build caches only within one project
     kind: requirement

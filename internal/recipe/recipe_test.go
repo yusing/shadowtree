@@ -912,6 +912,115 @@ func TestSandboxModeUnmarshalAcceptsOnlyThreeValueContract(t *testing.T) {
 	}
 }
 
+func TestSystemImageSettingsRequireEffectiveSystemMode(t *testing.T) {
+	_, err := Resolve("test", Recipe{Cmd: Command{"true"}, System: &SystemConfig{BaseImage: "ubuntu:24.04"}}, nil, nil, nil, "", "")
+	if err == nil || !strings.Contains(err.Error(), `require sandboxed = "system"`) {
+		t.Fatalf("Resolve() error = %v, want system-mode requirement", err)
+	}
+	resolved, err := Resolve("test", Recipe{
+		Cmd:       Command{"true"},
+		Sandboxed: new(SandboxModeSystem),
+		System:    &SystemConfig{BaseImage: "ubuntu:24.04"},
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Recipe.System == nil || resolved.Recipe.System.BaseImage != "ubuntu:24.04" {
+		t.Fatalf("system = %#v", resolved.Recipe.System)
+	}
+}
+
+func TestMergeRecipePreservesAndOverridesSystemImageSettings(t *testing.T) {
+	base := Recipe{Sandboxed: new(SandboxModeSystem), System: &SystemConfig{BaseImage: "ubuntu:24.04"}}
+	if got := MergeRecipe(base, Recipe{}).System.BaseImage; got != "ubuntu:24.04" {
+		t.Fatalf("inherited base = %q", got)
+	}
+	if got := MergeRecipe(base, Recipe{System: &SystemConfig{BaseImage: "debian:12.11-slim"}}).System.BaseImage; got != "debian:12.11-slim" {
+		t.Fatalf("overridden base = %q", got)
+	}
+}
+
+func TestValidateRequirementsRejectsInvalidSystemPackages(t *testing.T) {
+	for _, packages := range [][]string{{""}, {"lib ssl"}, {"git", "git"}} {
+		err := ValidateConfig(Config{Recipes: map[string]Recipe{"test": {Cmd: Command{"true"}, Requires: Requirements{SystemPackages: packages}}}})
+		if err == nil || !strings.Contains(err.Error(), "system_packages") {
+			t.Fatalf("ValidateConfig(%q) error = %v", packages, err)
+		}
+	}
+}
+
+func TestResolveGoToolchainUsesExactToolchainAndPinnedDirectiveDefault(t *testing.T) {
+	for name, content := range map[string]string{
+		"toolchain": "module example.com/app\n\ngo 1.26\ntoolchain go1.26.7\n",
+		"directive": "module example.com/app\n\ngo 1.26\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "go.mod")
+			writeFile(t, path, content)
+			got, err := ResolveGoToolchain(dir, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := DefaultGoToolchain
+			if name == "toolchain" {
+				want = "1.26.7"
+			}
+			if got.Version != want || !strings.HasPrefix(got.Provenance, path+"#") {
+				t.Fatalf("ResolveGoToolchain = %#v, want %s from %s", got, want, path)
+			}
+		})
+	}
+}
+
+func TestResolveGoToolchainRejectsUnsupportedUnpinnedDirective(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
+	_, err := ResolveGoToolchain(dir, dir)
+	if err == nil || !strings.Contains(err.Error(), "system.base_image") {
+		t.Fatalf("ResolveGoToolchain error = %v, want pinned-base guidance", err)
+	}
+}
+
+func TestResolveNodePackageManagerUsesAncestorDeclarationBeforeLockfile(t *testing.T) {
+	root := t.TempDir()
+	member := filepath.Join(root, "packages", "app")
+	if err := os.MkdirAll(member, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "package.json"), `{"packageManager":"pnpm@10.12.1"}`)
+	writeFile(t, filepath.Join(member, "package.json"), `{}`)
+	writeFile(t, filepath.Join(member, "yarn.lock"), "lock")
+	got, err := ResolveNodePackageManager(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "pnpm" || got.Version != "10.12.1" || got.ProjectDir != root || !got.Declared {
+		t.Fatalf("ResolveNodePackageManager = %#v", got)
+	}
+}
+
+func TestResolveNodePackageManagerRejectsNonExactDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"pnpm@^10"}`)
+	_, err := ResolveNodePackageManager(dir)
+	if err == nil || !strings.Contains(err.Error(), "exact version") {
+		t.Fatalf("ResolveNodePackageManager error = %v, want exact version rejection", err)
+	}
+}
+
+func TestResolveNodePackageManagerPreservesExactVersionIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"PnPm@10.12.1-RC.1+Build.7"}`)
+	got, err := ResolveNodePackageManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "pnpm" || got.Version != "10.12.1-RC.1+Build.7" || got.Identity != "pnpm@10.12.1-RC.1+Build.7" {
+		t.Fatalf("ResolveNodePackageManager = %#v, want normalized name and exact version identity", got)
+	}
+}
+
 func TestResolvePreservesSystemSandboxModeAndSyncOut(t *testing.T) {
 	got, err := Resolve("build", Recipe{
 		Cmd:       Command{"go", "build"},
@@ -3125,6 +3234,68 @@ func TestResolveRustProjectRejectsMalformedAndUnknownToolchains(t *testing.T) {
 				t.Fatalf("ResolveRustProject() error = %v, want path and %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestRustToolchainWithinDoesNotUseParentProjectOrToolchain(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	workdir := filepath.Join(project, "crate")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(parent, "Cargo.toml"), "[package]\nname = \"parent\"\nversion = \"0.1.0\"\n")
+	writeFile(t, filepath.Join(parent, RustToolchainFile), "1.95.0\n")
+	if _, err := RustToolchainWithin(workdir, project); err == nil || !strings.Contains(err.Error(), "canonical project") {
+		t.Fatalf("RustToolchainWithin error = %v, want in-project Cargo marker rejection", err)
+	}
+	writeFile(t, filepath.Join(project, "Cargo.toml"), "[package]\nname = \"project\"\nversion = \"0.1.0\"\n")
+	got, err := RustToolchainWithin(workdir, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != DefaultRustToolchain {
+		t.Fatalf("RustToolchainWithin = %q, want default %q instead of parent toolchain", got, DefaultRustToolchain)
+	}
+}
+
+func TestRustDependencyTargetPathsOwnsSafeManifestPlaceholders(t *testing.T) {
+	paths, err := RustDependencyTargetPaths(map[string][]byte{
+		"Cargo.toml":       []byte("[workspace]\nmembers = [\"crate\"]\n"),
+		"crate/Cargo.toml": []byte("[package]\nname = \"crate\"\nversion = \"0.1.0\"\n[lib]\npath = \"source/lib.rs\"\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"crate/src/lib.rs", "crate/src/main.rs", "crate/source/lib.rs"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("target paths = %#v, missing %q", paths, want)
+		}
+	}
+	_, err = RustDependencyTargetPaths(map[string][]byte{"Cargo.toml": []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n[lib]\npath = \"../outside.rs\"\n")})
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("RustDependencyTargetPaths error = %v, want confinement rejection", err)
+	}
+}
+
+func TestRustDependencyManifestPathsSelectsWorkspaceMembersAndPathDependencies(t *testing.T) {
+	files := map[string][]byte{
+		"Cargo.toml":            []byte("[workspace]\nmembers = [\"crates/*\"]\n"),
+		"crates/app/Cargo.toml": []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nlocal = { path = \"../../local\" }\n"),
+		"local/Cargo.toml":      []byte("[package]\nname = \"local\"\nversion = \"0.1.0\"\n"),
+		"unrelated/Cargo.toml":  []byte("[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\n"),
+	}
+	got, err := RustDependencyManifestPaths(files, "crates/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Cargo.toml", "crates/app/Cargo.toml", "local/Cargo.toml"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("manifest paths = %#v, missing %q", got, want)
+		}
+	}
+	if slices.Contains(got, "unrelated/Cargo.toml") {
+		t.Fatalf("manifest paths include unrelated project: %#v", got)
 	}
 }
 

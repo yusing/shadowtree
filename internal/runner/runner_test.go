@@ -3141,6 +3141,7 @@ func TestPrintPlanHidesUnsandboxedSyncOut(t *testing.T) {
 }
 
 func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
+	t.Setenv("PATH", "")
 	resolved, err := recipe.Resolve("test", recipe.Recipe{
 		Cmd:       recipe.Command{"go", "test", "./..."},
 		Sandboxed: new(recipe.SandboxModeSystem),
@@ -3154,12 +3155,46 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), PrintOnly: true, PrintExpanded: expanded, Stdout: &stdout}); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n"} {
+			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: golang:1.26.4-bookworm\n", "image_stage.base.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Fatalf("plan missing %q:\n%s", want, stdout.String())
 				}
 			}
+			if expanded && !strings.Contains(stdout.String(), "image_stage.base.containerfile: |\n") {
+				t.Fatalf("expanded plan missing Containerfile:\n%s", stdout.String())
+			}
 		})
+	}
+}
+
+func TestSystemSandboxExpandedPlanPrintsDependencyInputsWithoutRuntime(t *testing.T) {
+	t.Setenv("PATH", "")
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"packageManager":"pnpm@10.12.1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", recipe.NodeProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, PrintOnly: true, PrintExpanded: true, Stdout: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"image_stage.dependencies.context.package.json.sha256:",
+		"image_stage.dependencies.context.pnpm-lock.yaml.sha256:",
+		"image_stage.dependencies.metadata.manager: pnpm",
+		"image_stage.dependencies.metadata.manager_identity: pnpm@10.12.1",
+		"dependency_seed.manager: pnpm",
+		"dependency_seed.source: /opt/shadowtree/dependencies",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("expanded plan missing %q:\n%s", want, stdout.String())
+		}
 	}
 }
 
@@ -3193,8 +3228,11 @@ func TestSystemSandboxSelectsUsableRuntimeBeforeImageExecution(t *testing.T) {
 	writeExecutable(t, bin, "docker", `
 case "$*" in
   "volume create --help") printf '%s' '--label' ;;
-  "run --help") printf '%s' '--mount --read-only --user --rm' ;;
+	"build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
+  "run --help") printf '%s' '--mount --read-only --user --rm --platform' ;;
   "kill --help") printf '%s' '--signal' ;;
+  "image inspect --help") printf '%s' ok ;;
+  image\ inspect*) printf '%s' 'no such image' >&2; exit 1 ;;
   *) printf '%s' ok ;;
 esac`)
 	t.Setenv("PATH", bin)
@@ -3214,8 +3252,8 @@ esac`)
 	t.Cleanup(func() { newOverlayWorkspace = original })
 	var stderr bytes.Buffer
 	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: &stderr})
-	if err == nil || !strings.Contains(err.Error(), `selected system runtime "docker"`) || !strings.Contains(err.Error(), "image execution is not available yet") {
-		t.Fatalf("Run() error = %v, want selected-runtime boundary", err)
+	if err == nil || !strings.Contains(err.Error(), "system image build") {
+		t.Fatalf("Run() error = %v, want image-build boundary", err)
 	}
 	for _, want := range []string{"detecting system runtime docker", "selected system runtime docker"} {
 		if !strings.Contains(stderr.String(), want) {
@@ -3224,6 +3262,77 @@ esac`)
 	}
 	if called {
 		t.Fatal("system runtime detection created a workspace")
+	}
+}
+
+func TestSystemSandboxBuildsAllImagesBeforeLifecycleBoundary(t *testing.T) {
+	bin := t.TempDir()
+	state := filepath.Join(bin, "state")
+	if err := os.Mkdir(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, bin, "docker", `
+state="`+state+`"
+tag_file() {
+  encoded=$(printf '%s' "$1" | /usr/bin/tr '/:' '__')
+  printf '%s/%s' "$state" "$encoded"
+}
+case "$*" in
+  "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg'; exit 0 ;;
+  "volume create --help") printf '%s' '--label'; exit 0 ;;
+  "run --help") printf '%s' '--mount --read-only --user --rm --platform'; exit 0 ;;
+  "kill --help") printf '%s' '--signal'; exit 0 ;;
+  "image inspect --help"|"image tag --help"|"info") printf '%s' ok; exit 0 ;;
+esac
+if [ "$1 $2" = "image inspect" ]; then
+  for tag in "$@"; do :; done
+  file=$(tag_file "$tag")
+  if [ -f "$file" ]; then /bin/cat "$file"; else printf '%s' 'no such image' >&2; exit 1; fi
+elif [ "$1" = "build" ]; then
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tag) shift; tag=$1 ;;
+      --label)
+        shift
+        case "$1" in
+          shadowtree.owner=*) owner=${1#*=} ;;
+          shadowtree.stage=*) stage=${1#*=} ;;
+          shadowtree.key=*) key=${1#*=} ;;
+          shadowtree.parent-key=*) parent=${1#*=} ;;
+          shadowtree.platform=*) platform=${1#*=} ;;
+        esac
+        ;;
+    esac
+    shift
+  done
+  file=$(tag_file "$tag")
+  printf '{"shadowtree.owner":"%s","shadowtree.stage":"%s","shadowtree.key":"%s","shadowtree.parent-key":"%s","shadowtree.platform":"%s"}\n' "$owner" "$stage" "$key" "$parent" "$platform" > "$file"
+  printf 'built %s\n' "$stage" >&2
+elif [ "$1 $2" = "image tag" ]; then
+  source_file=$(tag_file "$3")
+  target_file=$(tag_file "$4")
+  /bin/cp "$source_file" "$target_file"
+else
+  printf 'unexpected docker invocation: %s\n' "$*" >&2
+  exit 1
+fi`)
+	t.Setenv("PATH", bin)
+	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: &stderr})
+	if err == nil || !strings.Contains(err.Error(), "system lifecycle execution is not available yet") {
+		t.Fatalf("Run() error = %v, want lifecycle boundary", err)
+	}
+	for _, stage := range []string{"base", "tooling", "system-packages", "recipe-packages", "dependencies"} {
+		if !strings.Contains(stderr.String(), "built "+stage+"\n") {
+			t.Fatalf("stderr missing build for %s:\n%s", stage, stderr.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "publishing recipe image alias") {
+		t.Fatalf("stderr missing final publication:\n%s", stderr.String())
 	}
 }
 
@@ -3239,6 +3348,31 @@ func TestSystemSandboxCheckDoesNotReportUnavailableBackendAsReady(t *testing.T) 
 	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), CheckOnly: true, Stdout: io.Discard, Stderr: io.Discard})
 	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
 		t.Fatalf("Run() error = %v, want system runtime detection failure", err)
+	}
+}
+
+func TestSystemSandboxCheckValidatesImagePlanWithoutBuilding(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "docker", `
+case "$*" in
+  "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
+  "volume create --help") printf '%s' '--label' ;;
+  "run --help") printf '%s' '--mount --read-only --user --rm --platform' ;;
+  "kill --help") printf '%s' '--signal' ;;
+  *) printf '%s' ok ;;
+esac`)
+	t.Setenv("PATH", bin)
+	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", recipe.GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), CheckOnly: true, Stdout: io.Discard, Stderr: &stderr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "selected system runtime docker") || strings.Contains(stderr.String(), "image stage") {
+		t.Fatalf("check stderr = %q", stderr.String())
 	}
 }
 

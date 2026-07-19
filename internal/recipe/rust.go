@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -66,6 +68,20 @@ type rustToolchainFile struct {
 	} `toml:"toolchain"`
 }
 
+type cargoTarget struct {
+	Name string `toml:"name"`
+	Path string `toml:"path"`
+}
+
+type cargoManifestTargets struct {
+	Package *struct{}     `toml:"package"`
+	Lib     *cargoTarget  `toml:"lib"`
+	Bin     []cargoTarget `toml:"bin"`
+	Example []cargoTarget `toml:"example"`
+	Test    []cargoTarget `toml:"test"`
+	Bench   []cargoTarget `toml:"bench"`
+}
+
 type cargoConfig struct {
 	Build struct {
 		Target string `toml:"target"`
@@ -87,6 +103,217 @@ func RustToolchain(dir string) (string, error) {
 		return "", err
 	}
 	return selection.toolchain, nil
+}
+
+// RustToolchainWithin validates the project marker and selects an exact
+// toolchain without walking outside boundary.
+func RustToolchainWithin(dir, boundary string) (string, error) {
+	selection, err := selectRustProjectWithin(dir, boundary)
+	if err != nil {
+		return "", err
+	}
+	return selection.toolchain, nil
+}
+
+// RustDependencyTargetPaths returns safe placeholder paths needed for Cargo to
+// parse a manifest-only workspace during locked dependency preparation.
+func RustDependencyTargetPaths(files map[string][]byte) ([]string, error) {
+	var paths []string
+	for manifestPath, data := range files {
+		if path.Base(manifestPath) != "Cargo.toml" {
+			continue
+		}
+		var manifest cargoManifestTargets
+		if _, err := toml.Decode(string(data), &manifest); err != nil {
+			return nil, fmt.Errorf("parse Cargo manifest %s: %w", manifestPath, err)
+		}
+		if manifest.Package == nil {
+			continue
+		}
+		manifestDir := path.Dir(manifestPath)
+		if manifestDir == "." {
+			manifestDir = ""
+		}
+		targets := []string{"src/lib.rs", "src/main.rs"}
+		if manifest.Lib != nil && manifest.Lib.Path != "" {
+			targets = append(targets, manifest.Lib.Path)
+		}
+		for _, group := range []struct {
+			targets []cargoTarget
+			dir     string
+		}{
+			{targets: manifest.Bin, dir: "src/bin"},
+			{targets: manifest.Example, dir: "examples"},
+			{targets: manifest.Test, dir: "tests"},
+			{targets: manifest.Bench, dir: "benches"},
+		} {
+			for _, target := range group.targets {
+				if target.Path != "" {
+					targets = append(targets, target.Path)
+				} else if target.Name != "" {
+					targets = append(targets, path.Join(group.dir, target.Name+".rs"))
+				}
+			}
+		}
+		for _, target := range targets {
+			targetPath := path.Clean(path.Join(manifestDir, target))
+			if !filepath.IsLocal(filepath.FromSlash(targetPath)) {
+				return nil, fmt.Errorf("Cargo manifest %s target path %q escapes the canonical project", manifestPath, target)
+			}
+			paths = append(paths, targetPath)
+		}
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths), nil
+}
+
+// RustDependencyManifestPaths returns the selected Cargo package/workspace
+// manifests and reachable local path-dependency manifests.
+func RustDependencyManifestPaths(files map[string][]byte, workdir string) ([]string, error) {
+	selected := nearestRustContextFile(files, workdir, "Cargo.toml")
+	if selected == "" {
+		return nil, errors.New("Rust profile requires an in-project Cargo.toml")
+	}
+	root := selected
+	for current := path.Dir(selected); ; current = path.Dir(current) {
+		if current == "." {
+			current = ""
+		}
+		candidate := path.Join(current, "Cargo.toml")
+		if current == "" {
+			candidate = "Cargo.toml"
+		}
+		if data, ok := files[candidate]; ok {
+			var marker struct {
+				Workspace *struct{} `toml:"workspace"`
+			}
+			if _, err := toml.Decode(string(data), &marker); err != nil {
+				return nil, fmt.Errorf("parse Cargo manifest %s: %w", candidate, err)
+			}
+			if marker.Workspace != nil {
+				root = candidate
+				break
+			}
+		}
+		if current == "" {
+			break
+		}
+	}
+	allowed := map[string]bool{selected: true, root: true}
+	if data := files[root]; data != nil {
+		var workspace struct {
+			Workspace struct {
+				Members []string `toml:"members"`
+				Exclude []string `toml:"exclude"`
+			} `toml:"workspace"`
+		}
+		if _, err := toml.Decode(string(data), &workspace); err != nil {
+			return nil, fmt.Errorf("parse Cargo workspace %s: %w", root, err)
+		}
+		rootDir := path.Dir(root)
+		if rootDir == "." {
+			rootDir = ""
+		}
+		for candidate := range files {
+			if path.Base(candidate) != "Cargo.toml" {
+				continue
+			}
+			dir := path.Dir(candidate)
+			if dir == "." {
+				dir = ""
+			}
+			rel := strings.TrimPrefix(strings.TrimPrefix(dir, rootDir), "/")
+			if rustWorkspaceMatch(rel, workspace.Workspace.Members) && !rustWorkspaceMatch(rel, workspace.Workspace.Exclude) {
+				allowed[candidate] = true
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for manifest := range maps.Clone(allowed) {
+			var decoded map[string]any
+			if _, err := toml.Decode(string(files[manifest]), &decoded); err != nil {
+				return nil, fmt.Errorf("parse Cargo manifest %s: %w", manifest, err)
+			}
+			manifestDir := path.Dir(manifest)
+			if manifestDir == "." {
+				manifestDir = ""
+			}
+			for _, local := range cargoLocalPaths(decoded) {
+				candidate := path.Clean(path.Join(manifestDir, local, "Cargo.toml"))
+				if !filepath.IsLocal(filepath.FromSlash(candidate)) {
+					return nil, fmt.Errorf("Cargo manifest %s local path %q escapes the canonical project", manifest, local)
+				}
+				if _, exists := files[candidate]; exists && !allowed[candidate] {
+					allowed[candidate] = true
+					changed = true
+				}
+			}
+		}
+	}
+	paths := slices.Sorted(maps.Keys(allowed))
+	return paths, nil
+}
+
+func nearestRustContextFile(files map[string][]byte, start, name string) string {
+	current := path.Clean(start)
+	if current == "." {
+		current = ""
+	}
+	for {
+		candidate := path.Join(current, name)
+		if current == "" {
+			candidate = name
+		}
+		if _, ok := files[candidate]; ok {
+			return candidate
+		}
+		if current == "" {
+			return ""
+		}
+		current = path.Dir(current)
+		if current == "." {
+			current = ""
+		}
+	}
+}
+
+func rustWorkspaceMatch(dir string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if ok, _ := path.Match(pattern, dir); ok {
+			return true
+		}
+		if strings.HasSuffix(pattern, "/**") && (dir == strings.TrimSuffix(pattern, "/**") || strings.HasPrefix(dir, strings.TrimSuffix(pattern, "**"))) {
+			return true
+		}
+	}
+	return false
+}
+
+func cargoLocalPaths(value any) []string {
+	var paths []string
+	var visit func(any)
+	visit = func(value any) {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		if local, ok := object["path"].(string); ok {
+			paths = append(paths, local)
+		}
+		for _, child := range object {
+			switch child := child.(type) {
+			case map[string]any:
+				visit(child)
+			case []map[string]any:
+				for _, item := range child {
+					visit(item)
+				}
+			}
+		}
+	}
+	visit(value)
+	return paths
 }
 
 // ResolveRustProject resolves one Cargo workspace/package and exact toolchain.
@@ -174,22 +401,47 @@ func ResolveRustProject(ctx context.Context, dir string, env, buildArgs []string
 }
 
 func selectRustProject(dir string) (rustSelection, error) {
+	return selectRustProjectWithin(dir, "")
+}
+
+func selectRustProjectWithin(dir, boundary string) (rustSelection, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return rustSelection{}, fmt.Errorf("resolve Rust directory %q: %w", dir, err)
 	}
-	manifest, ok := nearestFileUpward(absDir, "Cargo.toml")
+	absDir, err = filepath.EvalSymlinks(absDir)
+	if err != nil {
+		return rustSelection{}, fmt.Errorf("resolve Rust directory %q: %w", dir, err)
+	}
+	absBoundary := ""
+	if boundary != "" {
+		absBoundary, err = filepath.Abs(boundary)
+		if err != nil {
+			return rustSelection{}, fmt.Errorf("resolve Rust boundary %q: %w", boundary, err)
+		}
+		absBoundary, err = filepath.EvalSymlinks(absBoundary)
+		if err != nil {
+			return rustSelection{}, fmt.Errorf("resolve Rust boundary %q: %w", boundary, err)
+		}
+		if rel, err := filepath.Rel(absBoundary, absDir); err != nil || !filepath.IsLocal(rel) {
+			return rustSelection{}, fmt.Errorf("Rust directory %q is outside canonical project %q", absDir, absBoundary)
+		}
+	}
+	manifest, ok := nearestRustFile(absDir, absBoundary, "Cargo.toml")
 	if !ok {
+		if absBoundary != "" {
+			return rustSelection{}, fmt.Errorf("Rust profile requires Cargo.toml between %s and canonical project %s", absDir, absBoundary)
+		}
 		return rustSelection{}, fmt.Errorf("Rust profile requires Cargo.toml at or above %s", absDir)
 	}
-	toolchain, provenance, err := resolveRustToolchain(absDir)
+	toolchain, provenance, err := resolveRustToolchainWithin(absDir, absBoundary)
 	if err != nil {
 		return rustSelection{}, err
 	}
 	return rustSelection{dir: absDir, manifest: manifest, toolchain: toolchain, provenance: provenance}, nil
 }
 
-func resolveRustToolchain(dir string) (string, string, error) {
+func resolveRustToolchainWithin(dir, boundary string) (string, string, error) {
 	for current := dir; ; current = filepath.Dir(current) {
 		if path := filepath.Join(current, RustToolchainTOML); regularFile(path) {
 			var declaration rustToolchainFile
@@ -205,12 +457,31 @@ func resolveRustToolchain(dir string) (string, string, error) {
 			}
 			return normalizeRustToolchain(path, strings.TrimSpace(string(data)))
 		}
+		if boundary != "" && current == boundary {
+			break
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			break
 		}
 	}
 	return DefaultRustToolchain, RustToolchainDefault, nil
+}
+
+func nearestRustFile(dir, boundary, name string) (string, bool) {
+	for current := dir; ; current = filepath.Dir(current) {
+		path := filepath.Join(current, name)
+		if regularFile(path) {
+			return path, true
+		}
+		if boundary != "" && current == boundary {
+			return "", false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+	}
 }
 
 func normalizeRustToolchain(path, value string) (string, string, error) {
@@ -366,19 +637,6 @@ func envValue(env []string, name string) string {
 		}
 	}
 	return ""
-}
-
-func nearestFileUpward(dir, name string) (string, bool) {
-	for current := dir; ; current = filepath.Dir(current) {
-		path := filepath.Join(current, name)
-		if regularFile(path) {
-			return path, true
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", false
-		}
-	}
 }
 
 func regularFile(path string) bool {

@@ -26,6 +26,31 @@ func TestRuntimeCandidatesHaveStableOrderAndIndependentStorage(t *testing.T) {
 	}
 }
 
+func TestDirectStreamingCommandPreservesCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not installed")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	progress := callbackWriter(func(p []byte) (int, error) {
+		cancel()
+		return len(p), nil
+	})
+	_, err = directStreamingCommand(ctx, progress, sh, "-c", "printf ready; exec sleep 30")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("directStreamingCommand error = %v, want context cancellation", err)
+	}
+}
+
+type callbackWriter func([]byte) (int, error)
+
+func (write callbackWriter) Write(p []byte) (int, error) {
+	return write(p)
+}
+
 func TestDetectUsesStableOrderAndContinuesAfterUnusableRuntime(t *testing.T) {
 	var calls []string
 	var progress bytes.Buffer
@@ -70,7 +95,7 @@ func TestDetectReportsEveryCandidateFailure(t *testing.T) {
 }
 
 func TestRuntimeProbeRequiresNeededRunAndVolumeFlags(t *testing.T) {
-	for _, missing := range []string{"--label", "--mount", "--read-only", "--user", "--rm", "--signal"} {
+	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--read-only", "--user", "--rm", "--signal"} {
 		t.Run(missing, func(t *testing.T) {
 			err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				output := successfulProbeOutput(args)
@@ -141,11 +166,14 @@ func TestDirectCommandBoundsInheritedPipeWait(t *testing.T) {
 }
 
 func successfulProbeOutput(args []string) []byte {
+	if slices.Equal(args, []string{"build", "--help"}) {
+		return []byte("--file --tag --label --platform --secret --build-arg")
+	}
 	if slices.Equal(args, []string{"volume", "create", "--help"}) {
 		return []byte("--label")
 	}
 	if slices.Equal(args, []string{"run", "--help"}) {
-		return []byte("--mount --read-only --user --rm")
+		return []byte("--mount --read-only --user --rm --platform")
 	}
 	if slices.Equal(args, []string{"kill", "--help"}) {
 		return []byte("--signal")

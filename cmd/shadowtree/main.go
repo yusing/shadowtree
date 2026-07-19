@@ -522,6 +522,10 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sandboxed:"))
 		fmt.Fprintf(w, "    %s\n", colors.literal(string(mode)))
 	}
+	if rec.System != nil && rec.System.BaseImage != "" {
+		fmt.Fprintf(w, "\n%s\n\n", colors.section("- System base image:"))
+		fmt.Fprintf(w, "    %s\n", colors.literal(rec.System.BaseImage))
+	}
 	if !rec.Requires.Empty() {
 		printRecipeRequirements(w, rec.Requires, colors)
 	}
@@ -611,6 +615,9 @@ func printRecipeRequirements(w io.Writer, req recipe.Requirements, colors helpCo
 	}
 	if len(req.OptionalCommands) > 0 {
 		fmt.Fprintf(w, "    %s %s\n", colors.label("optional:"), colors.literal(strings.Join(req.OptionalCommands, ", ")))
+	}
+	if len(req.SystemPackages) > 0 {
+		fmt.Fprintf(w, "    %s %s\n", colors.label("system:"), colors.literal(strings.Join(slices.Sorted(slices.Values(req.SystemPackages)), ", ")))
 	}
 	if len(req.GoCommands) > 0 {
 		fmt.Fprintf(w, "    %s %s\n", colors.label("go:"), colors.literal(requirementMapHelpText(req.GoCommands)))

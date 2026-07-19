@@ -328,10 +328,10 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if options.PrintOnly {
 		if options.PrintExpanded {
 			printExpandedPlan(stdout, options.Resolved)
-			return nil
+		} else {
+			printPlan(stdout, options.Resolved)
 		}
-		printPlan(stdout, options.Resolved)
-		return nil
+		return printSystemImagePlan(ctx, stdout, options, options.PrintExpanded)
 	}
 	if options.CheckOnly {
 		if err := validatePlan(ctx, options); err != nil {
@@ -339,8 +339,8 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		}
 		return nil
 	}
-	if err := validateExecutionMode(ctx, options.Resolved, stderr); err != nil {
-		return err
+	if options.Resolved.SandboxMode == recipe.SandboxModeSystem {
+		return prepareSystemImages(ctx, options, stderr)
 	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
@@ -395,6 +395,63 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		if err := SyncPath(syncRoot, source, path); err != nil {
 			return fmt.Errorf("sync %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+func prepareSystemImages(ctx context.Context, options Options, progress io.Writer) error {
+	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	if err != nil {
+		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+	}
+	runtimeName, err := systemsandbox.Detect(ctx, progress)
+	if err != nil {
+		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
+	}
+	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
+	if err != nil {
+		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
+	}
+	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, progress); err != nil {
+		return fmt.Errorf("recipe %q system image build: %w", resolved.Name, err)
+	}
+	return fmt.Errorf("recipe %q prepared system image %q with runtime %q, but system lifecycle execution is not available yet", resolved.Name, plan.FinalTag, runtimeName)
+}
+
+func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, expanded bool) error {
+	if options.Resolved.SandboxMode != recipe.SandboxModeSystem {
+		return nil
+	}
+	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	if err != nil {
+		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+	}
+	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
+	if err != nil {
+		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
+	}
+	fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
+	fmt.Fprintf(w, "final_image: %s\n", plan.FinalTag)
+	for _, stage := range plan.Stages {
+		fmt.Fprintf(w, "image_stage.%s.key: %s\n", stage.Name, stage.Key)
+		fmt.Fprintf(w, "image_stage.%s.tag: %s\n", stage.Name, stage.Tag)
+		if expanded {
+			fmt.Fprintf(w, "image_stage.%s.containerfile: |\n", stage.Name)
+			for line := range strings.Lines(stage.Containerfile) {
+				fmt.Fprintf(w, "  %s", line)
+			}
+			for _, path := range slices.Sorted(maps.Keys(stage.ContextHashes)) {
+				fmt.Fprintf(w, "image_stage.%s.context.%s.sha256: %s\n", stage.Name, path, stage.ContextHashes[path])
+			}
+			for _, name := range slices.Sorted(maps.Keys(stage.Metadata)) {
+				fmt.Fprintf(w, "image_stage.%s.metadata.%s: %s\n", stage.Name, name, stage.Metadata[name])
+			}
+		}
+	}
+	if plan.DependencySeed != nil {
+		fmt.Fprintf(w, "dependency_seed.manager: %s\n", plan.DependencySeed.Manager)
+		fmt.Fprintf(w, "dependency_seed.source: %s\n", plan.DependencySeed.SourcePath)
+		fmt.Fprintf(w, "dependency_seed.target: %s\n", plan.DependencySeed.TargetPath)
 	}
 	return nil
 }
