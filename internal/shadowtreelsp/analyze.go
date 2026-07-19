@@ -1618,6 +1618,7 @@ func valueCompletions(key string) []completion {
 		return []completion{
 			{Label: recipe.GoProfile, InsertText: recipe.GoProfile, Kind: completionKindValue, Detail: "Go profile", Quote: true},
 			{Label: recipe.NodeProfile, InsertText: recipe.NodeProfile, Kind: completionKindValue, Detail: "Node profile", Quote: true},
+			{Label: recipe.RustProfile, InsertText: recipe.RustProfile, Kind: completionKindValue, Detail: "Rust profile", Quote: true},
 		}
 	case "shell":
 		return shellValues

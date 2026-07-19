@@ -32,7 +32,7 @@ language. Prefer one readable path from `pre` through `cmd` to `post`.
 
 | Need | Use | Selection rule |
 | --- | --- | --- |
-| Standard Go or Node workflows | `profile = "go"` or `profile = "node"` | Opt in when profile recipes should be part of the config. Omit `profile` when the configured recipe set must remain exact. |
+| Standard Go, Node, or Rust workflows | `profile = "go"`, `profile = "node"`, or `profile = "rust"` | Opt in when profile recipes should be part of the config. Omit `profile` when the configured recipe set must remain exact. Rust provides Cargo `check`, `test`, `build`, `run`, `fmt`, and `clippy`; toolchains and optional components are never installed implicitly. |
 | One reusable workflow | `[recipes.<name>]`, `help`, `cmd` | Start here. Give every project recipe concise help and one shell-string main command. |
 | Setup before the main command | `pre` | Use for ordered preparation. A failing `pre` skips `cmd`. |
 | Cleanup or reporting after `pre` or `cmd` | `post` | Use instead of shell `trap`; it runs after failed setup, failed main work, and initial cancellation. |

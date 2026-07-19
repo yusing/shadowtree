@@ -21,8 +21,8 @@
     },
     "profile": {
       "type": "string",
-      "enum": ["go", "node"],
-      "description": "Recipe profile. Set to \"go\" or \"node\" to enable built-in recipes for this config."
+      "enum": ["go", "node", "rust"],
+      "description": "Recipe profile. Set to \"go\", \"node\", or \"rust\" to enable built-in recipes for this config."
     },
     "shell": {
       "$ref": "#/definitions/shell"

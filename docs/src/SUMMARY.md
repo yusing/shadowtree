@@ -39,6 +39,7 @@
 - [Profile Selection](built-in-profiles.md)
 - [Go Profile](go-profile.md)
 - [Node Profile](node-profile.md)
+- [Rust Profile](rust-profile.md)
 
 # Integrations
 

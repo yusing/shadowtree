@@ -38,7 +38,7 @@ func (spec Spec) Usage() string {
 
 var specs = []Spec{
 	{Name: Config, ValueName: "PATH", Help: "Use config file", UsageHelp: "use config file", FishOptions: "-r"},
-	{Name: Profile, ValueName: "PROFILE", Help: "Use profile", UsageHelp: "use profile built-ins, supported: go, node", FishOptions: "-x -a 'go node'"},
+	{Name: Profile, ValueName: "PROFILE", Help: "Use profile", UsageHelp: "use profile built-ins, supported: go, node, rust", FishOptions: "-x -a 'go node rust'"},
 	{Name: AllTargets, Help: "Run the recipe for all supported targets", UsageHelp: "run for every target supported by the recipe"},
 	{Name: SyncOut, ValueName: "PATH", Help: "Copy path back after success", UsageHelp: "copy path back after success; repeatable or comma-separated", FishOptions: "-r"},
 	{Name: SyncOutAll, Help: "Copy entire workspace back after success", UsageHelp: "copy entire workspace back after success"},

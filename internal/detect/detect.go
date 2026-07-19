@@ -12,6 +12,7 @@ import (
 const (
 	GoProfile   = "go"
 	NodeProfile = "node"
+	RustProfile = "rust"
 )
 
 func Profile(cwd string) string {
@@ -92,11 +93,14 @@ func nearestProfileMarker(cwd string) (string, bool) {
 	for {
 		hasGo := hasFile(dir, "go.mod") || hasFile(dir, "go.work")
 		hasNode := hasFile(dir, "package.json")
+		hasRust := hasFile(dir, "Cargo.toml")
 		switch {
 		case hasGo:
 			return GoProfile, true
 		case hasNode:
 			return NodeProfile, true
+		case hasRust:
+			return RustProfile, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

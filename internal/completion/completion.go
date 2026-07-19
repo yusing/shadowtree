@@ -368,6 +368,7 @@ func staticCandidates(spec shellSpec, words []string) ([]Candidate, bool) {
 		return []Candidate{
 			{Value: recipe.GoProfile, Help: "Go project"},
 			{Value: recipe.NodeProfile, Help: "Node project"},
+			{Value: recipe.RustProfile, Help: "Rust project"},
 		}, true
 	}
 	if completesFlagValue(words, globalflag.Config) || completesFlagValue(words, globalflag.SyncOut) {

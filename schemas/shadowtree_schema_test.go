@@ -33,6 +33,31 @@ func TestRecipeNameReservedPatternMatchesRuntimeSources(t *testing.T) {
 	}
 }
 
+func TestProfileEnumMatchesRuntimeProfiles(t *testing.T) {
+	data, err := os.ReadFile("shadowtree.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schemaObject(t, schema, "properties")
+	profile := schemaObject(t, properties, "profile")
+	values, ok := profile["enum"].([]any)
+	if !ok {
+		t.Fatalf("profile enum = %#v", profile["enum"])
+	}
+	got := make([]string, 0, len(values))
+	for _, value := range values {
+		got = append(got, value.(string))
+	}
+	want := []string{recipe.GoProfile, recipe.NodeProfile, recipe.RustProfile}
+	if !slices.Equal(got, want) {
+		t.Fatalf("profile enum = %#v, want %#v", got, want)
+	}
+}
+
 func schemaPatternProperty(t *testing.T, definitionName string) string {
 	t.Helper()
 	data, err := os.ReadFile("shadowtree.schema.json")

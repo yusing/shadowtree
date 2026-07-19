@@ -1,16 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/runner"
 )
 
 func stageCommands(commands ...recipe.Command) recipe.StageCommands {
@@ -97,6 +102,170 @@ values = "@enum api worker"
 	if stderr != want {
 		t.Fatalf("stderr = %q, want %q", stderr, want)
 	}
+}
+
+func TestRunPrintsDetectedRustCargoCheck(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+
+	out := captureStdout(t, func() error {
+		return run(t.Context(), []string{"--print", "--expanded", "check"})
+	})
+	for _, want := range []string{
+		"recipe: check\n",
+		"profile: rust\n",
+		"main: cargo +1.96.0 check\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunRustBuiltinUsesExactToolchainAndPreservesRedirectedOutput(t *testing.T) {
+	dir := rustCLIFixture(t, `#!/bin/sh
+printf 'args:%s\n' "$*"
+printf 'rust stderr\n' >&2
+`)
+	t.Chdir(dir)
+
+	stdout, stderr, err := captureOutputResult(t, func() error {
+		return run(t.Context(), []string{"check", "--locked"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "args:+1.96.0 check --locked\n") {
+		t.Fatalf("stdout = %q, want exact selected toolchain argv", stdout)
+	}
+	if stderr != "rust stderr\n" {
+		t.Fatalf("stderr = %q, want redirected Cargo diagnostic", stderr)
+	}
+}
+
+func TestRunRustBuiltinPropagatesCargoFailure(t *testing.T) {
+	dir := rustCLIFixture(t, "#!/bin/sh\nexit 7\n")
+	t.Chdir(dir)
+
+	_, _, err := captureOutputResult(t, func() error {
+		return run(t.Context(), []string{"check"})
+	})
+	exitErr, ok := errors.AsType[runner.ExitError](err)
+	if !ok || exitErr.Code != 7 {
+		t.Fatalf("error = %T %[1]v, want Cargo exit 7", err)
+	}
+}
+
+func TestRunRustFmtReportsMissingSelectedToolchainComponent(t *testing.T) {
+	dir := rustCLIFixture(t, "#!/bin/sh\nexit 1\n")
+	t.Chdir(dir)
+
+	_, stderr, err := captureOutputResult(t, func() error {
+		return run(t.Context(), []string{"fmt"})
+	})
+	if err == nil {
+		t.Fatal("fmt succeeded without rustfmt component")
+	}
+	if !strings.Contains(stderr, "install the rustfmt component for toolchain 1.96.0") {
+		t.Fatalf("stderr = %q, want selected-toolchain component guidance", stderr)
+	}
+}
+
+func TestRunRustBuiltinPropagatesInFlightCancellation(t *testing.T) {
+	dir := rustCLIFixture(t, `#!/bin/sh
+printf 'started\n'
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+`)
+	t.Chdir(dir)
+	ctx, cancel := context.WithCancel(t.Context())
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = write
+	defer func() { os.Stdout = stdout }()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- run(ctx, []string{"check"}) }()
+	line, err := bufio.NewReader(read).ReadString('\n')
+	if err != nil || line != "started\n" {
+		t.Fatalf("startup output = %q, error = %v", line, err)
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("canceled Rust command succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled Rust command did not stop")
+	}
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rustCLIFixture(t *testing.T, cargoScript string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTextFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+	writeTextFile(t, filepath.Join(dir, "src", "lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `profile = "rust"
+
+[recipes.check]
+sandboxed = false
+
+[recipes.fmt]
+sandboxed = false
+`)
+	bin := t.TempDir()
+	cargo := filepath.Join(bin, "cargo")
+	writeTextFile(t, cargo, cargoScript)
+	if err := os.Chmod(cargo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
+func captureOutputResult(t *testing.T, fn func() error) (string, string, error) {
+	t.Helper()
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = stdoutWrite, stderrWrite
+	defer func() { os.Stdout, os.Stderr = stdout, stderr }()
+
+	runErr := fn()
+	if err := stdoutWrite.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stderrWrite.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var stdoutBuffer, stderrBuffer bytes.Buffer
+	if _, err := stdoutBuffer.ReadFrom(stdoutRead); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stderrBuffer.ReadFrom(stderrRead); err != nil {
+		t.Fatal(err)
+	}
+	return stdoutBuffer.String(), stderrBuffer.String(), runErr
 }
 
 func runGitCommand(t *testing.T, dir string, args ...string) {

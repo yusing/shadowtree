@@ -1140,11 +1140,30 @@ cmd = "@f"
 	assertLabels(t, items, "@fmt")
 }
 
-func TestCompletionsIncludeNodeProfileValue(t *testing.T) {
+func TestCompletionsIncludeProfileValues(t *testing.T) {
 	text := `profile = "`
 	items := completionsAt(t.Context(), text, lspPosition{Line: 0, Character: len(text)})
 
-	assertLabels(t, items, "go", "node")
+	assertLabels(t, items, "go", "node", "rust")
+}
+
+func TestCompletionsIncludeRustBuiltinsWhenConfigSetsProfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text := `profile = "rust"
+
+[recipes.verify]
+cmd = "@c"
+`
+	items := completionsAtWithOptions(
+		t.Context(),
+		text,
+		lspPosition{Line: 3, Character: len(`cmd = "@c`)},
+		completionOptions{ConfigPath: filepath.Join(root, ".shadowtree.toml")},
+	)
+	assertLabels(t, items, "@check", "@clippy")
 }
 
 func TestCompletionsIncludeNodeBuiltinsWhenConfigSetsProfile(t *testing.T) {
