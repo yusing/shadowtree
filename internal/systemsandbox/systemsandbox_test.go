@@ -64,8 +64,8 @@ func TestDetectUsesStableOrderAndContinuesAfterUnusableRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected != Podman {
-		t.Fatalf("runtime = %q, want %q", selected, Podman)
+	if selected.Name != Podman {
+		t.Fatalf("runtime = %q, want %q", selected.Name, Podman)
 	}
 	if len(calls) < 2 || calls[0] != "docker info" || calls[1] != "podman info" {
 		t.Fatalf("calls = %#v, want Docker then Podman", calls)
@@ -94,10 +94,70 @@ func TestDetectReportsEveryCandidateFailure(t *testing.T) {
 	}
 }
 
+func TestResolveConfinementPolicyHandlesRootlessMappingsAndSELinux(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		runtime  RuntimeName
+		security runtimeSecurity
+		want     ConfinementPolicy
+	}{
+		{
+			name: "rootless Podman keeps host identity", runtime: Podman,
+			security: runtimeSecurity{rootless: true},
+			want:     ConfinementPolicy{User: "1000:998", UserNamespace: "keep-id"},
+		},
+		{
+			name: "rootless Docker uses mapped root and private relabelling", runtime: Docker,
+			security: runtimeSecurity{rootless: true, selinux: true},
+			want:     ConfinementPolicy{User: "0:0", SELinux: true},
+		},
+		{
+			name: "rootful Docker preserves host identity", runtime: Docker,
+			want: ConfinementPolicy{User: "1000:998"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := confinementPolicy(test.runtime, test.security, 1000, 998)
+			if policy != test.want {
+				t.Fatalf("policy = %#v, want %#v", policy, test.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeProbeDoesNotRequireInapplicableConfinementFlags(t *testing.T) {
+	_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		output := successfulProbeOutput(args)
+		output = bytes.ReplaceAll(output, []byte("--userns"), nil)
+		return bytes.ReplaceAll(output, []byte("--volume"), nil), nil
+	})
+	if err != nil {
+		t.Fatalf("rootful non-SELinux probe rejected inapplicable flags: %v", err)
+	}
+}
+
+func TestRuntimeSecurityInspectionRejectsIncompletePodmanState(t *testing.T) {
+	_, err := inspectRuntimeSecurity(t.Context(), Podman, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(`{"host":{"security":{"rootless":true}}}`), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "omitted rootless or SELinux state") {
+		t.Fatalf("inspectRuntimeSecurity error = %v, want incomplete-state rejection", err)
+	}
+}
+
+func TestRuntimeSecurityInspectionRejectsMissingDockerState(t *testing.T) {
+	_, err := inspectRuntimeSecurity(t.Context(), Docker, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("null"), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "omitted security options") {
+		t.Fatalf("inspectRuntimeSecurity error = %v, want missing-state rejection", err)
+	}
+}
+
 func TestRuntimeProbeRequiresNeededLifecycleAndVolumeFlags(t *testing.T) {
 	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--read-only", "--user", "--name", "--interactive", "--attach", "--signal", "--force", "--filter", "--format"} {
 		t.Run(missing, func(t *testing.T) {
-			err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				output := successfulProbeOutput(args)
 				return bytes.ReplaceAll(output, []byte(missing), nil), nil
 			})
@@ -108,10 +168,34 @@ func TestRuntimeProbeRequiresNeededLifecycleAndVolumeFlags(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeRequiresOnlyApplicableConfinementFlags(t *testing.T) {
+	for _, test := range []struct {
+		name, missing string
+		runtime       RuntimeName
+		security      []byte
+	}{
+		{name: "rootless Podman user namespace", missing: "--userns", runtime: Podman, security: []byte(`{"host":{"security":{"rootless":true,"selinuxEnabled":false}}}`)},
+		{name: "SELinux private volume relabelling", missing: "--volume", runtime: Docker, security: []byte(`["name=selinux"]`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := probe(t.Context(), test.runtime, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if slices.Equal(args, []string{"info", "--format", "{{json .SecurityOptions}}"}) || slices.Equal(args, []string{"info", "--format", "json"}) {
+					return test.security, nil
+				}
+				output := successfulProbeOutput(args)
+				return bytes.ReplaceAll(output, []byte(test.missing), nil), nil
+			})
+			if err == nil || !strings.Contains(err.Error(), "lacks exact option "+test.missing) {
+				t.Fatalf("probe error = %v, want missing applicable flag", err)
+			}
+		})
+	}
+}
+
 func TestRuntimeProbeRejectsPrefixCollisionOptions(t *testing.T) {
 	for required, collision := range map[string]string{"--label": "--label-file", "--user": "--userns"} {
 		t.Run(required, func(t *testing.T) {
-			err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				return bytes.ReplaceAll(successfulProbeOutput(args), []byte(required), []byte(collision)), nil
 			})
 			if err == nil || !strings.Contains(err.Error(), "lacks exact option "+required) {
@@ -179,7 +263,13 @@ func successfulProbeOutput(args []string) []byte {
 		return []byte("--filter --format")
 	}
 	if slices.Equal(args, []string{"create", "--help"}) {
-		return []byte("--mount --read-only --user --platform --name --interactive")
+		return []byte("--mount --volume --read-only --user --userns --platform --name --interactive")
+	}
+	if slices.Equal(args, []string{"info", "--format", "{{json .SecurityOptions}}"}) {
+		return []byte("[]")
+	}
+	if slices.Equal(args, []string{"info", "--format", "json"}) {
+		return []byte(`{"host":{"security":{"rootless":false,"selinuxEnabled":false}}}`)
 	}
 	if slices.Equal(args, []string{"start", "--help"}) {
 		return []byte("--attach --interactive")

@@ -161,6 +161,10 @@ them, but different worktrees never do. Execution then runs the complete
 lifecycle in one explicitly removed, read-only-root container against a private
 copied workspace at the canonical checkout path. Nested references stay in that
 container; only a successful lifecycle applies configured sync-out paths.
+Runtime discovery also validates current rootless and SELinux security state:
+rootless Podman uses `keep-id`, rootless Docker/nerdctl use their mapped root,
+and SELinux-enabled engines privately relabel only Shadowtree's temporary bind
+sources. Missing or malformed capability fails before image or cache mutation.
 
 Inspect and reset only the current project's labelled caches with:
 

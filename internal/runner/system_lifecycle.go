@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/systemsandbox"
@@ -40,7 +39,7 @@ type systemInvocation struct {
 	dir, workspace, export, helper, plan string
 }
 
-func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
+func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
 	invocation, err := createSystemInvocation(image, options)
 	if err != nil {
 		return err
@@ -55,8 +54,8 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		Image: image.FinalTag, Platform: image.Platform, WorkspaceHost: workspace,
 		WorkspacePath: options.SourceDir, HelperHost: invocation.helper, PlanHost: invocation.plan,
 		Caches: image.Caches, ExportHost: invocation.export,
-		User:  strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
-		Stdin: stdin, Stdout: stdout, Stderr: stderr, Progress: stderr,
+		Confinement: confinement,
+		Stdin:       stdin, Stdout: stdout, Stderr: stderr, Progress: stderr,
 	})
 	if logErr := syncSystemLog(options.Resolved, options.SourceDir, workspace); logErr != nil && err == nil {
 		err = logErr

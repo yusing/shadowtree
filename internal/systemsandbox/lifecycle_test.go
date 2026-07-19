@@ -56,7 +56,7 @@ esac
 	done := make(chan error, 1)
 	go func() {
 		done <- RunLifecycle(ctx, Docker, LifecycleOptions{
-			Image: "image:test", Platform: "linux/amd64", User: "1000:1000",
+			Image: "image:test", Platform: "linux/amd64", Confinement: ConfinementPolicy{User: "1000:1000"},
 			WorkspaceHost: workspace, WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan,
 			ExportHost: t.TempDir(),
 			Progress:   &progress,
@@ -167,6 +167,53 @@ esac
 	}
 }
 
+func TestRunLifecycleAppliesRootlessUserNamespaceAndSELinuxRelabelling(t *testing.T) {
+	bin := t.TempDir()
+	argsPath := filepath.Join(bin, "create-args")
+	script := `#!/bin/sh
+case "$1" in
+  create) printf '%s' "$*" > "` + argsPath + `" ;;
+  start) exit 0 ;;
+  rm) exit 0 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "podman"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	options := lifecycleTestOptions(t)
+	options.Confinement = ConfinementPolicy{User: "1000:998", UserNamespace: "keep-id", SELinux: true}
+	if err := RunLifecycle(t.Context(), Podman, options); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := string(data)
+	for _, want := range []string{
+		"--user 1000:998 --mount type=tmpfs,dst=/tmp --userns keep-id",
+		"--volume " + options.WorkspaceHost + ":" + options.WorkspacePath + ":Z",
+		"--volume " + options.HelperHost + ":/opt/shadowtree/helper:ro,Z",
+	} {
+		if !strings.Contains(arguments, want) {
+			t.Fatalf("create args missing %q: %s", want, arguments)
+		}
+	}
+}
+
+func TestBindMountArgsRejectsUnsafeDelimiters(t *testing.T) {
+	if _, err := bindMountArgs("/host,escape", "/workspace", false, false); err == nil {
+		t.Fatal("ordinary bind accepted comma delimiter")
+	}
+	if _, err := bindMountArgs("/host:escape", "/workspace", false, true); err == nil {
+		t.Fatal("SELinux bind accepted colon delimiter")
+	}
+	if _, err := bindMountArgs("relative", "/workspace", false, false); err == nil {
+		t.Fatal("bind accepted relative host path")
+	}
+}
+
 func lifecycleTestOptions(t *testing.T) LifecycleOptions {
 	t.Helper()
 	helper := filepath.Join(t.TempDir(), "helper")
@@ -177,7 +224,7 @@ func lifecycleTestOptions(t *testing.T) LifecycleOptions {
 		}
 	}
 	return LifecycleOptions{
-		Image: "image:test", Platform: "linux/amd64", User: "1000:1000",
+		Image: "image:test", Platform: "linux/amd64", Confinement: ConfinementPolicy{User: "1000:1000"},
 		WorkspaceHost: t.TempDir(), WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan, ExportHost: t.TempDir(),
 	}
 }

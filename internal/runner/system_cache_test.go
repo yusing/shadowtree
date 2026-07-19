@@ -22,10 +22,11 @@ case "$*" in
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;
-  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
+  "create --help") printf '%s' '--mount --volume --read-only --user --userns --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
   "rm --help") printf '%s' '--force' ;;
+  "info --format {{json .SecurityOptions}}") printf '%s' '[]' ;;
   "image inspect --help"|"image tag --help"|"info") printf '%s' ok ;;
   volume\ inspect*) printf '%s' 'no such volume' >&2; exit 1 ;;
   *) printf 'unexpected mutation: %s\n' "$*" >&2; exit 1 ;;
@@ -70,6 +71,7 @@ func TestResolvedCachePlansReportsSiblingRecipesAndAllowsCommandOnlyRequiredArgu
 	}
 	plans, shared, err := resolvedCachePlans(t.Context(), SystemCacheOptions{
 		Recipe: "test", Recipes: recipes, Profile: recipe.GoProfile, SourceDir: source,
+		Confinement: systemsandbox.ConfinementPolicy{User: "1000:998"},
 	}, source)
 	if err != nil {
 		t.Fatal(err)

@@ -5,10 +5,13 @@ package systemsandbox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -54,31 +57,39 @@ var capabilityProbes = []capabilityProbe{
 	{phase: "filtered volume listing", args: []string{"volume", "ls", "--help"}, requiredOptions: []string{"--filter", "--format"}},
 	{phase: "volume removal", args: []string{"volume", "rm", "--help"}},
 	{phase: "container volume-use inspection", args: []string{"ps", "--help"}, requiredOptions: []string{"--filter", "--format"}},
-	{phase: "nested and read-only mounts, UID/GID, signalling identity, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--platform", "--name", "--interactive"}},
+	{phase: "nested and read-only mounts, UID/GID, signalling identity, SELinux relabelling, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--platform", "--name", "--interactive"}},
 	{phase: "attached container start", args: []string{"start", "--help"}, requiredOptions: []string{"--attach", "--interactive"}},
 	{phase: "container signalling", args: []string{"kill", "--help"}, requiredOptions: []string{"--signal"}},
 	{phase: "forced container removal", args: []string{"rm", "--help"}, requiredOptions: []string{"--force"}},
 }
 
+// RuntimeSelection captures one usable runtime and the confinement policy
+// derived from the same observed engine security state.
+type RuntimeSelection struct {
+	Name        RuntimeName
+	Confinement ConfinementPolicy
+}
+
 // Detect probes supported runtimes in stable order and returns the first usable
 // direct-argv adapter. It creates no images, volumes, workspaces, or containers.
-func Detect(ctx context.Context, progress io.Writer) (RuntimeName, error) {
+func Detect(ctx context.Context, progress io.Writer) (RuntimeSelection, error) {
 	return detect(ctx, progress, RuntimeCandidates(), directCommand)
 }
 
-func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, run commandRunner) (RuntimeName, error) {
+func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, run commandRunner) (RuntimeSelection, error) {
 	if progress == nil {
 		progress = io.Discard
 	}
 	failures := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		if err := context.Cause(ctx); err != nil {
-			return "", err
+			return RuntimeSelection{}, err
 		}
 		fmt.Fprintf(progress, "shadowtree: detecting system runtime %s\n", candidate)
-		if err := probe(ctx, candidate, run); err != nil {
+		security, err := probe(ctx, candidate, run)
+		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
-				return "", cause
+				return RuntimeSelection{}, cause
 			}
 			failure := fmt.Sprintf("%s: %v", candidate, err)
 			failures = append(failures, failure)
@@ -86,30 +97,119 @@ func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, r
 			continue
 		}
 		fmt.Fprintf(progress, "shadowtree: selected system runtime %s\n", candidate)
-		return candidate, nil
+		return RuntimeSelection{Name: candidate, Confinement: confinementPolicy(candidate, security, os.Getuid(), os.Getgid())}, nil
 	}
-	return "", fmt.Errorf("no usable system runtime: %s", strings.Join(failures, "; "))
+	return RuntimeSelection{}, fmt.Errorf("no usable system runtime: %s", strings.Join(failures, "; "))
 }
 
-func probe(ctx context.Context, name RuntimeName, run commandRunner) error {
+func probe(ctx context.Context, name RuntimeName, run commandRunner) (runtimeSecurity, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
+	var security runtimeSecurity
 	for _, probe := range capabilityProbes {
 		output, err := run(ctx, string(name), probe.args...)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("%s probe timed out after %s", probe.phase, probeTimeout)
+				return runtimeSecurity{}, fmt.Errorf("%s probe timed out after %s", probe.phase, probeTimeout)
 			}
-			return fmt.Errorf("%s: %s", probe.phase, commandFailure(err, output))
+			return runtimeSecurity{}, fmt.Errorf("%s: %s", probe.phase, commandFailure(err, output))
+		}
+		if probe.phase == "engine reachability" {
+			security, err = inspectRuntimeSecurity(ctx, name, run)
+			if err != nil {
+				return runtimeSecurity{}, err
+			}
 		}
 		options := helpOptions(output)
-		for _, option := range probe.requiredOptions {
+		required := slices.Clone(probe.requiredOptions)
+		if len(probe.args) == 2 && probe.args[0] == "create" {
+			if security.rootless && name == Podman {
+				required = append(required, "--userns")
+			}
+			if security.selinux {
+				required = append(required, "--volume")
+			}
+		}
+		for _, option := range required {
 			if _, ok := options[option]; !ok {
-				return fmt.Errorf("%s: help output lacks exact option %s", probe.phase, option)
+				return runtimeSecurity{}, fmt.Errorf("%s: help output lacks exact option %s", probe.phase, option)
 			}
 		}
 	}
-	return nil
+	return security, nil
+}
+
+type runtimeSecurity struct {
+	rootless bool
+	selinux  bool
+}
+
+// ConfinementPolicy is the runtime-specific identity and bind-labelling policy
+// required for one lifecycle.
+type ConfinementPolicy struct {
+	User          string
+	UserNamespace string
+	SELinux       bool
+}
+
+func confinementPolicy(runtime RuntimeName, security runtimeSecurity, uid, gid int) ConfinementPolicy {
+	policy := ConfinementPolicy{User: fmt.Sprintf("%d:%d", uid, gid), SELinux: security.selinux}
+	if !security.rootless {
+		return policy
+	}
+	if runtime == Podman {
+		policy.UserNamespace = "keep-id"
+		return policy
+	}
+	policy.User = "0:0"
+	return policy
+}
+
+func inspectRuntimeSecurity(ctx context.Context, runtime RuntimeName, run commandRunner) (runtimeSecurity, error) {
+	switch runtime {
+	case Docker, Nerdctl:
+		output, err := run(ctx, string(runtime), "info", "--format", "{{json .SecurityOptions}}")
+		if err != nil {
+			return runtimeSecurity{}, fmt.Errorf("runtime security inspection: %s", commandFailure(err, output))
+		}
+		var options []string
+		if err := json.Unmarshal(bytes.TrimSpace(output), &options); err != nil {
+			return runtimeSecurity{}, fmt.Errorf("runtime security inspection returned malformed JSON: %w", err)
+		}
+		if options == nil {
+			return runtimeSecurity{}, errors.New("runtime security inspection omitted security options")
+		}
+		var security runtimeSecurity
+		for _, option := range options {
+			name, _, _ := strings.Cut(option, ",")
+			name = strings.TrimPrefix(name, "name=")
+			security.rootless = security.rootless || name == "rootless"
+			security.selinux = security.selinux || name == "selinux"
+		}
+		return security, nil
+	case Podman:
+		output, err := run(ctx, string(runtime), "info", "--format", "json")
+		if err != nil {
+			return runtimeSecurity{}, fmt.Errorf("runtime security inspection: %s", commandFailure(err, output))
+		}
+		var document struct {
+			Host struct {
+				Security struct {
+					Rootless       *bool `json:"rootless"`
+					SELinuxEnabled *bool `json:"selinuxEnabled"`
+				} `json:"security"`
+			} `json:"host"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(output), &document); err != nil {
+			return runtimeSecurity{}, fmt.Errorf("runtime security inspection returned malformed JSON: %w", err)
+		}
+		if document.Host.Security.Rootless == nil || document.Host.Security.SELinuxEnabled == nil {
+			return runtimeSecurity{}, errors.New("runtime security inspection omitted rootless or SELinux state")
+		}
+		return runtimeSecurity{rootless: *document.Host.Security.Rootless, selinux: *document.Host.Security.SELinuxEnabled}, nil
+	default:
+		return runtimeSecurity{}, fmt.Errorf("unsupported system runtime %q", runtime)
+	}
 }
 
 func directCommand(ctx context.Context, executable string, args ...string) ([]byte, error) {

@@ -17,18 +17,19 @@ import (
 
 // SystemCacheOptions describes one cache inspection or reset command.
 type SystemCacheOptions struct {
-	Action     string
-	Recipe     string
-	All        bool
-	JSON       bool
-	Recipes    map[string]recipe.Recipe
-	EnumSets   map[string]recipe.Command
-	ConfigEnv  map[string]string
-	ConfigPath string
-	Profile    string
-	SourceDir  string
-	Stdout     io.Writer
-	Stderr     io.Writer
+	Action      string
+	Recipe      string
+	All         bool
+	JSON        bool
+	Recipes     map[string]recipe.Recipe
+	EnumSets    map[string]recipe.Command
+	ConfigEnv   map[string]string
+	ConfigPath  string
+	Profile     string
+	SourceDir   string
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Confinement systemsandbox.ConfinementPolicy
 }
 
 // SystemCache executes the read-only inspection or explicitly requested reset
@@ -43,10 +44,12 @@ func SystemCache(ctx context.Context, options SystemCacheOptions) error {
 	if err != nil {
 		return fmt.Errorf("canonical cache project: %w", err)
 	}
-	runtimeName, err := systemsandbox.Detect(ctx, options.Stderr)
+	runtimeSelection, err := systemsandbox.Detect(ctx, options.Stderr)
 	if err != nil {
 		return err
 	}
+	runtimeName := runtimeSelection.Name
+	options.Confinement = runtimeSelection.Confinement
 	if options.All {
 		if options.Action != "reset" {
 			return errors.New("--all is valid only for cache reset")
@@ -143,6 +146,13 @@ func resolvedCachePlans(ctx context.Context, options SystemCacheOptions, source 
 			return nil, nil, err
 		}
 		image, err := systemsandbox.PlanImages(resolved, source)
+		if err != nil {
+			if options.Recipe == "" || name != options.Recipe {
+				continue
+			}
+			return nil, nil, err
+		}
+		image, err = systemsandbox.ApplyConfinementPolicy(image, options.Confinement)
 		if err != nil {
 			if options.Recipe == "" || name != options.Recipe {
 				continue

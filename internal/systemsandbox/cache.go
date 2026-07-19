@@ -76,11 +76,7 @@ func planCaches(descriptors []cacheDescriptor, projectRoot, projectKey, platform
 		if descriptor.workspace != "" {
 			workspaceRoot = filepath.Join(projectRoot, filepath.FromSlash(descriptor.workspace))
 		}
-		key := digestKey(map[string]any{
-			"version": cachePlanVersion, "project": projectKey, "workspace": descriptor.workspace,
-			"provider": descriptor.provider, "format": descriptor.format, "platform": platform,
-			"toolchain": descriptor.toolchain, "abi": abiKey, "uid": uid, "gid": gid, "inputs": descriptor.inputs,
-		})
+		key := cacheCompatibilityKey(projectKey, descriptor.workspace, descriptor.provider, descriptor.format, platform, descriptor.toolchain, abiKey, uid, gid, descriptor.inputs)
 		name := "shadowtree-cache-" + key
 		inputs, _ := json.Marshal(descriptor.inputs)
 		labels := map[string]string{
@@ -112,6 +108,47 @@ func planCaches(descriptors []cacheDescriptor, projectRoot, projectKey, platform
 		})
 	}
 	return plans
+}
+
+// ApplyConfinementPolicy updates mutable cache identities to the effective
+// in-container UID/GID selected for the runtime without changing image keys.
+func ApplyConfinementPolicy(plan ImagePlan, policy ConfinementPolicy) (ImagePlan, error) {
+	uidText, gidText, ok := strings.Cut(policy.User, ":")
+	if !ok {
+		return ImagePlan{}, fmt.Errorf("invalid confinement user identity %q", policy.User)
+	}
+	uid, err := strconv.Atoi(uidText)
+	if err != nil || uid < 0 {
+		return ImagePlan{}, fmt.Errorf("invalid confinement UID %q", uidText)
+	}
+	gid, err := strconv.Atoi(gidText)
+	if err != nil || gid < 0 {
+		return ImagePlan{}, fmt.Errorf("invalid confinement GID %q", gidText)
+	}
+	plan.Caches = slices.Clone(plan.Caches)
+	for index := range plan.Caches {
+		cache := &plan.Caches[index]
+		var inputs map[string]string
+		if err := json.Unmarshal([]byte(cache.Labels["shadowtree.cache-inputs"]), &inputs); err != nil {
+			return ImagePlan{}, fmt.Errorf("cache %s provider inputs: %w", cache.Provider, err)
+		}
+		workspace := cache.Labels["shadowtree.workspace-root"]
+		key := cacheCompatibilityKey(cache.ProjectKey, workspace, cache.Provider, cache.Format, cache.Platform, cache.Toolchain, cache.ABIKey, uid, gid, inputs)
+		cache.Key, cache.Name, cache.UID, cache.GID = key, "shadowtree-cache-"+key, uid, gid
+		cache.Labels = maps.Clone(cache.Labels)
+		cache.Labels["shadowtree.cache-key"] = key
+		cache.Labels["shadowtree.uid"] = uidText
+		cache.Labels["shadowtree.gid"] = gidText
+	}
+	return plan, nil
+}
+
+func cacheCompatibilityKey(projectKey, workspace, provider, format, platform, toolchain, abiKey string, uid, gid int, inputs map[string]string) string {
+	return digestKey(map[string]any{
+		"version": cachePlanVersion, "project": projectKey, "workspace": workspace,
+		"provider": provider, "format": format, "platform": platform,
+		"toolchain": toolchain, "abi": abiKey, "uid": uid, "gid": gid, "inputs": inputs,
+	})
 }
 
 // CanonicalProjectKey returns the stable ownership key for one canonical root.
@@ -417,11 +454,7 @@ func cachePlanFromLabels(name, projectRoot string, labels map[string]string) (Ca
 		diagnostics = append(diagnostics, "cache provider inputs are malformed")
 	} else {
 		workspaceRel := labels["shadowtree.workspace-root"]
-		wantKey := digestKey(map[string]any{
-			"version": cachePlanVersion, "project": plan.ProjectKey, "workspace": workspaceRel,
-			"provider": plan.Provider, "format": plan.Format, "platform": plan.Platform,
-			"toolchain": plan.Toolchain, "abi": plan.ABIKey, "uid": plan.UID, "gid": plan.GID, "inputs": inputs,
-		})
+		wantKey := cacheCompatibilityKey(plan.ProjectKey, workspaceRel, plan.Provider, plan.Format, plan.Platform, plan.Toolchain, plan.ABIKey, plan.UID, plan.GID, inputs)
 		if plan.Key != wantKey {
 			diagnostics = append(diagnostics, "cache key does not match its compatibility metadata")
 		}

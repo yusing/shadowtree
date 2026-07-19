@@ -3256,10 +3256,11 @@ case "$*" in
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;
 	"build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
-  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
+  "create --help") printf '%s' '--mount --volume --read-only --user --userns --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
   "rm --help") printf '%s' '--force' ;;
+  "info --format {{json .SecurityOptions}}") printf '%s' '[]' ;;
   "image inspect --help") printf '%s' ok ;;
   image\ inspect*) printf '%s' 'no such image' >&2; exit 1 ;;
   *) printf '%s' ok ;;
@@ -3312,10 +3313,11 @@ case "$*" in
   "volume inspect --help") printf '%s' '--format'; exit 0 ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format'; exit 0 ;;
   "volume rm --help") printf '%s' ok; exit 0 ;;
-  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive'; exit 0 ;;
+  "create --help") printf '%s' '--mount --volume --read-only --user --userns --platform --name --interactive'; exit 0 ;;
   "start --help") printf '%s' '--attach --interactive'; exit 0 ;;
   "kill --help") printf '%s' '--signal'; exit 0 ;;
   "rm --help") printf '%s' '--force'; exit 0 ;;
+  "info --format {{json .SecurityOptions}}") printf '%s' '[]'; exit 0 ;;
   "image inspect --help"|"image tag --help"|"info") printf '%s' ok; exit 0 ;;
 esac
 if [ "$1 $2" = "image inspect" ]; then
@@ -3489,10 +3491,11 @@ case "$*" in
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;
-  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
+  "create --help") printf '%s' '--mount --volume --read-only --user --userns --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
   "rm --help") printf '%s' '--force' ;;
+  "info --format {{json .SecurityOptions}}") printf '%s' '[]' ;;
   *) printf '%s' ok ;;
 esac`)
 	t.Setenv("PATH", bin)

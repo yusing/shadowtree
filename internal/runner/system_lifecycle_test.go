@@ -56,7 +56,7 @@ esac`)
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	err = runSystemLifecycle(t.Context(), systemsandbox.Docker, systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"}, Options{Resolved: resolved, SourceDir: source}, nil, nil, &stderr)
+	err = runSystemLifecycle(t.Context(), systemsandbox.Docker, systemsandbox.ConfinementPolicy{User: "1000:1000"}, systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"}, Options{Resolved: resolved, SourceDir: source}, nil, nil, &stderr)
 	var exit ExitError
 	if !errors.As(err, &exit) || exit.Code != 7 {
 		t.Fatalf("runSystemLifecycle error = %v, want exit 7", err)

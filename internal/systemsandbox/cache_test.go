@@ -172,6 +172,30 @@ func TestPrepareCachesCreatesAndThenReusesExactLabelledVolume(t *testing.T) {
 	}
 }
 
+func TestApplyConfinementPolicyRekeysCachesForEffectiveIdentity(t *testing.T) {
+	original := testCachePlan(t)
+	if original.UID == 0 && original.GID == 0 {
+		t.Skip("host cache identity already uses mapped root")
+	}
+	plan, err := ApplyConfinementPolicy(ImagePlan{Caches: []CachePlan{original}}, ConfinementPolicy{User: "0:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := plan.Caches[0]
+	if cache.Key == original.Key || cache.Name == original.Name {
+		t.Fatal("effective container identity did not change cache identity")
+	}
+	if cache.UID != 0 || cache.GID != 0 || cache.Labels["shadowtree.uid"] != "0" || cache.Labels["shadowtree.gid"] != "0" {
+		t.Fatalf("rekeyed cache identity = %#v", cache)
+	}
+	if _, diagnostics := cachePlanFromLabels(cache.Name, cache.ProjectRoot, cache.Labels); len(diagnostics) != 0 {
+		t.Fatalf("rekeyed cache diagnostics = %v", diagnostics)
+	}
+	if original.Labels["shadowtree.uid"] == "0" || original.Labels["shadowtree.gid"] == "0" {
+		t.Fatal("ApplyConfinementPolicy mutated the input plan labels")
+	}
+}
+
 func TestResetCachesRefusesActiveOrMismatchedVolume(t *testing.T) {
 	plan := testCachePlan(t)
 	labels := plan.Labels

@@ -423,9 +423,14 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	if err := validateSystemHelperPlatform(runtime.GOOS, runtime.GOARCH, plan.Platform); err != nil {
 		return fmt.Errorf("recipe %q system lifecycle helper: %w", resolved.Name, err)
 	}
-	runtimeName, err := systemsandbox.Detect(ctx, progress)
+	runtimeSelection, err := systemsandbox.Detect(ctx, progress)
 	if err != nil {
 		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
+	}
+	runtimeName := runtimeSelection.Name
+	plan, err = systemsandbox.ApplyConfinementPolicy(plan, runtimeSelection.Confinement)
+	if err != nil {
+		return fmt.Errorf("recipe %q system cache identity: %w", resolved.Name, err)
 	}
 	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, progress); err != nil {
 		return fmt.Errorf("recipe %q system image build: %w", resolved.Name, err)
@@ -443,7 +448,7 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
-	return runSystemLifecycle(ctx, runtimeName, plan, options, stdin, stdout, progress)
+	return runSystemLifecycle(ctx, runtimeName, runtimeSelection.Confinement, plan, options, stdin, stdout, progress)
 }
 
 func rebaseSystemConfigPath(configPath, source, canonicalSource string) (string, error) {

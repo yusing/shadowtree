@@ -111,6 +111,9 @@ Execution runs the complete lifecycle in one ephemeral container against a
 private copied workspace. Nested references do not create nested images or
 containers. Expect `post` on initial cancellation and sync-out only after full
 success, with lifecycle and cleanup progress on stderr.
+Runtime selection fails closed when rootless UID/GID mapping or applicable
+SELinux private relabelling cannot be established; do not retry with weakened
+user-namespace, labelling, or bind-mount flags.
 
 Use `shadowtree cache inspect [recipe] [--json]` for read-only project cache
 diagnostics. Use `shadowtree cache reset <recipe>` or `cache reset --all` only

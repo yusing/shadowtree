@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -24,7 +26,7 @@ type LifecycleOptions struct {
 	WorkspacePath string
 	HelperHost    string
 	PlanHost      string
-	User          string
+	Confinement   ConfinementPolicy
 	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
@@ -43,19 +45,11 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
 	}
-	if options.Image == "" || options.Platform == "" || options.User == "" {
+	if options.Image == "" || options.Platform == "" || options.Confinement.User == "" {
 		return errors.New("system lifecycle requires image, platform, and user identity")
 	}
-	for label, value := range map[string]string{
-		"workspace host": options.WorkspaceHost,
-		"workspace path": options.WorkspacePath,
-		"helper host":    options.HelperHost,
-		"plan host":      options.PlanHost,
-		"export host":    options.ExportHost,
-	} {
-		if value == "" || strings.Contains(value, ",") {
-			return fmt.Errorf("system lifecycle %s path is empty or contains an unsupported comma", label)
-		}
+	if options.Confinement.UserNamespace != "" && options.Confinement.UserNamespace != "keep-id" {
+		return fmt.Errorf("unsupported system lifecycle user namespace %q", options.Confinement.UserNamespace)
 	}
 	name, err := lifecycleContainerName()
 	if err != nil {
@@ -63,19 +57,33 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	}
 	createArgs := []string{
 		"create", "--interactive", "--name", name,
-		"--read-only", "--platform", options.Platform, "--user", options.User,
-		"--mount", "type=bind,src=" + options.WorkspaceHost + ",dst=" + options.WorkspacePath,
-		"--mount", "type=bind,src=" + options.HelperHost + ",dst=/opt/shadowtree/helper,readonly",
-		"--mount", "type=bind,src=" + options.PlanHost + ",dst=/opt/shadowtree/plan.json,readonly",
-		"--mount", "type=bind,src=" + options.ExportHost + ",dst=/opt/shadowtree/export",
+		"--read-only", "--platform", options.Platform, "--user", options.Confinement.User,
 		"--mount", "type=tmpfs,dst=/tmp",
+	}
+	if options.Confinement.UserNamespace != "" {
+		createArgs = append(createArgs, "--userns", options.Confinement.UserNamespace)
+	}
+	for _, mount := range []struct {
+		host, destination string
+		readOnly          bool
+	}{
+		{options.WorkspaceHost, options.WorkspacePath, false},
+		{options.HelperHost, "/opt/shadowtree/helper", true},
+		{options.PlanHost, "/opt/shadowtree/plan.json", true},
+		{options.ExportHost, "/opt/shadowtree/export", false},
+	} {
+		args, err := bindMountArgs(mount.host, mount.destination, mount.readOnly, options.Confinement.SELinux)
+		if err != nil {
+			return err
+		}
+		createArgs = append(createArgs, args...)
 	}
 	for _, cache := range options.Caches {
 		if err := validateCachePlan(cache); err != nil {
 			return err
 		}
-		if strings.Contains(cache.MountPath, ",") {
-			return fmt.Errorf("cache %s mount path contains an unsupported comma", cache.Provider)
+		if strings.ContainsAny(cache.Name, ",\n\r") || strings.ContainsAny(cache.MountPath, ",\n\r") {
+			return fmt.Errorf("cache %s volume or mount path contains an unsupported delimiter", cache.Provider)
 		}
 		createArgs = append(createArgs, "--mount", "type=volume,src="+cache.Name+",dst="+cache.MountPath)
 	}
@@ -170,6 +178,30 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 			return fmt.Errorf("system runtime client did not exit after forced cleanup: %w", context.Cause(ctx))
 		}
 	}
+}
+
+func bindMountArgs(host, destination string, readOnly, selinux bool) ([]string, error) {
+	if !filepath.IsAbs(host) || !path.IsAbs(destination) {
+		return nil, fmt.Errorf("system lifecycle bind mount requires absolute host and container paths: %q -> %q", host, destination)
+	}
+	if selinux {
+		if strings.ContainsAny(host, ":\n\r") || strings.ContainsAny(destination, ":\n\r") {
+			return nil, fmt.Errorf("system lifecycle SELinux bind path contains an unsupported delimiter: %q -> %q", host, destination)
+		}
+		options := "Z"
+		if readOnly {
+			options = "ro,Z"
+		}
+		return []string{"--volume", host + ":" + destination + ":" + options}, nil
+	}
+	if strings.ContainsAny(host, ",\n\r") || strings.ContainsAny(destination, ",\n\r") {
+		return nil, fmt.Errorf("system lifecycle bind path contains an unsupported delimiter: %q -> %q", host, destination)
+	}
+	mount := "type=bind,src=" + host + ",dst=" + destination
+	if readOnly {
+		mount += ",readonly"
+	}
+	return []string{"--mount", mount}, nil
 }
 
 func lifecycleContainerName() (string, error) {

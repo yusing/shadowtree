@@ -26,6 +26,19 @@ shadowtree install-skill
 Recipes that intentionally change the host checkout set `sandboxed = false` in
 `.shadowtree.toml`.
 
+System-runtime confinement has an opt-in capable-host gate. Run it separately
+for Docker, Podman, and nerdctl with a small Linux image that provides
+`/bin/sh`, `id`, and `tr`:
+
+```sh
+SHADOWTREE_CAPABLE_RUNTIME=docker SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
+SHADOWTREE_CAPABLE_RUNTIME=podman SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
+SHADOWTREE_CAPABLE_RUNTIME=nerdctl SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
+```
+
+Do not mark the multi-engine confinement gate complete from mocked adapters or
+from only one runtime.
+
 The `install` recipe uses default `go install`, honors `FISH_CONFIG_DIR` and
 `FISH_COMPLETIONS_DIR`, generates completion from `shadowtree` on `PATH`,
 installs fish completion when `fish` is available, and appends single guarded
