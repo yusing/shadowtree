@@ -1,0 +1,98 @@
+version: 1
+items:
+  - id: REQ-RUST-001
+    title: REQ-RUST-001 — Select the Rust profile
+    kind: requirement
+    scope: root
+    path: doc/spec/rust-profile.md
+    status: pending
+  - id: REQ-RUST-002
+    title: REQ-RUST-002 — Resolve canonical Rust project metadata
+    kind: requirement
+    scope: root
+    path: doc/spec/rust-profile.md
+    status: pending
+  - id: REQ-RUST-003
+    title: REQ-RUST-003 — Provide host-usable Cargo built-ins
+    kind: requirement
+    scope: root
+    path: doc/spec/rust-profile.md
+    status: pending
+  - id: REQ-RUST-004
+    title: REQ-RUST-004 — Expose dependency and cache contracts
+    kind: requirement
+    scope: root
+    path: doc/spec/rust-profile.md
+    status: pending
+  - id: REQ-RUST-005
+    title: REQ-RUST-005 — Keep all public surfaces aligned
+    kind: requirement
+    scope: root
+    path: doc/spec/rust-profile.md
+    status: pending
+  - id: REQ-SBOX-001
+    title: REQ-SBOX-001 — Select system sandbox mode explicitly
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-002
+    title: REQ-SBOX-002 — Detect one usable system runtime
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-003
+    title: REQ-SBOX-003 — Select profile-owned default images and tooling
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-004
+    title: REQ-SBOX-004 — Build five ordered immutable stages
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-005
+    title: REQ-SBOX-005 — Give each immutable stage one owner
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-006
+    title: REQ-SBOX-006 — Prepare dependencies deterministically and safely
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-007
+    title: REQ-SBOX-007 — Persist mutable build caches only within one project
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-008
+    title: REQ-SBOX-008 — Run one ephemeral lifecycle at a stable path
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-009
+    title: "REQ-SBOX-009 — Preserve lifecycle, output, and sync-out contracts"
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-010
+    title: REQ-SBOX-010 — Inspect and reset project caches clearly
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending
+  - id: REQ-SBOX-011
+    title: REQ-SBOX-011 — Fail closed at trust and compatibility boundaries
+    kind: requirement
+    scope: root
+    path: doc/spec/system-sandbox.md
+    status: pending

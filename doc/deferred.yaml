@@ -1,0 +1,26 @@
+version: 1
+items:
+  - id: DFR-001
+    title: Index existing Shadowtree documentation
+    reason: "This pjdoc draft is intentionally limited to the new Rust profile and system sandbox; existing README, mdBook, behavior spec, and workflow docs retain their current ownership."
+    reconsider_when: "After the Rust profile and system sandbox drafts stabilize, before pjdoc is used as the authority for existing product behavior."
+  - id: DFR-002
+    title: Add system-sandbox networking controls
+    reason: The first slice uses the selected runtime default and does not need port publication or custom network policy.
+    reconsider_when: "When a demonstrated recipe needs inbound ports, offline mode, or explicit network isolation beyond the runtime default."
+  - id: DFR-003
+    title: Select a preferred container runtime explicitly
+    reason: "Stable Docker, Podman, then nerdctl probing is sufficient for the first slice and avoids another configuration surface."
+    reconsider_when: When users with multiple usable runtimes need deterministic selection different from the probe order.
+  - id: DFR-004
+    title: Share or publish derived recipe images
+    reason: "The first slice relies only on each runtime local image store and does not define registry names, credentials, provenance, or compatibility for remote sharing."
+    reconsider_when: When CI or multiple developers need to exchange prebuilt Shadowtree recipe images.
+  - id: DFR-005
+    title: Declare custom mutable recipe caches
+    reason: "The first slice uses profile-owned Go, Rust, and proven Node/Bun cache providers so arbitrary paths cannot bypass project scoping, ownership, concurrency, or sync-out rules."
+    reconsider_when: After built-in providers demonstrate a minimal safe declaration contract needed by an unsupported compiler or framework.
+  - id: DFR-006
+    title: Manage immutable image retention and refresh
+    reason: The container runtime owns immutable images and build cache; the first slice provides mutable project-cache inspection/reset but no hidden mutable-tag refresh or automatic image garbage collection.
+    reconsider_when: "When measured disk pressure or stale-base incidents justify explicit image inspection, refresh, or retention behavior."

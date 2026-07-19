@@ -48,5 +48,4 @@
 # Reference
 
 - [Behavior Spec](reference/spec.md)
-- [System Container Sandbox Pipeline](reference/persistent-sandbox-pipeline.md)
 - [Known Limits](known-limits.md)
