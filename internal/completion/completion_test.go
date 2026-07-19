@@ -51,8 +51,8 @@ func TestCandidatesCompleteProfileValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			candidates := complete(t, tt.words, nil)
 
-			if !hasCandidate(candidates, "go") || !hasCandidate(candidates, "node") {
-				t.Fatalf("candidates = %#v, want go and node", candidates)
+			if !hasCandidate(candidates, "go") || !hasCandidate(candidates, "node") || !hasCandidate(candidates, "rust") {
+				t.Fatalf("candidates = %#v, want go, node, and rust", candidates)
 			}
 		})
 	}

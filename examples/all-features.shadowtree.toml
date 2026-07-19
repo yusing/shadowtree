@@ -10,6 +10,8 @@
 
 "$schema" = "../schemas/shadowtree.schema.json"
 include = ["./all-features-base.shadowtree.toml"]
+# Supported profile values are "go", "node", and "rust". This fixture uses Go
+# so its Go-specific value providers remain active.
 profile = "go"
 shell = "bash"
 

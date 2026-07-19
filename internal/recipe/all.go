@@ -24,6 +24,7 @@ const (
 	GoPackageTargets     TargetSource = "go-packages"
 	GoMainPackageTargets TargetSource = "go-main-packages"
 	GoModuleTargets      TargetSource = "go-modules"
+	RustWorkspaceTargets TargetSource = "rust-workspace"
 )
 
 // ExecutionTarget is one aggregate main-command invocation.
@@ -133,6 +134,12 @@ func ResolveExecutionTargets(ctx context.Context, source TargetSource, dir strin
 		return nil, err
 	}
 	switch source {
+	case RustWorkspaceTargets:
+		project, err := ResolveRustProject(ctx, dir, env, buildArgs)
+		if err != nil {
+			return nil, err
+		}
+		return []ExecutionTarget{{Label: "Cargo workspace " + project.WorkspaceRoot, Workdir: "."}}, nil
 	case GoPackageTargets:
 		modules, err := discoverGoModules(ctx, dir, "")
 		if err != nil {

@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"os"
@@ -2905,6 +2906,207 @@ func TestValidateConfigRejectsUnsupportedProfile(t *testing.T) {
 	}
 }
 
+func TestRustBuiltinsProvideCargoCheck(t *testing.T) {
+	if !SupportsProfile(RustProfile) {
+		t.Fatalf("SupportsProfile(%q) = false", RustProfile)
+	}
+	rec, ok := Builtins(RustProfile, BuiltinOptions{})["check"]
+	if !ok {
+		t.Fatal("Rust built-ins missing check")
+	}
+	if !slices.Equal(rec.Cmd, Command{"cargo", "+1.96.0", "check", "{@}"}) {
+		t.Fatalf("check command = %#v, want cargo check with trailing arguments", rec.Cmd)
+	}
+}
+
+func TestRustBuiltinsProvideHostWorkflowAndExplicitWorkspaceAggregate(t *testing.T) {
+	recipes := Builtins(RustProfile, BuiltinOptions{})
+	for name, command := range map[string]Command{
+		"check":  {"cargo", "+1.96.0", "check", "{@}"},
+		"test":   {"cargo", "+1.96.0", "test", "{@}"},
+		"build":  {"cargo", "+1.96.0", "build", "{@}"},
+		"run":    {"cargo", "+1.96.0", "run", "{@}"},
+		"fmt":    {"cargo", "+1.96.0", "fmt", "{@}"},
+		"clippy": {"cargo", "+1.96.0", "clippy", "{@}"},
+	} {
+		rec, ok := recipes[name]
+		if !ok {
+			t.Fatalf("Rust built-ins missing %s", name)
+		}
+		if !slices.Equal(rec.Cmd, command) {
+			t.Fatalf("%s command = %#v, want %#v", name, rec.Cmd, command)
+		}
+	}
+
+	all, domain, source, err := SelectAll("check", recipes["check"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if domain != "workspace" || source != RustWorkspaceTargets {
+		t.Fatalf("check --all = domain %q source %q", domain, source)
+	}
+	if !slices.Equal(all.Cmd, Command{"cargo", "+1.96.0", "check", "--workspace", "{@}"}) {
+		t.Fatalf("check --all command = %#v", all.Cmd)
+	}
+	if _, _, _, err := SelectAll("run", recipes["run"]); err == nil || !strings.Contains(err.Error(), "multiple binaries") {
+		t.Fatalf("run --all error = %v, want explicit multiple-binary guidance", err)
+	}
+	for _, name := range []string{"fmt", "clippy"} {
+		body := ScriptBody(recipes[name].Pre[0].Cmd)
+		if !strings.Contains(body, "install the ") || !strings.Contains(body, "component") {
+			t.Fatalf("%s component diagnostic = %q, want install guidance", name, body)
+		}
+	}
+}
+
+func TestResolveRustProjectOwnsWorkspaceToolchainAndCacheContract(t *testing.T) {
+	root := t.TempDir()
+	member := filepath.Join(root, "crates", "app")
+	mkdirAll(t, member)
+	mkdirAll(t, filepath.Join(root, ".cargo"))
+	writeFile(t, filepath.Join(root, "Cargo.toml"), "[workspace]\nmembers = [\"crates/app\"]\n")
+	writeFile(t, filepath.Join(root, "Cargo.lock"), "# lock\n")
+	writeFile(t, filepath.Join(root, RustToolchainTOML), "[toolchain]\nchannel = \"1.96.0-x86_64-unknown-linux-gnu\"\n")
+	writeFile(t, filepath.Join(root, ".cargo", "config.toml"), "[build]\ntarget = \"wasm32-wasip2\"\n")
+	writeFile(t, filepath.Join(member, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+
+	metadata := cargoMetadata{WorkspaceRoot: root, TargetDirectory: filepath.Join(root, "target")}
+	metadata.Packages = append(metadata.Packages, struct {
+		ManifestPath string `json:"manifest_path"`
+	}{ManifestPath: filepath.Join(member, "Cargo.toml")})
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	writeExecutable(t, filepath.Join(bin, "rustc"), "#!/bin/sh\nprintf '%s\\n' 'release: 1.96.0' 'commit-hash: abc123' 'host: x86_64-unknown-linux-gnu'\n")
+	writeExecutable(t, filepath.Join(bin, "cargo"), "#!/bin/sh\nprintf '%s\\n' "+shellQuote(string(metadataJSON))+"\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cargoHome := filepath.Join(root, ".cargo-home")
+	env := append(os.Environ(), "CARGO_HOME="+cargoHome)
+
+	project, err := ResolveRustProject(t.Context(), member, env, []string{"--target=thumbv7em-none-eabihf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.WorkspaceRoot != root || project.RootManifest != filepath.Join(root, "Cargo.toml") {
+		t.Fatalf("workspace = %#v, want root %q", project, root)
+	}
+	if !slices.Equal(project.MemberManifests, []string{filepath.Join(member, "Cargo.toml")}) {
+		t.Fatalf("member manifests = %#v", project.MemberManifests)
+	}
+	if project.Toolchain != "1.96.0-x86_64-unknown-linux-gnu" || project.ToolchainProvenance != filepath.Join(root, RustToolchainTOML) {
+		t.Fatalf("toolchain = %q from %q", project.Toolchain, project.ToolchainProvenance)
+	}
+	if project.CompilerCommit != "abc123" {
+		t.Fatalf("compiler commit = %q, want exact rustc commit", project.CompilerCommit)
+	}
+	if project.HostTriple != "x86_64-unknown-linux-gnu" || project.TargetTriple != "thumbv7em-none-eabihf" {
+		t.Fatalf("host/target = %q/%q", project.HostTriple, project.TargetTriple)
+	}
+	if !project.LockedPreparation || project.Lockfile != filepath.Join(root, "Cargo.lock") {
+		t.Fatalf("locked preparation = %t lockfile %q", project.LockedPreparation, project.Lockfile)
+	}
+	if project.RegistryCache != filepath.Join(cargoHome, "registry") || project.GitCache != filepath.Join(cargoHome, "git") || project.TargetDir != filepath.Join(root, "target") {
+		t.Fatalf("cache destinations = registry %q git %q target %q", project.RegistryCache, project.GitCache, project.TargetDir)
+	}
+	if project.ProjectCacheKey == "" || project.TargetCacheConcurrency != RustTargetCacheConcurrency {
+		t.Fatalf("cache contract = key %q concurrency %q", project.ProjectCacheKey, project.TargetCacheConcurrency)
+	}
+	if !slices.Contains(project.CacheCompatibility, "thumbv7em-none-eabihf") {
+		t.Fatalf("cache compatibility = %#v, want effective Cargo target", project.CacheCompatibility)
+	}
+	if !slices.Equal(project.FetchCommand, Command{"cargo", "+1.96.0-x86_64-unknown-linux-gnu", "fetch", "--locked", "--manifest-path", filepath.Join(root, "Cargo.toml")}) {
+		t.Fatalf("fetch command = %#v", project.FetchCommand)
+	}
+}
+
+func TestRustTargetArgumentPrecedenceAndValidation(t *testing.T) {
+	for name, tt := range map[string]struct {
+		args    []string
+		want    string
+		found   bool
+		wantErr string
+	}{
+		"equals":               {args: []string{"--target=wasm32-wasip2"}, want: "wasm32-wasip2", found: true},
+		"separate":             {args: []string{"--target", "thumbv7em-none-eabihf"}, want: "thumbv7em-none-eabihf", found: true},
+		"last wins":            {args: []string{"--target=a", "--target", "b"}, want: "b", found: true},
+		"passthrough boundary": {args: []string{"--", "--target=ignored"}},
+		"empty equals":         {args: []string{"--target="}, wantErr: "non-empty"},
+		"missing separate":     {args: []string{"--target"}, wantErr: "requires a value"},
+		"flag as value":        {args: []string{"--target", "--release"}, wantErr: "requires a value"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, found, err := rustTargetArgument(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want || found != tt.found {
+				t.Fatalf("rustTargetArgument() = %q, %t, %v; want %q, %t", got, found, err, tt.want, tt.found)
+			}
+		})
+	}
+}
+
+func TestResolveRustProjectRejectsMalformedAndUnknownToolchains(t *testing.T) {
+	for name, tt := range map[string]struct {
+		file    string
+		content string
+		want    string
+	}{
+		"malformed TOML":         {file: RustToolchainTOML, content: "[toolchain\n", want: "parse"},
+		"ambiguous stable":       {file: RustToolchainTOML, content: "[toolchain]\nchannel = \"stable\"\n", want: `"stable"`},
+		"unknown future channel": {file: RustToolchainFile, content: "future\n", want: `"future"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+			writeFile(t, filepath.Join(dir, tt.file), tt.content)
+			_, err := ResolveRustProject(t.Context(), dir, os.Environ(), nil)
+			if err == nil || !strings.Contains(err.Error(), filepath.Join(dir, tt.file)) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ResolveRustProject() error = %v, want path and %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveRustProjectPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := ResolveRustProject(ctx, t.TempDir(), os.Environ(), nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
+	}
+}
+
+func TestResolveRustWorkspaceTargetUsesRunnerRelativeWorkdir(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+	metadata := cargoMetadata{WorkspaceRoot: root, TargetDirectory: filepath.Join(root, "target")}
+	metadata.Packages = append(metadata.Packages, struct {
+		ManifestPath string `json:"manifest_path"`
+	}{ManifestPath: filepath.Join(root, "Cargo.toml")})
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	writeExecutable(t, filepath.Join(bin, "rustc"), "#!/bin/sh\nprintf '%s\\n' 'release: 1.96.0' 'commit-hash: abc123' 'host: x86_64-unknown-linux-gnu'\n")
+	writeExecutable(t, filepath.Join(bin, "cargo"), "#!/bin/sh\nprintf '%s\\n' "+shellQuote(string(metadataJSON))+"\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	targets, err := ResolveExecutionTargets(t.Context(), RustWorkspaceTargets, root, os.Environ(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].Workdir != "." || !strings.Contains(targets[0].Label, root) {
+		t.Fatalf("targets = %#v, want one runner-relative Cargo workspace", targets)
+	}
+}
+
 func TestValidateConfigRejectsUnsupportedGlobalShell(t *testing.T) {
 	err := ValidateConfig(Config{Shell: "fish"})
 	if err == nil || !strings.Contains(err.Error(), `shell must be sh or bash, got "fish"`) {
@@ -3261,6 +3463,14 @@ func mkdirAll(t *testing.T, path string) {
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	writeFile(t, path, content)
+	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -50,7 +50,7 @@ Completion uses:
 - `shadowtree te<TAB>` completes matching recipe names such as `test`.
 - `shadowtree help <TAB>` completes recipe names.
 - `shadowtree help test <TAB>` completes `color=false`.
-- `shadowtree --profile <TAB>` completes `go` and `node`.
+- `shadowtree --profile <TAB>` completes `go`, `node`, and `rust`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.
 - `shadowtree benchmark preset=<TAB>` completes recipe-local preset names.

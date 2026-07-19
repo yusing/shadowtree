@@ -505,6 +505,14 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 	if profile != "" && !recipe.SupportsProfile(profile) {
 		return nil, "", fmt.Errorf("unsupported profile: %s", profile)
 	}
+	builtinOptions := recipe.BuiltinOptions{Context: ctx, Dir: dir}
+	if profile == recipe.RustProfile {
+		toolchain, err := recipe.RustToolchain(dir)
+		if err != nil {
+			return nil, "", err
+		}
+		builtinOptions.RustToolchain = toolchain
+	}
 	vars := maps.Clone(loaded.Config.Vars)
 	if vars == nil {
 		vars = map[string]string{}
@@ -521,7 +529,7 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 			dynamicVars[name] = "{" + name + "}"
 		}
 	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, recipe.BuiltinOptions{Context: ctx, Dir: dir}), loaded.Config.Recipes)
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, builtinOptions), loaded.Config.Recipes)
 	if err != nil {
 		return nil, "", err
 	}

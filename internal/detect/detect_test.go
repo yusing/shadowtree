@@ -24,6 +24,15 @@ func TestProfileDetectsGoModule(t *testing.T) {
 	}
 }
 
+func TestProfileDetectsCargoProject(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
+
+	if got := Profile(dir); got != RustProfile {
+		t.Fatalf("Profile() = %q, want %q", got, RustProfile)
+	}
+}
+
 func TestProfileUsesNearestMarker(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n")
@@ -42,9 +51,29 @@ func TestProfileUsesGoForSameDirectoryTie(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n")
 	writeFile(t, filepath.Join(dir, "package.json"), "{}")
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[workspace]\n")
 
 	if got := Profile(dir); got != GoProfile {
 		t.Fatalf("Profile() = %q, want %q", got, GoProfile)
+	}
+}
+
+func TestProfileUsesNodeBeforeRustForSameDirectoryTie(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "package.json"), "{}")
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[workspace]\n")
+
+	if got := Profile(dir); got != NodeProfile {
+		t.Fatalf("Profile() = %q, want %q", got, NodeProfile)
+	}
+}
+
+func TestProfileReturnsEmptyWithoutSupportedMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "pyproject.toml"), "[project]\nname = \"app\"\n")
+
+	if got := Profile(dir); got != "" {
+		t.Fatalf("Profile() = %q, want no profile", got)
 	}
 }
 

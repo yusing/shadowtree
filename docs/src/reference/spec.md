@@ -13,7 +13,7 @@ This document describes the behavior currently implemented by the project.
 - Run common development tasks through a simple recipe interface.
 - Keep command writes isolated from the host checkout unless explicitly synced.
 - Avoid triggering editor/LSP reindexing for generated or temporary files.
-- Provide useful defaults for Go and Node projects.
+- Provide useful defaults for Go, Node, and Rust projects.
 - Keep configuration small and exact, using shell strings for commands and
   typed arguments plus placeholders for validated defaults and CLI forwarding.
 - Support dynamic shell completion from resolved recipes.
@@ -90,7 +90,7 @@ shadowtree __complete zsh <words...>
 
 ```text
 --config PATH       use an explicit config file
---profile PROFILE   use a profile; supported profiles are go and node
+--profile PROFILE   use a profile; supported profiles are go, node, and rust
 --all               run the recipe's profile-defined aggregate plan
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
@@ -918,7 +918,7 @@ are also reserved.
 
 ## Built-In Profiles
 
-Supported profiles are `go` and `node`. Profile selection precedence is:
+Supported profiles are `go`, `node`, and `rust`. Profile selection precedence is:
 
 1. explicit `--profile`;
 2. config `profile`;
@@ -932,7 +932,8 @@ directory and compares the nearest profile markers:
 
 - `package.json` selects `node`.
 - `go.mod` or `go.work` selects `go`.
-- If Go and Node markers are in the same directory, Go wins.
+- `Cargo.toml` selects `rust`.
+- Same-directory precedence is Go, then Node, then Rust.
 
 ## Built-In Go Profile
 
@@ -1081,6 +1082,23 @@ the normalized name wins; otherwise the lexicographically first original script
 name wins. For example, package script `lint:fix` becomes recipe `lint-fix`, but
 the generated command still runs the original script key `lint:fix`.
 
+## Built-In Rust Profile
+
+The Rust profile is selected explicitly or from the nearest `Cargo.toml` when
+no config is loaded. It provides `check`, `test`, `build`, `run`, `fmt`, and
+`clippy`, forwarding trailing arguments to Cargo. Aggregate execution uses
+Cargo workspace flags for every recipe except `run`, whose multiple-binary
+policy must be selected explicitly.
+
+Rust resolution has one owner for the canonical workspace root, root and member
+manifests, optional lockfile, exact toolchain and provenance, host and selected
+target triples, Cargo home caches, target directory, project cache key, and
+exclusive target-cache concurrency. Toolchain precedence is the nearest
+`rust-toolchain.toml`, then `rust-toolchain`, then exact default `1.96.0`.
+Ambiguous or malformed declarations fail with their path and value. Shadowtree
+does not install toolchains, rustfmt, or Clippy. A present lockfile enables
+`cargo fetch --locked` as the dependency-preparation contract.
+
 ## Help
 
 `shadowtree help` prints CLI usage, active config/profile, and resolved recipes
@@ -1189,7 +1207,7 @@ Supported completion behavior:
 - `shadowtree te<TAB>` completes matching recipe names such as `test`.
 - `shadowtree help <TAB>` completes recipe names.
 - `shadowtree help test <TAB>` completes `color=false`.
-- `shadowtree --profile <TAB>` completes `go` and `node`.
+- `shadowtree --profile <TAB>` completes `go`, `node`, and `rust`.
 - `shadowtree build <TAB>` completes configured recipe arguments such as
   `project=`.
 - `shadowtree benchmark preset=<TAB>` completes recipe-local preset names
@@ -1306,4 +1324,4 @@ tidy
 - Commands can still intentionally read or write absolute host paths.
 - Configured commands are shell strings; direct process argv arrays are only an
   internal representation used by built-in recipes and resolved execution.
-- Built-in language profiles currently cover Go and Node.
+- Built-in language profiles currently cover Go, Node, and Rust.

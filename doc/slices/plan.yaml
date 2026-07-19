@@ -1,0 +1,9 @@
+revision: SPEC-1
+slices:
+  - id: RUST-PROFILE
+    status: implemented
+    requirement_ids: [REQ-RUST-001, REQ-RUST-002, REQ-RUST-003, REQ-RUST-004, REQ-RUST-005]
+    outcome: Cargo projects select an exact Rust toolchain and expose host-usable, workspace-aware built-ins plus project-scoped dependency and cache contracts.
+    boundaries: [detect.Profile, configfile.ResolveRecipes, recipe Rust metadata and built-ins, aggregate execution, CLI and public surfaces]
+    acceptance: A real Cargo project resolves and runs pinned check, test, build, run, fmt, and clippy paths; malformed selections fail closed.
+    non_goals: [system sandbox]

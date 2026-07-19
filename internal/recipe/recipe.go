@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -26,6 +27,7 @@ import (
 const (
 	GoProfile   = "go"
 	NodeProfile = "node"
+	RustProfile = "rust"
 )
 
 const (
@@ -276,11 +278,12 @@ type Placeholder struct {
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var supportedProfiles = []string{GoProfile, NodeProfile}
+var supportedProfiles = []string{GoProfile, NodeProfile, RustProfile}
 
 type BuiltinOptions struct {
-	Context context.Context
-	Dir     string
+	Context       context.Context
+	Dir           string
+	RustToolchain string
 }
 
 func SupportsProfile(profile string) bool {
@@ -294,8 +297,11 @@ func IsCommandHelperName(name string) bool {
 
 func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 	if profile != GoProfile {
-		if profile == NodeProfile {
+		switch profile {
+		case NodeProfile:
 			return nodeBuiltins(opts)
+		case RustProfile:
+			return rustBuiltins(cmp.Or(opts.RustToolchain, DefaultRustToolchain))
 		}
 		return map[string]Recipe{}
 	}

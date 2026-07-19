@@ -52,7 +52,7 @@ DYNAMIC_NAME = "printf dynamic"
 Field summary:
 
 - `include`: merge shared Shadowtree TOML files before the current config.
-- `profile`: opt into built-in recipes for `go` or `node`.
+- `profile`: opt into built-in recipes for `go`, `node`, or `rust`.
 - `shell`: script shell for shell command strings; supported values are `sh`
   and `bash`.
 - `shell_prelude`: shell code prepended to every script command.

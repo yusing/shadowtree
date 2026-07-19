@@ -5,31 +5,31 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/rust-profile.md
-    status: pending
+    status: verified
   - id: REQ-RUST-002
     title: REQ-RUST-002 — Resolve canonical Rust project metadata
     kind: requirement
     scope: root
     path: doc/spec/rust-profile.md
-    status: pending
+    status: verified
   - id: REQ-RUST-003
     title: REQ-RUST-003 — Provide host-usable Cargo built-ins
     kind: requirement
     scope: root
     path: doc/spec/rust-profile.md
-    status: pending
+    status: verified
   - id: REQ-RUST-004
     title: REQ-RUST-004 — Expose dependency and cache contracts
     kind: requirement
     scope: root
     path: doc/spec/rust-profile.md
-    status: pending
+    status: verified
   - id: REQ-RUST-005
     title: REQ-RUST-005 — Keep all public surfaces aligned
     kind: requirement
     scope: root
     path: doc/spec/rust-profile.md
-    status: pending
+    status: verified
   - id: REQ-SBOX-001
     title: REQ-SBOX-001 — Select system sandbox mode explicitly
     kind: requirement

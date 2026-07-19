@@ -1174,6 +1174,73 @@ func TestResolveRecipesDetectsNodeProfileWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestResolveRecipesDetectsRustProfileWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.RustProfile {
+		t.Fatalf("profile = %q, want %q", profile, recipe.RustProfile)
+	}
+	if _, ok := recipes["check"]; !ok {
+		t.Fatalf("recipes missing Rust builtin check: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesThreadsSelectedRustToolchainIntoBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.95.1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, _, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := recipe.Command{"cargo", "+1.95.1", "check", "{@}"}
+	if !slices.Equal(recipes["check"].Cmd, want) {
+		t.Fatalf("check command = %#v, want %#v", recipes["check"].Cmd, want)
+	}
+}
+
+func TestResolveRecipesExplicitGoOverridesNearerCargoMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipes, profile, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{Profile: recipe.GoProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != recipe.GoProfile {
+		t.Fatalf("profile = %q, want explicit %q", profile, recipe.GoProfile)
+	}
+	if _, ok := recipes["test"]; !ok {
+		t.Fatalf("recipes missing explicit Go builtin test: %#v", recipes)
+	}
+}
+
+func TestResolveRecipesRejectsUnknownExplicitProfileInsteadOfDetecting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := ResolveRecipes(t.Context(), Loaded{}, dir, ResolveOptions{Profile: "future"})
+	if err == nil || err.Error() != "unsupported profile: future" {
+		t.Fatalf("ResolveRecipes() error = %v, want unsupported explicit profile", err)
+	}
+}
+
 func TestResolveRecipesUsesExplicitConfigProfile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".shadowtree.toml")

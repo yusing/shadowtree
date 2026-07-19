@@ -18,7 +18,7 @@ parsed as typed recipe arguments.
 : Use an explicit config file instead of discovery.
 
 `--profile PROFILE`
-: Use a profile. Supported profiles are `go` and `node`.
+: Use a profile. Supported profiles are `go`, `node`, and `rust`.
 
 `--all`
 : Select the recipe's profile-defined aggregate plan. The target domain is

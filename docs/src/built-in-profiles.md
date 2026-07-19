@@ -1,6 +1,7 @@
 # Profile Selection
 
-Profiles provide built-in recipes. Supported profiles are `go` and `node`.
+Profiles provide built-in recipes. Supported profiles are `go`, `node`, and
+`rust`.
 
 Profile selection precedence is:
 
@@ -11,6 +12,7 @@ Profile selection precedence is:
 ```sh
 shadowtree --profile go recipes
 shadowtree --profile node --print build
+shadowtree --profile rust --print check
 ```
 
 ```toml
@@ -24,7 +26,8 @@ directory and compares the nearest profile markers:
 
 - `package.json` selects `node`.
 - `go.mod` or `go.work` selects `go`.
-- If Go and Node markers are in the same directory, Go wins.
+- `Cargo.toml` selects `rust`.
+- Same-directory precedence is Go, then Node, then Rust.
 
 Configs that omit `profile` suppress detected built-ins. This preserves exact
 configured recipe sets unless a config opts into a profile.
@@ -44,3 +47,4 @@ Profile-specific behavior:
 
 - [Go Profile](go-profile.md)
 - [Node Profile](node-profile.md)
+- [Rust Profile](rust-profile.md)

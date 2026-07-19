@@ -31,10 +31,10 @@ shadowtree test
 `go install` writes to `$(go env GOPATH)/bin` by default; make sure that
 directory is on `PATH`.
 
-Without a config file, Shadowtree can detect nearby Go or Node project markers
+Without a config file, Shadowtree can detect nearby Go, Node, or Rust project markers
 and expose profile built-ins. A discovered config controls the recipe set
-exactly unless it opts into a profile with `profile = "go"` or
-`profile = "node"`.
+exactly unless it opts into a profile with `profile = "go"`,
+`profile = "node"`, or `profile = "rust"`.
 
 ## Everyday Workflows
 
@@ -95,7 +95,7 @@ Shadowtree puts those workflows behind one recipe interface:
 | Explicit checkout writes | Recipe `sync_out`, CLI `--sync-out`, `--sync-out-all`, or `sandboxed = false` for workflows that intentionally edit the host checkout |
 | Typed arguments | Positional and named recipe inputs with defaults, validation, value providers, presets, and completion |
 | Recipe references | `@recipe` and `@path:recipe` references for composing workflows without a second task language |
-| Profiles | Built-in Go and Node recipe sets, selected explicitly, by config, or by marker detection when no config is loaded |
+| Profiles | Built-in Go, Node, and Rust recipe sets, selected explicitly, by config, or by marker detection when no config is loaded |
 | CLI inspection | Help, recipe listing, plan printing, expanded printing, dry checks, shell parsing, and verbose execution boundaries |
 | Completion | Dynamic Bash, Fish, and Zsh completion from resolved recipes and argument values |
 | Editor support | JSON Schema, VS Code schema binding, Zed language support, and `shadowtree-lsp` |
@@ -166,7 +166,7 @@ Global flags:
 | Flag | Purpose |
 | --- | --- |
 | `--config <path>` | Use an explicit config file |
-| `--profile go\|node` | Select built-in profile recipes |
+| `--profile go\|node\|rust` | Select built-in profile recipes |
 | `--all` | Run the selected recipe for its profile-defined aggregate targets |
 | `--sync-out <path>` | Copy selected paths back after a successful sandboxed run |
 | `--sync-out-all` | Copy the whole sandbox workspace back after success |
@@ -205,6 +205,12 @@ framework, test, lint, formatter, and typechecker inference comes from
 `package.json`, lockfiles, installed dependencies, and common config markers.
 Node built-ins are unsandboxed by default because package-manager and framework
 commands commonly mutate project state.
+
+Rust projects expose `check`, `test`, `build`, `run`, `fmt`, and `clippy`.
+`--all` uses Cargo workspace semantics for every recipe except `run`, which
+requires an explicit binary. Shadowtree resolves the workspace, exact Rust
+toolchain, host and target triples, lockfile, and project-scoped cache contract
+without installing toolchains or optional components.
 
 Profile selection precedence:
 

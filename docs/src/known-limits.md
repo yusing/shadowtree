@@ -6,7 +6,7 @@ Shadowtree intentionally keeps the feature set small and explicit.
 - Shadowtree does not require reflinks.
 - Shadowtree does not currently provide Docker, remote execution, matrix jobs,
   watch mode, or persistent named sessions.
-- Built-in language profiles currently cover Go and Node.
+- Built-in language profiles currently cover Go, Node, and Rust.
 - Editor integrations complement runtime validation; the CLI loader remains
   authoritative.
 

@@ -18,7 +18,7 @@ checkout.
 - [Recipe Fields](recipes.md) - see the recipe fields that define a workflow.
 - [Typed Arguments](typed-arguments.md) - define positional and named recipe
   inputs with validation and completion.
-- [Profile Selection](built-in-profiles.md) - choose Go or Node built-ins
+- [Profile Selection](built-in-profiles.md) - choose Go, Node, or Rust built-ins
   explicitly or through marker detection.
 - [Editor Support](editor-support.md) - JSON Schema, Zed, VS Code, and
   `shadowtree-lsp`.
@@ -35,7 +35,8 @@ checkout.
   [reserved names](reserved-names.md).
 - Arguments: [typed arguments](typed-arguments.md), [value providers](value-providers.md),
   [variadic args](variadic-args.md), and [presets](presets.md).
-- Profiles: [Go](go-profile.md) and [Node](node-profile.md).
+- Profiles: [Go](go-profile.md), [Node](node-profile.md), and
+  [Rust](rust-profile.md).
 - Integrations: [shell completion](shell-completion.md) and [editor support](editor-support.md).
 
 ## Reference
