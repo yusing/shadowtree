@@ -75,5 +75,9 @@ paths.
 `--check` does not check host tool availability declared in `requires`; those
 are checked only before real execution.
 
+For `sandboxed = "system"`, `--check` first performs the bounded host-capability
+probe used by execution: Docker, Podman, then nerdctl. Detection progress and
+candidate failures use stderr. Static `--print` remains runtime-free.
+
 `--check --shell` additionally parses expanded `sh` and `bash` script bodies
 after placeholder expansion and shell prelude insertion.

@@ -13,6 +13,14 @@ sandboxed for sync-out and lifecycle purposes and never falls back to either
 other mode. Static help, completion, config loading, and print output do not
 probe an engine; plans report `runtime: <not probed>`.
 
+System execution and host-capability checks probe Docker, Podman, then nerdctl
+in stable order through direct argument vectors. Presence alone is insufficient:
+the selected client must reach its engine and expose the required image, build,
+labelled-volume, nested/read-only mount, UID/GID, signalling, and automatic
+removal operations. Probes are bounded and state-free, report progress on
+stderr, continue after an unusable installed candidate, and aggregate all
+candidate failures when none is usable.
+
 This document describes the behavior currently implemented by the project.
 
 ## Goals

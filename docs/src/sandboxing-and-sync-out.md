@@ -11,9 +11,13 @@ The `sandboxed` field accepts three values:
   mode.
 
 Static help, completion, config validation, and `--print` do not probe a
-container runtime. A system plan reports `runtime: <not probed>`. Until the
-runtime adapter is available, execution fails explicitly without creating a
-workspace or falling back.
+container runtime. A system plan reports `runtime: <not probed>`. Execution and
+`--check` probe Docker, Podman, then nerdctl in that order. Each probe is bounded
+and non-interactive, verifies engine access plus the required image, build,
+labelled-volume, mount, UID/GID, signalling, and automatic-removal operations,
+and reports progress on stderr. Unusable candidates are diagnosed before the
+next candidate is tried. Detection creates no image, volume, workspace, or
+container, and system mode never falls back.
 
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied

@@ -143,8 +143,10 @@ paths over `--sync-out-all`.
 
 `sandboxed = "system"` is an explicit third mode. Static help and plan output
 show it as `system` with `runtime: <not probed>` and never contact a container
-engine. Runtime execution is enabled by the progressive system-sandbox backend;
-until that adapter is available, execution fails explicitly. It never falls
+engine. Execution and `--check` probe Docker, Podman, then nerdctl and select
+the first reachable client with the required build, image, volume, mount,
+identity, signalling, and cleanup operations. Detection is bounded, reports
+progress on stderr, and creates no runtime or workspace state. It never falls
 back to workspace or host execution.
 
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle

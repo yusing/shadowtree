@@ -41,7 +41,7 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-003
     title: REQ-SBOX-003 — Select profile-owned default images and tooling
     kind: requirement

@@ -333,14 +333,14 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		printPlan(stdout, options.Resolved)
 		return nil
 	}
-	if err := validateExecutionMode(options.Resolved); err != nil {
-		return err
-	}
 	if options.CheckOnly {
 		if err := validatePlan(ctx, options); err != nil {
 			return err
 		}
 		return nil
+	}
+	if err := validateExecutionMode(ctx, options.Resolved, stderr); err != nil {
+		return err
 	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	env := mergedEnv(os.Environ(), options.Resolved.GlobalEnv, options.Resolved.Recipe.Env)
@@ -399,11 +399,15 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	return nil
 }
 
-func validateExecutionMode(resolved recipe.Resolved) error {
+func validateExecutionMode(ctx context.Context, resolved recipe.Resolved, progress io.Writer) error {
 	if resolved.SandboxMode != recipe.SandboxModeSystem {
 		return nil
 	}
-	return fmt.Errorf("recipe %q uses sandboxed = %q, but system sandbox execution is not available yet (runtime candidates: %v)", resolved.Name, recipe.SandboxModeSystem, systemsandbox.RuntimeCandidates())
+	runtimeName, err := systemsandbox.Detect(ctx, progress)
+	if err != nil {
+		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
+	}
+	return fmt.Errorf("recipe %q selected system runtime %q, but system image execution is not available yet", resolved.Name, runtimeName)
 }
 
 type sandboxWorkspace struct {
@@ -912,7 +916,7 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionMode(resolved); err != nil {
+	if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
 		return err
 	}
 	nested := options
@@ -945,7 +949,7 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionMode(resolved); err != nil {
+	if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
 		return err
 	}
 	nested := options
@@ -993,7 +997,7 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	if err != nil {
 		return "", err
 	}
-	if err := validateExecutionMode(resolved); err != nil {
+	if err := validateExecutionMode(ctx, resolved, io.Discard); err != nil {
 		return "", err
 	}
 	var stdout bytes.Buffer
@@ -1028,7 +1032,7 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	if err != nil {
 		return "", err
 	}
-	if err := validateExecutionMode(resolved); err != nil {
+	if err := validateExecutionMode(ctx, resolved, io.Discard); err != nil {
 		return "", err
 	}
 	var stdout bytes.Buffer

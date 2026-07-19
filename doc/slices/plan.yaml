@@ -19,7 +19,7 @@ slices:
     requirement_ids: [REQ-SBOX-001]
     depends_on: [SYSTEM-SKELETON]
   - id: SYSTEM-RUNTIME
-    status: pending
+    status: implemented
     requirement_ids: [REQ-SBOX-002]
     depends_on: [SYSTEM-MODE]
   - id: SYSTEM-IMAGES

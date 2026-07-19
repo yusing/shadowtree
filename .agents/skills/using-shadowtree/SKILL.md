@@ -97,7 +97,9 @@ Recipes are sandboxed unless their resolved definition says otherwise.
 
 Treat `sandboxed = "system"` as a distinct container backend, not as the normal
 workspace sandbox. Static plans report `runtime: <not probed>` and must not be
-interpreted as proof that execution capability exists.
+interpreted as proof that execution capability exists. Execution and `--check`
+probe Docker, Podman, then nerdctl; read stderr for candidate diagnostics and
+the selected runtime.
 
 - Expect ordinary sandbox writes to disappear after the run.
 - Trust recipe-local `sync_out` declared by the existing recipe.

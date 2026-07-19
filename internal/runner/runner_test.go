@@ -3164,6 +3164,7 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 }
 
 func TestSystemSandboxExecutionDoesNotFallBackToWorkspaceOrHost(t *testing.T) {
+	t.Setenv("PATH", "")
 	resolved, err := recipe.Resolve("test", recipe.Recipe{
 		Cmd:       recipe.Command{"false"},
 		Sandboxed: new(recipe.SandboxModeSystem),
@@ -3179,15 +3180,55 @@ func TestSystemSandboxExecutionDoesNotFallBackToWorkspaceOrHost(t *testing.T) {
 	}
 	t.Cleanup(func() { newOverlayWorkspace = original })
 	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: io.Discard})
-	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) || !strings.Contains(err.Error(), "not available yet") {
-		t.Fatalf("Run() error = %v, want explicit unavailable system mode", err)
+	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+		t.Fatalf("Run() error = %v, want system runtime detection failure", err)
 	}
 	if called {
 		t.Fatal("system mode attempted workspace sandbox fallback")
 	}
 }
 
+func TestSystemSandboxSelectsUsableRuntimeBeforeImageExecution(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "docker", `
+case "$*" in
+  "volume create --help") printf '%s' '--label' ;;
+  "run --help") printf '%s' '--mount --read-only --user --rm' ;;
+  "kill --help") printf '%s' '--signal' ;;
+  *) printf '%s' ok ;;
+esac`)
+	t.Setenv("PATH", bin)
+	resolved, err := recipe.Resolve("test", recipe.Recipe{
+		Cmd:       recipe.Command{"false"},
+		Sandboxed: new(recipe.SandboxModeSystem),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := newOverlayWorkspace
+	called := false
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		called = true
+		return nil, errors.New("unexpected workspace creation")
+	}
+	t.Cleanup(func() { newOverlayWorkspace = original })
+	var stderr bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: &stderr})
+	if err == nil || !strings.Contains(err.Error(), `selected system runtime "docker"`) || !strings.Contains(err.Error(), "image execution is not available yet") {
+		t.Fatalf("Run() error = %v, want selected-runtime boundary", err)
+	}
+	for _, want := range []string{"detecting system runtime docker", "selected system runtime docker"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+	if called {
+		t.Fatal("system runtime detection created a workspace")
+	}
+}
+
 func TestSystemSandboxCheckDoesNotReportUnavailableBackendAsReady(t *testing.T) {
+	t.Setenv("PATH", "")
 	resolved, err := recipe.Resolve("test", recipe.Recipe{
 		Cmd:       recipe.Command{"true"},
 		Sandboxed: new(recipe.SandboxModeSystem),
@@ -3196,12 +3237,34 @@ func TestSystemSandboxCheckDoesNotReportUnavailableBackendAsReady(t *testing.T) 
 		t.Fatal(err)
 	}
 	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), CheckOnly: true, Stdout: io.Discard, Stderr: io.Discard})
-	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
-		t.Fatalf("Run() error = %v, want unavailable system mode", err)
+	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+		t.Fatalf("Run() error = %v, want system runtime detection failure", err)
+	}
+}
+
+func TestCheckValidatesReferencedSystemSandboxMode(t *testing.T) {
+	t.Setenv("PATH", "")
+	resolved, err := recipe.Resolve("parent", recipe.Recipe{Cmd: recipe.Command{"@child"}}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(t.Context(), Options{
+		Resolved: resolved,
+		Recipes: map[string]recipe.Recipe{
+			"child": {Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)},
+		},
+		SourceDir: t.TempDir(),
+		CheckOnly: true,
+		Stdout:    io.Discard,
+		Stderr:    io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+		t.Fatalf("Run() error = %v, want referenced system runtime detection failure", err)
 	}
 }
 
 func TestRecipeReferencesDoNotBypassSystemSandboxMode(t *testing.T) {
+	t.Setenv("PATH", "")
 	for _, parentMode := range []recipe.SandboxMode{recipe.SandboxModeHost, recipe.SandboxModeWorkspace} {
 		t.Run(string(parentMode), func(t *testing.T) {
 			source := t.TempDir()
@@ -3224,8 +3287,8 @@ func TestRecipeReferencesDoNotBypassSystemSandboxMode(t *testing.T) {
 				Stdout:    io.Discard,
 				Stderr:    io.Discard,
 			})
-			if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
-				t.Fatalf("Run() error = %v, want unavailable system mode", err)
+			if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+				t.Fatalf("Run() error = %v, want system runtime detection failure", err)
 			}
 			if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
@@ -3235,6 +3298,7 @@ func TestRecipeReferencesDoNotBypassSystemSandboxMode(t *testing.T) {
 }
 
 func TestCrossConfigRecipeReferenceDoesNotBypassSystemSandboxMode(t *testing.T) {
+	t.Setenv("PATH", "")
 	source := t.TempDir()
 	target := filepath.Join(source, "webui")
 	if err := os.Mkdir(target, 0o755); err != nil {
@@ -3261,8 +3325,8 @@ cmd = '''printf bypass > bypass.txt'''
 		Stdout:    io.Discard,
 		Stderr:    io.Discard,
 	})
-	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
-		t.Fatalf("Run() error = %v, want unavailable system mode", err)
+	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+		t.Fatalf("Run() error = %v, want system runtime detection failure", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(target, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
@@ -3270,6 +3334,7 @@ cmd = '''printf bypass > bypass.txt'''
 }
 
 func TestCommandOutputDoesNotBypassSystemSandboxMode(t *testing.T) {
+	t.Setenv("PATH", "")
 	source := t.TempDir()
 	_, err := CommandOutput(t.Context(), source, nil, recipe.Command{"@child"}, CommandOutputOptions{
 		Recipes: map[string]recipe.Recipe{
@@ -3280,8 +3345,8 @@ func TestCommandOutputDoesNotBypassSystemSandboxMode(t *testing.T) {
 		},
 		SourceDir: source,
 	})
-	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
-		t.Fatalf("CommandOutput() error = %v, want unavailable system mode", err)
+	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
+		t.Fatalf("CommandOutput() error = %v, want system runtime detection failure", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)

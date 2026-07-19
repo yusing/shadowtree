@@ -18,6 +18,9 @@ func validatePlan(ctx context.Context, options Options) error {
 
 func validateResolvedPlan(ctx context.Context, options Options, stack []string) error {
 	resolved := options.Resolved
+	if err := validateExecutionMode(ctx, resolved, options.Stderr); err != nil {
+		return err
+	}
 	if resolved.LogPath != "" {
 		if _, _, _, err := recipeLogPath(resolved, options.SourceDir); err != nil {
 			return fmt.Errorf("recipe %q log: %w", resolved.Name, err)
