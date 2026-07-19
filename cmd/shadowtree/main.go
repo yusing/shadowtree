@@ -27,6 +27,7 @@ const version = "0.1.0"
 type options struct {
 	configPath string
 	profile    string
+	all        bool
 	syncOut    multiFlag
 	syncOutAll bool
 	printOnly  bool
@@ -96,6 +97,9 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	if opts.help || len(rest) == 0 {
+		if len(rest) == 0 && opts.all && !opts.help {
+			return errors.New("--all requires a recipe")
+		}
 		printBasicHelp(os.Stdout)
 		return nil
 	}
@@ -104,6 +108,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	switch rest[0] {
 	case "completion":
+		if opts.all {
+			return errors.New("--all requires a recipe")
+		}
 		if len(rest) != 2 {
 			return errors.New("usage: shadowtree completion <shell>")
 		}
@@ -111,6 +118,9 @@ func run(ctx context.Context, args []string) error {
 	case "__complete":
 		return runComplete(ctx, rest[1:])
 	case "init":
+		if opts.all {
+			return errors.New("--all requires a recipe")
+		}
 		if len(rest) > 2 {
 			return errors.New("usage: shadowtree init [path]")
 		}
@@ -133,6 +143,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if rest[0] == "exec" {
+		if opts.all {
+			return errors.New("--all is not supported by exec")
+		}
 		if len(rest) < 2 || rest[1] != "--" {
 			return errors.New("usage: shadowtree exec -- <cmd> [args...]")
 		}
@@ -162,6 +175,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	switch rest[0] {
 	case "help":
+		if opts.all {
+			return errors.New("--all requires a recipe invocation; use help <recipe> to inspect support")
+		}
 		if len(rest) > 1 {
 			rec, ok := resolvedSet[rest[1]]
 			if !ok {
@@ -178,8 +194,14 @@ func run(ctx context.Context, args []string) error {
 		}
 		return printHelp(os.Stdout, loaded, profile, resolvedSet)
 	case "recipes":
+		if opts.all {
+			return errors.New("--all requires a recipe")
+		}
 		return printRecipes(os.Stdout, resolvedSet)
 	case "config":
+		if opts.all {
+			return errors.New("--all requires a recipe")
+		}
 		return printConfig(os.Stdout, loaded, profile, resolvedSet)
 	default:
 		name, recipeArgs := recipe.Invocation(rest)
@@ -187,7 +209,19 @@ func run(ctx context.Context, args []string) error {
 		if !ok {
 			return fmt.Errorf("unknown recipe: %s", name)
 		}
-		resolved, err := recipe.ResolveWithOptions(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile, recipe.ResolveOptions{Recipes: resolvedSet, EnumSets: loaded.Config.EnumSets})
+		resolveOpts := recipe.ResolveOptions{Recipes: resolvedSet, EnumSets: loaded.Config.EnumSets}
+		if opts.all {
+			var domain string
+			var source recipe.TargetSource
+			rec, domain, source, err = recipe.SelectAll(name, rec)
+			if err != nil {
+				return err
+			}
+			resolveOpts.Scope = recipe.ScopeAll
+			resolveOpts.TargetDomain = domain
+			resolveOpts.TargetSource = source
+		}
+		resolved, err := recipe.ResolveWithOptions(name, rec, recipeArgs, opts.syncOut, loaded.Config.Env, loaded.Path, profile, resolveOpts)
 		if err != nil {
 			return err
 		}
@@ -270,6 +304,8 @@ func registerGlobalFlags(flags *flag.FlagSet, opts *options) {
 			flags.StringVar(&opts.configPath, spec.Name, "", spec.Help)
 		case globalflag.Profile:
 			flags.StringVar(&opts.profile, spec.Name, "", spec.Help)
+		case globalflag.AllTargets:
+			flags.BoolVar(&opts.all, spec.Name, false, spec.Help)
 		case globalflag.SyncOut:
 			flags.Var(&opts.syncOut, spec.Name, spec.Help)
 		case globalflag.SyncOutAll:
@@ -352,6 +388,9 @@ func runComplete(ctx context.Context, args []string) error {
 	if err != nil {
 		return nil
 	}
+	if opts.all {
+		recipes = allScopeRecipes(recipes)
+	}
 	candidates, err := completion.Candidates(ctx, request.Shell, request.Words, recipes, completion.Options{
 		Dir:        mustGetwd(),
 		ConfigPath: loaded.Path,
@@ -393,9 +432,28 @@ func completionOptions(words []string) options {
 				opts.profile = args[i+1]
 				i++
 			}
+		case "--" + globalflag.AllTargets:
+			if !hasValue {
+				opts.all = true
+				continue
+			}
+			if enabled, err := strconv.ParseBool(value); err == nil {
+				opts.all = enabled
+			}
 		}
 	}
 	return opts
+}
+
+func allScopeRecipes(recipes map[string]recipe.Recipe) map[string]recipe.Recipe {
+	out := make(map[string]recipe.Recipe, len(recipes))
+	for name, rec := range recipes {
+		all, _, _, err := recipe.SelectAll(name, rec)
+		if err == nil {
+			out[name] = all
+		}
+	}
+	return out
 }
 
 func printRecipes(w io.Writer, recipes map[string]recipe.Recipe) error {
@@ -453,6 +511,13 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 	fmt.Fprintf(w, "  %s\n", recipeHelpText(rec))
 	fmt.Fprintf(w, "\n%s\n\n", colors.section("- Command:"))
 	fmt.Fprintf(w, "    %s\n", colors.literal(recipe.CommandSummary(rec)))
+	domain, unsupported, supported := recipe.AllSupport(rec)
+	fmt.Fprintf(w, "\n%s\n\n", colors.section("- All scope:"))
+	if supported {
+		fmt.Fprintf(w, "    %s\n", colors.literal(domain))
+	} else {
+		fmt.Fprintf(w, "    %s\n", colors.literal("unsupported: "+unsupported))
+	}
 	if !recipe.RecipeSandboxed(rec) {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sandboxed:"))
 		fmt.Fprintf(w, "    %s\n", colors.literal("false"))

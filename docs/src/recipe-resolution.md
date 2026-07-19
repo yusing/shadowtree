@@ -26,8 +26,8 @@ config recipes exact unless the config opts into a profile.
 
 Config recipes with the same name as a built-in recipe override only specified
 fields, except `for_each` and `workdir`. Those scheduling fields are not
-inherited from the built-in recipe; set them in the override when the custom
-recipe should keep or replace built-in fan-out behavior.
+inherited. A project override also does not inherit the built-in recipe's
+profile-owned `--all` plan; unsupported aggregate use fails before execution.
 
 ```toml
 profile = "go"
@@ -45,13 +45,14 @@ required = true
 values = "@go-packages"
 ```
 
-The Go built-in `test` normally runs once per module:
+The Go built-in `test` normally runs once from the recipe workspace:
 
 ```text
-for_each = @go-modules
-workdir = {item}
 cmd = "go test ./... {@}"
 ```
+
+`shadowtree --all test` selects the separate package aggregate plan. It
+discovers modules after `pre` and runs `go test ./...` from each module.
 
 The override above runs once from the root workdir and parses CLI args as typed
 arguments:

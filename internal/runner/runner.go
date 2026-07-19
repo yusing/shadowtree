@@ -589,6 +589,9 @@ func runStageCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string,
 }
 
 func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
+	if options.Resolved.TargetSource != "" {
+		return runAggregateCommands(ctx, sandbox, dir, env, options, stdin, stdout, stderr, stack)
+	}
 	if len(options.Resolved.Recipe.ForEach) == 0 {
 		workdir, err := recipeWorkdir(dir, options.Resolved.Recipe.Workdir)
 		if err != nil {
@@ -621,6 +624,41 @@ func runMainCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string,
 		}
 	}
 	return nil
+}
+
+func runAggregateCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
+	targets, err := aggregateTargets(ctx, sandbox, dir, env, options, stderr)
+	if err != nil {
+		return fmt.Errorf("discover %s: %w", options.Resolved.TargetDomain, err)
+	}
+	if len(targets) == 0 {
+		return fmt.Errorf("recipe %q with --all found no %s", options.Resolved.Name, options.Resolved.TargetDomain)
+	}
+	if options.Verbose {
+		fmt.Fprintf(stderr, "shadowtree: discovered %d execution batch(es) for %s\n", len(targets), options.Resolved.TargetDomain)
+	}
+	for index, target := range targets {
+		item := recipe.ValueCandidate{Value: target.Value, Help: target.Label}
+		command, err := recipe.ExpandForEachCommand(options.Resolved.Main, item, index)
+		if err != nil {
+			return fmt.Errorf("target[%d] cmd: %w", index, err)
+		}
+		workdir, err := recipeWorkdir(dir, target.Workdir)
+		if err != nil {
+			return fmt.Errorf("target[%d] workdir: %w", index, err)
+		}
+		if err := runCommand(ctx, sandbox, workdir, env, command, stdin, stdout, stderr, options, phaseMain, index, stack); err != nil {
+			return fmt.Errorf("target %s: %w", target.Label, err)
+		}
+	}
+	return nil
+}
+
+func aggregateTargets(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stderr io.Writer) ([]recipe.ExecutionTarget, error) {
+	if sandbox != nil && sandbox.overlay {
+		return sandbox.runNamespaceExecutionTargets(ctx, env, sandbox.namespaceDir(dir), options.Resolved.TargetSource, options.Resolved.VariadicArgs, stderr)
+	}
+	return recipe.ResolveExecutionTargets(ctx, options.Resolved.TargetSource, dir, env, options.Resolved.VariadicArgs)
 }
 
 func forEachItems(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stderr io.Writer, stack []string) ([]recipe.ValueCandidate, error) {
@@ -689,7 +727,7 @@ func recipeWorkdir(root, value string) (string, error) {
 func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, command recipe.Command, stdin io.Reader, stdout, stderr io.Writer, options Options, phase string, index int, stack []string) error {
 	logBoundary := options.stageLog.logs(phase)
 	if options.Verbose || logBoundary {
-		boundary := stageBoundary(phase, index, len(options.Resolved.Recipe.ForEach) > 0, command)
+		boundary := stageBoundary(phase, index, resolvedHasMultipleCommands(options.Resolved), command)
 		if options.Verbose {
 			fmt.Fprintln(stderr, boundary)
 		}
@@ -713,6 +751,10 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 		return sandbox.runNamespaceCommand(ctx, env, sandbox.namespaceDir(dir), command, stdin, stdout, stderr)
 	}
 	return runExternalCommand(ctx, dir, env, command, stdin, stdout, stderr)
+}
+
+func resolvedHasMultipleCommands(resolved recipe.Resolved) bool {
+	return len(resolved.Recipe.ForEach) > 0 || resolved.TargetSource != ""
 }
 
 func stageBoundary(phase string, index int, hasForEach bool, command recipe.Command) string {
@@ -1034,6 +1076,11 @@ func recipeReferenceStackKey(configPath, name string) string {
 
 func printPlan(w io.Writer, resolved recipe.Resolved) {
 	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
+	if resolved.Scope != "" {
+		fmt.Fprintf(w, "scope: %s\n", resolved.Scope)
+		fmt.Fprintf(w, "target_domain: %s\n", resolved.TargetDomain)
+		fmt.Fprintf(w, "target_source: %s\n", resolved.TargetSource)
+	}
 	if resolved.Profile != "" {
 		fmt.Fprintf(w, "profile: %s\n", resolved.Profile)
 	}
@@ -1069,6 +1116,9 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 
 func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
 	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
+	printPlanValue(w, "scope", string(resolved.Scope))
+	printPlanValue(w, "target_domain", resolved.TargetDomain)
+	printPlanValue(w, "target_source", string(resolved.TargetSource))
 	printPlanValue(w, "config", resolved.ConfigPath)
 	printPlanValue(w, "profile", resolved.Profile)
 	fmt.Fprintf(w, "sandboxed: %t\n", resolved.Sandboxed)

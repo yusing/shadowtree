@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +189,38 @@ func TestOverlayForEachFilesystemBuiltinRunsInNamespace(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("values = %#v, want ./cmd/app", values)
+	}
+}
+
+func TestOverlayAllTargetDiscoveryObservesPreWrites(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workDir := t.TempDir()
+	sandbox, err := createOverlayWorkspace(t.Context(), source, workDir, filepath.Join(workDir, "workspace"))
+	if err != nil {
+		t.Skipf("overlayfs unavailable: %v", err)
+	}
+	defer func() {
+		if err := sandbox.Close(); err != nil {
+			t.Fatalf("close overlay workspace: %v", err)
+		}
+	}()
+	command := recipe.Command{"sh", "-c", "mkdir -p cmd/generated && printf 'package main\nfunc main() {}\n' > cmd/generated/main.go"}
+	if err := sandbox.runNamespaceCommand(t.Context(), os.Environ(), sandbox.target, command, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := sandbox.runNamespaceExecutionTargets(t.Context(), os.Environ(), sandbox.target, recipe.GoMainPackageTargets, nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := recipe.ExecutionTarget{Label: "./cmd/generated", Value: "./cmd/generated", Workdir: "."}
+	if !slices.Contains(targets, want) {
+		t.Fatalf("targets = %#v, want %#v", targets, want)
+	}
+	if _, err := os.Stat(filepath.Join(source, "cmd", "generated", "main.go")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("generated host file error = %v, want not exist", err)
 	}
 }
 

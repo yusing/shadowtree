@@ -49,6 +49,7 @@ exactly unless it opts into a profile with `profile = "go"` or
 | Validate a recipe | `shadowtree --check test` | Resolution checks without command execution |
 | Parse expanded shell | `shadowtree --check --shell test` | Resolution checks plus `sh`/`bash` parsing |
 | Run a recipe | `shadowtree test` | Sandboxed execution by default |
+| Run every supported target | `shadowtree --all test` | Recipe-specific aggregate plan |
 | Run a one-off command | `shadowtree exec -- go test ./...` | Sandboxed one-off command execution |
 | Copy selected outputs back | `shadowtree --sync-out dist build-assets` | Successful sandbox run plus selected host updates |
 | Install completion | `shadowtree completion bash\|fish\|zsh` | Shell completion script |
@@ -166,6 +167,7 @@ Global flags:
 | --- | --- |
 | `--config <path>` | Use an explicit config file |
 | `--profile go\|node` | Select built-in profile recipes |
+| `--all` | Run the selected recipe for its profile-defined aggregate targets |
 | `--sync-out <path>` | Copy selected paths back after a successful sandboxed run |
 | `--sync-out-all` | Copy the whole sandbox workspace back after success |
 | `--print` | Print the resolved plan without running |
@@ -187,9 +189,15 @@ for exact output.
 Profiles provide built-in recipes for common projects.
 
 Go projects expose recipes such as `test`, `test-race`, `vet`, `check`, `build`,
-`generate`, `install`, `lint`, `fmt`, `fix`, `tidy`, and `run`. Module-wide built-ins fan
-out across discovered Go modules. Built-in `fix`, `fmt`, and `tidy` are
-unsandboxed because they are meant to update the checkout.
+`generate`, `install`, `lint`, `fmt`, `fix`, `tidy`, and `run`. Normal built-ins
+execute once. `--all` selects a recipe-specific aggregate plan: package
+recipes cover all packages, `build` and `install` cover main packages, and
+`tidy` covers modules. Built-in `fix`, `fmt`, and `tidy` are unsandboxed because
+they are meant to update the checkout.
+
+Aggregate invocations reject an explicit primary target. Tool flags can still
+be forwarded; use the passthrough delimiter when a flag takes a separate bare
+value, for example `shadowtree --all test -- -run TestName`.
 
 Node projects expose recipes such as `install`, `dev`, `build`, `start`,
 `test`, `lint`, `fmt`, `typecheck`, and `check`. Package manager, script,

@@ -23,6 +23,7 @@ shadowtree test
 shadowtree test ./internal/recipe -run=TestResolve
 shadowtree --verbose build
 shadowtree --profile go test
+shadowtree --all test
 ```
 
 Follow these rules:
@@ -32,8 +33,13 @@ Follow these rules:
   including a Go-profile recipe for `go run`.
 - Put global flags before the recipe name. Treat everything after the recipe
   name as input to that recipe.
+- Use `--all` before a recipe only when help reports aggregate support. Its
+  target domain is recipe-specific; do not combine it with an explicit primary
+  target. A post-recipe `--all` is a recipe/tool argument instead. Under
+  `--all`, put `--` before passthrough tool flags that take separate bare
+  values, for example `shadowtree --all test -- -run TestName`.
 - Pass positional values and `key=value` arguments directly after the recipe.
-- Omit `--` for ordinary recipe arguments. Do not add it defensively.
+- Omit `--` for ordinary recipe arguments and single-token passthrough flags.
 - Use `shadowtree exec -- <cmd> [args...]` only for a one-off command that is not
   a recipe:
 

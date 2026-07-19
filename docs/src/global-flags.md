@@ -4,6 +4,7 @@ Global flags are parsed before the command or recipe name.
 
 ```sh
 shadowtree --profile go --print test
+shadowtree --all test
 shadowtree --config ./ci.shadowtree.toml recipes
 shadowtree --sync-out internal/generated generate
 ```
@@ -18,6 +19,22 @@ parsed as typed recipe arguments.
 
 `--profile PROFILE`
 : Use a profile. Supported profiles are `go` and `node`.
+
+`--all`
+: Select the recipe's profile-defined aggregate plan. The target domain is
+recipe-specific: for example, Go `build` targets main packages, `fmt` targets
+packages, and `tidy` targets modules. Unsupported recipes fail before running.
+`--all` cannot be combined with the recipe's explicit primary target.
+Single-token tool flags such as `-count=1` can follow the recipe normally. If a
+tool flag takes a separate bare value, start passthrough with `--` so the value
+is not mistaken for a primary target:
+
+```sh
+shadowtree --all test -- -run TestName
+```
+
+The current Node profile explicitly rejects `--all` until package-manager
+workspace semantics are defined.
 
 `--sync-out PATH`
 : Copy a path back after a successful sandboxed recipe. Repeat the flag or use
@@ -59,7 +76,11 @@ Flags after the recipe name are recipe args:
 
 ```sh
 shadowtree test -v ./...
+shadowtree test --all
 ```
+
+The second command passes `--all` to `test`; it does not select Shadowtree's
+aggregate scope. Use `shadowtree --all test` for aggregate execution.
 
 Related topics:
 

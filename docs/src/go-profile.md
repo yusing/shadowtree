@@ -10,18 +10,18 @@ The Go profile is selected when:
 ## Built-In Recipes
 
 ```text
-build      for each @go-modules: go build ./...
+build      go build {pkg}; --all targets every main package
 check      @vet && @test
-fix        for each @go-modules when go > 1.26: go fix ./...
-fmt        for each @go-modules: go fmt ./...
-generate   for each @go-modules: go generate ./...
-install    for each @go-modules: go install -ldflags="-s -w" ./...
-lint       for each @go-modules: golangci-lint run ./... if available, otherwise go vet ./...
+fix        go fix {pkg} when go > 1.26; --all targets every package
+fmt        go fmt {target}; --all targets every package
+generate   go generate {pkg}; --all targets every package
+install    go install -ldflags="-s -w" {pkg}; --all targets every main package
+lint       lint {pkg}; --all targets every package
 run        go -C {cwd} run {command}
-test       for each @go-modules: go test ./...
-test-race  for each @go-modules: go test -race ./...
-tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
-vet        for each @go-modules: go vet ./...
+test       go test {pkg}; --all targets every package
+test-race  go test -race {pkg}; --all targets every package
+tidy       go mod tidy; --all targets every module, then syncs go.work
+vet        go vet {pkg}; --all targets every package
 ```
 
 ## Sandboxing
@@ -31,17 +31,31 @@ Built-in `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`,
 
 Other built-in Go recipes are sandboxed unless project config overrides them.
 
-## Module Fan-Out
+## Aggregate Scope
 
-Module-wide Go built-ins use:
+Normal Go built-ins are leaf recipes: they execute once from the recipe
+workspace and preserve explicit target paths. Use the global flag before the
+recipe to select its aggregate plan:
 
-```text
-for_each = "@go-modules"
-workdir = "{item}"
+```sh
+shadowtree fmt ./internal/recipe
+shadowtree --all fmt
+shadowtree --all build
 ```
 
-The `./...` package pattern is evaluated inside each module directory, not at
-the repo root.
+Package-wide aggregate plans batch `./...` once per module. `build` and
+`install` instead discover main packages and execute each from its owning
+module with a module-relative target. `tidy` runs once per module. `run` does
+not support `--all` because Shadowtree has no defined policy for supervising
+multiple runnable processes.
+
+Main-package discovery uses the recipe's resolved environment and forwarded Go
+build-context flags, so `GOOS`, `GOARCH`, `GOFLAGS`, and `-tags` select the same
+packages for discovery and execution.
+
+Aggregate target discovery runs after `pre` in the active host checkout or
+sandbox. An empty aggregate target set is an error. Project overrides do not
+inherit a built-in aggregate plan.
 
 ## Arguments and Completion
 

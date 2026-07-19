@@ -35,6 +35,7 @@ func initGitRepo(t *testing.T, path string) {
 	runGit(t, path, "init", "-q")
 	runGit(t, path, "config", "user.email", "shadowtree@example.com")
 	runGit(t, path, "config", "user.name", "Shadowtree Test")
+	runGit(t, path, "config", "commit.gpgsign", "false")
 }
 
 func commitGitRepo(t *testing.T, path string) {
@@ -406,7 +407,7 @@ func TestInitWritesNoBuiltinRecipeOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name := range recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: filepath.Dir(path)}) {
+	for name := range recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Context: t.Context(), Dir: filepath.Dir(path)}) {
 		if _, ok := loaded.Config.Recipes[name]; ok {
 			t.Fatalf("init wrote built-in recipe override %q", name)
 		}

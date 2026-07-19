@@ -18,6 +18,7 @@ shadowtree help test color=false
 `shadowtree help <recipe>` prints these fields when present or applicable:
 
 - recipe name and help text
+- `--all` support and target domain
 - command
 - sandboxed marker for unsandboxed recipes
 - tool requirements
@@ -43,11 +44,14 @@ shadowtree recipes
 ```sh
 shadowtree --print test ./internal/runner
 shadowtree --print --expanded test ./internal/runner
+shadowtree --all --print test
 ```
 
 The plan includes fields such as recipe name, profile, config path,
 unsandboxed marker, declared requirements, stages, `for_each`, `workdir`, main
 command, post commands, and sync-out paths.
+Aggregate plans also print `scope`, `target_domain`, and `target_source` so a
+native workspace command and a per-target plan remain distinguishable.
 
 `--print --expanded` also prints normalized defaults for absent fields,
 expanded script bodies, the selected preset, resolved typed arguments, leftover

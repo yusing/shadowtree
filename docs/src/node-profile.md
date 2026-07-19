@@ -11,6 +11,11 @@ Node built-ins resolve the nearest `package.json` directory and generate shell
 commands that `cd` there before invoking the package manager or tool. This
 makes subdirectory invocation run against the package root.
 
+Node built-ins currently reject `--all`. npm, pnpm, Yarn, and Bun expose
+different workspace selection and execution contracts, so aggregate support
+must be defined per generated recipe rather than inferred as directory
+fan-out.
+
 Every Node built-in recipe has `sandboxed = false` by default because package
 manager and framework commands commonly mutate lockfiles, dependency state,
 caches, and generated outputs.

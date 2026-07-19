@@ -556,7 +556,7 @@ func TestCandidatesCompleteGoBuiltinRunCommandArgumentValues(t *testing.T) {
 	mkdirAll(t, filepath.Join(dir, "cmd", "api"))
 	writeTextFile(t, filepath.Join(dir, "cmd", "api", "main.go"), "// Package main builds the API.\npackage main\n")
 
-	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: dir})
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Context: t.Context(), Dir: dir})
 	candidates := completeWithOptions(t, []string{"shadowtree", "run", "command=./cmd/"}, recipes, Options{Dir: dir})
 
 	if len(candidates) != 1 || candidates[0] != (Candidate{Value: "command=./cmd/api", Help: "Package main builds the API."}) {
@@ -578,7 +578,7 @@ func TestCandidatesCompleteGoBuiltinPositionals(t *testing.T) {
 	mkdirAll(t, filepath.Join(dir, "internal", "lib"))
 	writeTextFile(t, filepath.Join(dir, "internal", "lib", "lib.go"), "package lib\n")
 
-	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: dir})
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Context: t.Context(), Dir: dir})
 	candidates := completeWithOptions(t, []string{"shadowtree", "build", ""}, recipes, Options{Dir: dir})
 	if !hasCandidate(candidates, "./cmd/api") || hasCandidate(candidates, "./internal/lib") {
 		t.Fatalf("build candidates = %#v, want main package positional value", candidates)
@@ -961,6 +961,39 @@ func TestCandidatesCompleteBashFlags(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteAllGlobalFlag(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			candidates, err := Candidates(t.Context(), shell, []string{"shadowtree", "--a"}, nil, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(candidates) != 1 || candidates[0].Value != "--all" {
+				t.Fatalf("candidates = %#v, want --all only", candidates)
+			}
+			if candidates[0].Help != "Run the recipe for all supported targets" {
+				t.Fatalf("--all help = %q", candidates[0].Help)
+			}
+		})
+	}
+}
+
+func TestCandidatesExposeEveryRegisteredGlobalFlag(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh"} {
+		t.Run(shell, func(t *testing.T) {
+			candidates, err := Candidates(t.Context(), shell, []string{"shadowtree", "--"}, nil, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, spec := range globalflag.All() {
+				if !hasCandidate(candidates, "--"+spec.Name) {
+					t.Errorf("candidates = %#v, want registered --%s", candidates, spec.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestStaticCandidatesCompleteFlags(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) {
@@ -989,6 +1022,26 @@ func TestStaticCandidatesSkipFlagsAfterCommand(t *testing.T) {
 	}
 	if ok || len(candidates) != 0 {
 		t.Fatalf("candidates = %#v, ok = %t, want no static candidates", candidates, ok)
+	}
+}
+
+func TestCandidatesKeepPostRecipeAllArgumentSeparateFromGlobalFlag(t *testing.T) {
+	candidates, err := Candidates(t.Context(), "bash", []string{"shadowtree", "deploy", "a"}, map[string]recipe.Recipe{
+		"deploy": {
+			Cmd: recipe.Command{"deploy", "{all}"},
+			Arguments: map[string]recipe.Argument{
+				"all": {Help: "Deploy every service."},
+			},
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCandidate(candidates, "all=") {
+		t.Fatalf("candidates = %#v, want recipe argument all=", candidates)
+	}
+	if hasCandidate(candidates, "--all") {
+		t.Fatalf("candidates = %#v, want no post-recipe global --all", candidates)
 	}
 }
 
@@ -1079,6 +1132,12 @@ func TestFishScriptGuardsStaticGlobalCompletions(t *testing.T) {
 	}
 	if !strings.Contains(script, "complete -c shadowtree -n __shadowtree_global_options -l profile") {
 		t.Fatalf("fish script = %q, want guarded global option registration", script)
+	}
+	if !strings.Contains(script, "complete -c shadowtree -n __shadowtree_global_options -l all -d 'Run the recipe for all supported targets'") {
+		t.Fatalf("fish script = %q, want --all global option registration", script)
+	}
+	if strings.Contains(script, "-l all -r") || strings.Contains(script, "-l all -x") {
+		t.Fatalf("fish script = %q, want --all without a value", script)
 	}
 }
 

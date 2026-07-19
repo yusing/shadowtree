@@ -80,7 +80,7 @@ func TestRunWarnsForOverriddenInvalidArgumentDefault(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".shadowtree.toml")
 	writeTextFile(t, configPath, `
 [recipes.deploy]
-cmd = ["echo", "{target}"]
+cmd = "echo {target}"
 
 [recipes.deploy.arguments.target]
 default = ""
@@ -121,7 +121,7 @@ func TestRunConfigReportsSuperprojectConfigFromSubmodule(t *testing.T) {
 	runGitCommand(t, source, "config", "user.name", "Shadowtree Test")
 	writeTextFile(t, filepath.Join(source, "go.mod"), "module example.com/source\n")
 	runGitCommand(t, source, "add", ".")
-	runGitCommand(t, source, "commit", "-qm", "source")
+	runGitCommand(t, source, "-c", "commit.gpgsign=false", "commit", "-qm", "source")
 
 	superproject := filepath.Join(root, "superproject")
 	if err := os.MkdirAll(superproject, 0o755); err != nil {
@@ -134,7 +134,7 @@ func TestRunConfigReportsSuperprojectConfigFromSubmodule(t *testing.T) {
 	writeTextFile(t, configPath, "profile = \"go\"\n")
 	runGitCommand(t, superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "submodule")
 	runGitCommand(t, superproject, "add", ".")
-	runGitCommand(t, superproject, "commit", "-qm", "superproject")
+	runGitCommand(t, superproject, "-c", "commit.gpgsign=false", "commit", "-qm", "superproject")
 
 	oldwd, err := os.Getwd()
 	if err != nil {
@@ -187,7 +187,7 @@ func TestRunConfigUsesExplicitConfig(t *testing.T) {
 }
 
 func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
-	opts, rest, err := parseGlobal([]string{"--profile", "go", "--print", "--expanded", "test", "./..."})
+	opts, rest, err := parseGlobal([]string{"--profile", "go", "--all", "--print", "--expanded", "test", "./..."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +199,9 @@ func TestParseGlobalSkipsSeparateFlagValues(t *testing.T) {
 	}
 	if !opts.expanded {
 		t.Fatal("expanded = false")
+	}
+	if !opts.all {
+		t.Fatal("all = false")
 	}
 	if !slices.Equal(rest, []string{"test", "./..."}) {
 		t.Fatalf("rest = %#v", rest)
@@ -264,23 +267,173 @@ func TestBasicHelpIncludesConfigCommand(t *testing.T) {
 }
 
 func TestParseGlobalStopsAfterRecipe(t *testing.T) {
-	_, rest, err := parseGlobal([]string{"test", "-v", "./..."})
+	opts, rest, err := parseGlobal([]string{"test", "--all", "-v", "./..."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(rest, []string{"test", "-v", "./..."}) {
+	if opts.all {
+		t.Fatal("post-recipe --all parsed as global")
+	}
+	if !slices.Equal(rest, []string{"test", "--all", "-v", "./..."}) {
 		t.Fatalf("rest = %#v", rest)
 	}
 }
 
+func TestParseGlobalRejectsMalformedAllValue(t *testing.T) {
+	_, _, err := parseGlobal([]string{"--all=maybe", "test"})
+	if err == nil || !strings.Contains(err.Error(), "invalid boolean value") {
+		t.Fatalf("error = %v, want invalid boolean value", err)
+	}
+}
+
+func TestRunPrintsRecipeSpecificAllPlan(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+
+	out := captureStdout(t, func() error {
+		return run(t.Context(), []string{"--profile", "go", "--all", "--print", "--expanded", "fmt"})
+	})
+	for _, want := range []string{
+		"scope: all\n",
+		"target_domain: packages\n",
+		"target_source: go-packages\n",
+		"main: go fmt {item}\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expanded plan missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunAllRejectsExplicitTarget(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+
+	err := run(t.Context(), []string{"--profile", "go", "--all", "fmt", "./pkg"})
+	if err == nil || !strings.Contains(err.Error(), `--all cannot be combined with target "./pkg"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunAllRejectsUnsupportedRecipe(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+
+	err := run(t.Context(), []string{"--profile", "go", "--all", "run", "./cmd/app"})
+	if err == nil || !strings.Contains(err.Error(), "process policy") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunAllRejectsProjectOverrideWithoutAggregatePlan(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `
+profile = "go"
+
+[recipes.fmt]
+cmd = "go fmt ./..."
+`)
+
+	err := run(t.Context(), []string{"--all", "fmt"})
+	if err == nil || !strings.Contains(err.Error(), "does not declare an aggregate plan") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunAllRequiresRecipe(t *testing.T) {
+	err := run(t.Context(), []string{"--all"})
+	if err == nil || err.Error() != "--all requires a recipe" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCompletionOptionsFollowGlobalBoundary(t *testing.T) {
-	opts := completionOptions([]string{"shadowtree", "--sync-out", "dist", "--profile", "go", "test", "--config", "other.toml"})
+	opts := completionOptions([]string{"shadowtree", "--sync-out", "dist", "--profile", "go", "--all", "test", "--config", "other.toml"})
 
 	if opts.profile != "go" {
 		t.Fatalf("profile = %q, want go", opts.profile)
 	}
 	if opts.configPath != "" {
 		t.Fatalf("configPath = %q, want post-recipe config ignored", opts.configPath)
+	}
+	if !opts.all {
+		t.Fatal("all = false")
+	}
+}
+
+func TestCompletionOptionsParseAllLikeFlagPackage(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "bare", value: "--all", want: true},
+		{name: "true", value: "--all=true", want: true},
+		{name: "short true", value: "--all=t", want: true},
+		{name: "false", value: "--all=false", want: false},
+		{name: "numeric false", value: "--all=0", want: false},
+		{name: "malformed", value: "--all=maybe", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := completionOptions([]string{"shadowtree", tt.value}).all
+			if got != tt.want {
+				t.Fatalf("all = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAllScopeRecipesExposeOnlySupportedAggregateArguments(t *testing.T) {
+	recipes := allScopeRecipes(recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{}))
+	if _, exists := recipes["run"]; exists {
+		t.Fatal("run completion retained unsupported --all recipe")
+	}
+	fmtRecipe, exists := recipes["fmt"]
+	if !exists {
+		t.Fatal("fmt completion missing supported --all recipe")
+	}
+	if _, exists := fmtRecipe.Arguments["target"]; exists {
+		t.Fatalf("fmt --all completion retained target: %#v", fmtRecipe.Arguments)
+	}
+}
+
+func TestRunCompleteUsesAllScopeBeforeRecipe(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+
+	out := captureStdout(t, func() error {
+		return runComplete(t.Context(), []string{"fish", "shadowtree", "--profile", "go", "--all", ""})
+	})
+
+	if !strings.Contains(out, "fmt\t") {
+		t.Fatalf("completion output = %q, want supported fmt recipe", out)
+	}
+	if strings.Contains(out, "run\t") {
+		t.Fatalf("completion output = %q, want unsupported run recipe omitted", out)
+	}
+}
+
+func TestRunCompleteDoesNotUseAllScopeWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+
+	for _, allFlag := range []string{"--all=false", "--all=0", "--all=maybe"} {
+		t.Run(allFlag, func(t *testing.T) {
+			out := captureStdout(t, func() error {
+				return runComplete(t.Context(), []string{"fish", "shadowtree", "--profile", "go", allFlag, ""})
+			})
+			if !strings.Contains(out, "run\t") {
+				t.Fatalf("completion output = %q, want normal-scope run recipe", out)
+			}
+		})
 	}
 }
 

@@ -45,6 +45,9 @@ func nodeBuiltins(opts BuiltinOptions) map[string]Recipe {
 	addStandardNodeRecipes(recipes, project)
 	addPackageScriptRecipes(recipes, project)
 	addNodeCheckRecipe(recipes)
+	for name, rec := range recipes {
+		recipes[name] = withUnsupportedAll(rec, "Node workspace aggregate semantics are not implemented")
+	}
 	return recipes
 }
 
