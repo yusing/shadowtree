@@ -79,6 +79,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == runner.OverlayHelperCommand {
 		os.Exit(runner.OverlayHelperMain(ctx, os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == runner.SystemHelperCommand {
+		os.Exit(runner.SystemHelperMain(ctx, os.Args[2:]))
+	}
 	if err := run(ctx, os.Args[1:]); err != nil {
 		if exitErr, ok := errors.AsType[runner.ExitError](err); ok {
 			os.Exit(exitErr.Code)

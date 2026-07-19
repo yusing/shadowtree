@@ -27,7 +27,7 @@ slices:
     requirement_ids: [REQ-SBOX-003, REQ-SBOX-004, REQ-SBOX-005, REQ-SBOX-006]
     depends_on: [SYSTEM-RUNTIME]
   - id: SYSTEM-LIFECYCLE
-    status: pending
+    status: implemented
     requirement_ids: [REQ-SBOX-008, REQ-SBOX-009]
     depends_on: [SYSTEM-IMAGES]
   - id: SYSTEM-CACHES

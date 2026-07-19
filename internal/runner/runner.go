@@ -24,21 +24,22 @@ import (
 )
 
 type Options struct {
-	Resolved      recipe.Resolved
-	Recipes       map[string]recipe.Recipe
-	EnumSets      map[string]recipe.Command
-	ConfigEnv     map[string]string
-	SourceDir     string
-	PrintOnly     bool
-	PrintExpanded bool
-	CheckOnly     bool
-	CheckShell    bool
-	Verbose       bool
-	SyncOutAll    bool
-	Stdin         io.Reader
-	Stdout        io.Writer
-	Stderr        io.Writer
-	stageLog      *stageLogger
+	Resolved        recipe.Resolved
+	Recipes         map[string]recipe.Recipe
+	EnumSets        map[string]recipe.Command
+	ConfigEnv       map[string]string
+	SourceDir       string
+	PrintOnly       bool
+	PrintExpanded   bool
+	CheckOnly       bool
+	CheckShell      bool
+	Verbose         bool
+	SyncOutAll      bool
+	Stdin           io.Reader
+	Stdout          io.Writer
+	Stderr          io.Writer
+	systemLifecycle bool
+	stageLog        *stageLogger
 }
 
 type ExitError struct {
@@ -324,6 +325,17 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err != nil {
 		return err
 	}
+	if options.Resolved.SandboxMode == recipe.SandboxModeSystem {
+		canonicalSource, err := filepath.EvalSymlinks(source)
+		if err != nil {
+			return fmt.Errorf("canonical system source: %w", err)
+		}
+		options.Resolved.ConfigPath, err = rebaseSystemConfigPath(options.Resolved.ConfigPath, source, canonicalSource)
+		if err != nil {
+			return err
+		}
+		source = canonicalSource
+	}
 	options.SourceDir = source
 	if options.PrintOnly {
 		if options.PrintExpanded {
@@ -404,18 +416,49 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	if err != nil {
 		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
 	}
-	runtimeName, err := systemsandbox.Detect(ctx, progress)
-	if err != nil {
-		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
-	}
 	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
 	if err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
 	}
+	if err := validateSystemHelperPlatform(runtime.GOOS, runtime.GOARCH, plan.Platform); err != nil {
+		return fmt.Errorf("recipe %q system lifecycle helper: %w", resolved.Name, err)
+	}
+	runtimeName, err := systemsandbox.Detect(ctx, progress)
+	if err != nil {
+		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
+	}
 	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, progress); err != nil {
 		return fmt.Errorf("recipe %q system image build: %w", resolved.Name, err)
 	}
-	return fmt.Errorf("recipe %q prepared system image %q with runtime %q, but system lifecycle execution is not available yet", resolved.Name, plan.FinalTag, runtimeName)
+	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
+	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
+	return runSystemLifecycle(ctx, runtimeName, plan, options, stdin, stdout, progress)
+}
+
+func rebaseSystemConfigPath(configPath, source, canonicalSource string) (string, error) {
+	if configPath == "" {
+		return "", nil
+	}
+	configPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return "", fmt.Errorf("canonical system config: %w", err)
+	}
+	rel, ok := relInside(source, configPath)
+	if !ok {
+		return "", fmt.Errorf("system config path is outside source: %s", configPath)
+	}
+	return filepath.Join(canonicalSource, rel), nil
+}
+
+func validateSystemHelperPlatform(goos, goarch, platform string) error {
+	if goos != "linux" {
+		return fmt.Errorf("host executable targets %s/%s, but system images require Linux", goos, goarch)
+	}
+	want := "linux/" + goarch
+	if platform != want {
+		return fmt.Errorf("host executable targets %s, but system image targets %s", want, platform)
+	}
+	return nil
 }
 
 func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, expanded bool) error {
@@ -460,11 +503,7 @@ func validateExecutionMode(ctx context.Context, resolved recipe.Resolved, progre
 	if resolved.SandboxMode != recipe.SandboxModeSystem {
 		return nil
 	}
-	runtimeName, err := systemsandbox.Detect(ctx, progress)
-	if err != nil {
-		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
-	}
-	return fmt.Errorf("recipe %q selected system runtime %q, but system image execution is not available yet", resolved.Name, runtimeName)
+	return fmt.Errorf("recipe %q cannot enter system mode from an existing host or workspace lifecycle; invoke it as a top-level recipe", resolved.Name)
 }
 
 type sandboxWorkspace struct {
@@ -973,8 +1012,10 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
-		return err
+	if !options.systemLifecycle {
+		if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
+			return err
+		}
 	}
 	nested := options
 	nested.Resolved = resolved
@@ -1006,8 +1047,10 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	if err != nil {
 		return err
 	}
-	if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
-		return err
+	if !options.systemLifecycle {
+		if err := validateExecutionMode(ctx, resolved, stderr); err != nil {
+			return err
+		}
 	}
 	nested := options
 	nested.Resolved = resolved

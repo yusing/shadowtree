@@ -154,7 +154,10 @@ stages for base metadata, tooling, system packages, recipe tools, and locked
 project dependencies. `system.base_image` accepts a literal non-`latest`
 override; `requires.system_packages` selects normalized distribution packages.
 Expanded static plans expose every generated Containerfile without contacting
-the runtime.
+the runtime. Execution then runs the complete lifecycle in one automatically
+removed, read-only-root container against a private copied workspace at the
+canonical checkout path. Nested references stay in that container; only a
+successful lifecycle applies configured sync-out paths.
 
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle
 stages, and recipe references are documented in the

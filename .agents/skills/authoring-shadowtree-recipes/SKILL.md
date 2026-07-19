@@ -144,6 +144,8 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   do not use runtime names or truthy string aliases.
 - Use `system.base_image` only for a literal pinned non-`latest` override, and
   declare distribution packages through `requires.system_packages`.
+- System-mode `pre`, `cmd`, nested references, and `post` share one ephemeral
+  container; nested references do not perform nested sync-out.
 - Never define top-level `sync_out`.
 - Prefer narrow sync-out paths; a selected path missing in the sandbox mirrors
   as a host deletion.

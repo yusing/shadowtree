@@ -20,10 +20,13 @@ writes already target the host checkout.
 
 `sandboxed = "system"` is a distinct sandboxed lifecycle. It retains sync-out
 semantics and never falls back to the ordinary disposable workspace or direct
-host execution. Static inspection does not probe a runtime. The current system
-backend can resolve, inspect, and build the immutable image chain, but container
-phase execution and sync-out are not available until the lifecycle increment is
-complete; execution fails explicitly at that boundary.
+host execution. Static inspection does not probe a runtime. After preparing the
+immutable image chain, Shadowtree copies the checkout to a private workspace and
+mounts that copy read-write at the checkout's canonical path in one ephemeral
+container. A private read-only helper and resolved-plan file run `pre`, main or
+`for_each`, nested references, and `post` without mounting the host checkout.
+Successful runs apply existing sync-out rules from the private copy; failures
+and cancellation export no selected outputs. Logs retain their normal behavior.
 
 ## Failure Behavior
 

@@ -35,7 +35,7 @@ Execution and host-capability validation probe `docker`, `podman`, then
 `nerdctl` in stable order. Executable presence is insufficient: a bounded,
 non-interactive probe must verify the client can reach its engine and supports
 the image, build, labelled-volume, nested-mount, read-only bind, UID/GID,
-signalling, and automatic-removal operations Shadowtree needs.
+attached-start, signalling, and forced-removal operations Shadowtree needs.
 
 An installed but unusable candidate records a concise diagnostic and detection
 continues. If none is usable, Shadowtree fails before pulling, building,
@@ -217,8 +217,10 @@ compiler fingerprints and debug/build-script behavior.
 Shadowtree copies its static lifecycle helper into the private invocation
 directory and mounts it read-only with a restrictive resolved-plan/secret file.
 The helper validates the protocol version. Upgrading Shadowtree therefore does
-not invalidate any persistent image layer. Invocation values are redacted from
-diagnostics and removed with the temporary workspace.
+not invalidate any persistent image layer. Because that helper is the running
+Shadowtree executable, this increment fails before image building unless the
+host binary targets Linux and the selected image architecture. Invocation
+values are redacted from diagnostics and removed with the temporary workspace.
 
 The runtime removes the container after success, failure, or cancellation.
 Cancellation reaches the helper so `post` retains current semantics; bounded

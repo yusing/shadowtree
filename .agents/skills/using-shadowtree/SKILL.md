@@ -106,6 +106,11 @@ immutable stages, context hashes, and any dependency-seed contract without
 building. Treat `requires.system_packages` as image inputs, not host package
 installation instructions.
 
+Execution runs the complete lifecycle in one ephemeral container against a
+private copied workspace. Nested references do not create nested images or
+containers. Expect `post` on initial cancellation and sync-out only after full
+success, with lifecycle and cleanup progress on stderr.
+
 - Expect ordinary sandbox writes to disappear after the run.
 - Trust recipe-local `sync_out` declared by the existing recipe.
 - Add invocation-local sync-out only when the requested output must persist:

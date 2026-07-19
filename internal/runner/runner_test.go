@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -3229,8 +3230,10 @@ func TestSystemSandboxSelectsUsableRuntimeBeforeImageExecution(t *testing.T) {
 case "$*" in
   "volume create --help") printf '%s' '--label' ;;
 	"build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
-  "run --help") printf '%s' '--mount --read-only --user --rm --platform' ;;
+  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
+  "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
+  "rm --help") printf '%s' '--force' ;;
   "image inspect --help") printf '%s' ok ;;
   image\ inspect*) printf '%s' 'no such image' >&2; exit 1 ;;
   *) printf '%s' ok ;;
@@ -3265,7 +3268,7 @@ esac`)
 	}
 }
 
-func TestSystemSandboxBuildsAllImagesBeforeLifecycleBoundary(t *testing.T) {
+func TestSystemSandboxBuildsImagesAndStartsLifecycle(t *testing.T) {
 	bin := t.TempDir()
 	state := filepath.Join(bin, "state")
 	if err := os.Mkdir(state, 0o755); err != nil {
@@ -3280,8 +3283,10 @@ tag_file() {
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg'; exit 0 ;;
   "volume create --help") printf '%s' '--label'; exit 0 ;;
-  "run --help") printf '%s' '--mount --read-only --user --rm --platform'; exit 0 ;;
+  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive'; exit 0 ;;
+  "start --help") printf '%s' '--attach --interactive'; exit 0 ;;
   "kill --help") printf '%s' '--signal'; exit 0 ;;
+  "rm --help") printf '%s' '--force'; exit 0 ;;
   "image inspect --help"|"image tag --help"|"info") printf '%s' ok; exit 0 ;;
 esac
 if [ "$1 $2" = "image inspect" ]; then
@@ -3312,19 +3317,57 @@ elif [ "$1 $2" = "image tag" ]; then
   source_file=$(tag_file "$3")
   target_file=$(tag_file "$4")
   /bin/cp "$source_file" "$target_file"
+elif [ "$1" = "create" ]; then
+  printf 'create args: %s\n' "$*" >&2
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--mount" ]; then
+      shift
+      case "$1" in
+        type=bind,src=*,dst=/opt/shadowtree/plan.json,readonly)
+          plan=${1#type=bind,src=}
+          plan=${plan%%,dst=*}
+          /bin/cp "$plan" "$state/plan.json"
+          ;;
+        type=bind,src=*,dst=*)
+          if [ ! -f "$state/workspace" ]; then
+            workspace=${1#type=bind,src=}
+            workspace=${workspace%%,dst=*}
+            printf '%s' "$workspace" > "$state/workspace"
+            printf '%s' "$1" > "$state/workspace-mount"
+          fi
+          ;;
+      esac
+    fi
+    shift
+  done
+elif [ "$1" = "start" ]; then
+  workspace=$(/bin/cat "$state/workspace")
+  printf 'synced' > "$workspace/system-output.txt"
+  printf 'lifecycle ran\n' >&2
+elif [ "$1" = "rm" ]; then
+  exit 0
 else
   printf 'unexpected docker invocation: %s\n' "$*" >&2
   exit 1
 fi`)
 	t.Setenv("PATH", bin)
-	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", "")
+	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem), SyncOut: []string{"system-output.txt"}}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: &stderr})
-	if err == nil || !strings.Contains(err.Error(), "system lifecycle execution is not available yet") {
-		t.Fatalf("Run() error = %v, want lifecycle boundary", err)
+	source := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(source, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".shadowtree.toml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved.ConfigPath = filepath.Join(alias, ".shadowtree.toml")
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: alias, Stdout: io.Discard, Stderr: &stderr})
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, stage := range []string{"base", "tooling", "system-packages", "recipe-packages", "dependencies"} {
 		if !strings.Contains(stderr.String(), "built "+stage+"\n") {
@@ -3333,6 +3376,63 @@ fi`)
 	}
 	if !strings.Contains(stderr.String(), "publishing recipe image alias") {
 		t.Fatalf("stderr missing final publication:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "lifecycle ran") {
+		t.Fatalf("stderr missing lifecycle execution:\n%s", stderr.String())
+	}
+	mount, err := os.ReadFile(filepath.Join(state, "workspace-mount"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mount), ",dst="+source) {
+		t.Fatalf("lifecycle mount is not canonical: %s", mount)
+	}
+	planData, err := os.ReadFile(filepath.Join(state, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecyclePlan systemLifecyclePlan
+	if err := json.Unmarshal(planData, &lifecyclePlan); err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(source, ".shadowtree.toml"); lifecyclePlan.Resolved.ConfigPath != want {
+		t.Fatalf("lifecycle config path = %q, want %q", lifecyclePlan.Resolved.ConfigPath, want)
+	}
+	assertFileContent(t, filepath.Join(source, "system-output.txt"), "synced")
+}
+
+func TestRebaseSystemConfigPathUsesCanonicalSource(t *testing.T) {
+	source := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(source, alias); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(alias, "config", ".shadowtree.toml")
+	got, err := rebaseSystemConfigPath(config, alias, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(source, "config", ".shadowtree.toml")
+	if got != want {
+		t.Fatalf("rebaseSystemConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestValidateSystemHelperPlatformRejectsIncompatibleBinary(t *testing.T) {
+	for _, test := range []struct {
+		name, goos, goarch, platform string
+		wantErr                      bool
+	}{
+		{name: "matching Linux binary", goos: "linux", goarch: "amd64", platform: "linux/amd64"},
+		{name: "non-Linux binary", goos: "darwin", goarch: "arm64", platform: "linux/arm64", wantErr: true},
+		{name: "other architecture", goos: "linux", goarch: "arm64", platform: "linux/amd64", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateSystemHelperPlatform(test.goos, test.goarch, test.platform)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateSystemHelperPlatform() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
 	}
 }
 
@@ -3357,8 +3457,10 @@ func TestSystemSandboxCheckValidatesImagePlanWithoutBuilding(t *testing.T) {
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
   "volume create --help") printf '%s' '--label' ;;
-  "run --help") printf '%s' '--mount --read-only --user --rm --platform' ;;
+  "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
+  "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
+  "rm --help") printf '%s' '--force' ;;
   *) printf '%s' ok ;;
 esac`)
 	t.Setenv("PATH", bin)
@@ -3421,8 +3523,8 @@ func TestRecipeReferencesDoNotBypassSystemSandboxMode(t *testing.T) {
 				Stdout:    io.Discard,
 				Stderr:    io.Discard,
 			})
-			if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
-				t.Fatalf("Run() error = %v, want system runtime detection failure", err)
+			if err == nil || !strings.Contains(err.Error(), "cannot enter system mode") {
+				t.Fatalf("Run() error = %v, want nested system-mode rejection", err)
 			}
 			if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
@@ -3459,8 +3561,8 @@ cmd = '''printf bypass > bypass.txt'''
 		Stdout:    io.Discard,
 		Stderr:    io.Discard,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
-		t.Fatalf("Run() error = %v, want system runtime detection failure", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot enter system mode") {
+		t.Fatalf("Run() error = %v, want nested system-mode rejection", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(target, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
@@ -3479,8 +3581,8 @@ func TestCommandOutputDoesNotBypassSystemSandboxMode(t *testing.T) {
 		},
 		SourceDir: source,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no usable system runtime") {
-		t.Fatalf("CommandOutput() error = %v, want system runtime detection failure", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot enter system mode") {
+		t.Fatalf("CommandOutput() error = %v, want nested system-mode rejection", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)

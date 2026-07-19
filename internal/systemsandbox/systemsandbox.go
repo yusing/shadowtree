@@ -50,8 +50,10 @@ var capabilityProbes = []capabilityProbe{
 	{phase: "image tagging", args: []string{"image", "tag", "--help"}},
 	{phase: "image building", args: []string{"build", "--help"}, requiredOptions: []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg"}},
 	{phase: "labelled volumes", args: []string{"volume", "create", "--help"}, requiredOptions: []string{"--label"}},
-	{phase: "nested and read-only mounts, UID/GID, and automatic removal", args: []string{"run", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--rm", "--platform"}},
+	{phase: "nested and read-only mounts, UID/GID, signalling identity, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--platform", "--name", "--interactive"}},
+	{phase: "attached container start", args: []string{"start", "--help"}, requiredOptions: []string{"--attach", "--interactive"}},
 	{phase: "container signalling", args: []string{"kill", "--help"}, requiredOptions: []string{"--signal"}},
+	{phase: "forced container removal", args: []string{"rm", "--help"}, requiredOptions: []string{"--force"}},
 }
 
 // Detect probes supported runtimes in stable order and returns the first usable

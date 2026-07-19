@@ -16,8 +16,8 @@ probe an engine; plans report `runtime: <not probed>`.
 System execution and host-capability checks probe Docker, Podman, then nerdctl
 in stable order through direct argument vectors. Presence alone is insufficient:
 the selected client must reach its engine and expose the required image, build,
-labelled-volume, nested/read-only mount, UID/GID, signalling, and automatic
-removal operations. Probes are bounded and state-free, report progress on
+labelled-volume, nested/read-only mount, UID/GID, attached-start, signalling,
+and forced-removal operations. Probes are bounded and state-free, report progress on
 stderr, continue after an unusable installed candidate, and aggregate all
 candidate failures when none is usable.
 
@@ -28,6 +28,10 @@ labels are validated before reuse, and collisions fail without overwrite.
 `system.base_image` is a literal non-`latest` override valid only in system
 mode. Locked preparation uses manifest-only contexts and disables Node/Bun
 lifecycle scripts; unlocked projects skip automatic dependency preparation.
+One ephemeral read-only-root container runs the complete resolved lifecycle
+against a private workspace mounted at the canonical checkout path. Nested
+references reuse that lifecycle, cancellation preserves `post`, and successful
+sync-out consumes the private workspace through the existing confinement rules.
 
 This document describes the behavior currently implemented by the project.
 

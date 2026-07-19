@@ -77,13 +77,13 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-009
     title: "REQ-SBOX-009 — Preserve lifecycle, output, and sync-out contracts"
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-010
     title: REQ-SBOX-010 — Inspect and reset project caches clearly
     kind: requirement

@@ -14,7 +14,7 @@ Static help, completion, config validation, and `--print` do not probe a
 container runtime. A system plan reports `runtime: <not probed>`. Execution and
 `--check` probe Docker, Podman, then nerdctl in that order. Each probe is bounded
 and non-interactive, verifies engine access plus the required image, build,
-labelled-volume, mount, UID/GID, signalling, and automatic-removal operations,
+labelled-volume, mount, UID/GID, attached-start, signalling, and forced-removal operations,
 and reports progress on stderr. Unusable candidates are diagnosed before the
 next candidate is tried. Detection creates no image, volume, workspace, or
 container, and system mode never falls back.
@@ -55,6 +55,17 @@ Locked dependency preparation runs only when the recognized lockfile exists:
 with package lifecycle scripts disabled. Generated Containerfiles use
 manifest-only contexts; ordinary project source and private credentials are
 never image inputs.
+
+Execution uses one named, explicitly removed container per top-level
+lifecycle. The host checkout is copied first; only that private copy is mounted
+read-write, at the checkout's canonical path. The container root is read-only,
+`/tmp` is a private tmpfs, the helper and resolved plan are private read-only
+mounts, and the runtime socket, host home, sibling projects, and host system
+paths are not mounted. The current static-helper transport requires a Linux
+host binary matching the selected image architecture and fails before building
+otherwise. Cancellation sends `TERM` so `post` can run, followed by a bounded
+forced kill only if cleanup does not finish. Sync-out runs only after complete
+success, while recipe logs are preserved after failures.
 
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
