@@ -2,11 +2,13 @@
 
 ## Project Structure & Module Organization
 
-Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point lives in `cmd/shadowtree/`. Internal packages live under `internal/`: `recipe` resolves configured recipes and Go profile defaults, `runner` manages sandboxed execution with Linux namespace overlayfs or copied-workspace fallback plus sync-out, `configfile` loads project config, `completion` emits shell completion, `shadowtreelsp` implements editor completion/semantic tokens, and `detect` handles profile detection. User-facing mdBook docs live in `docs/src/`; the behavioral spec lives at `docs/src/reference/spec.md`. Editor integrations live under `editors/`: `zed-shadowtree` is a Zed extension with a nested Rust crate and Tree-sitter queries, and `vscode-shadowtree` is a VS Code schema-binding manifest. The shared Shadowtree config schema lives at `schemas/shadowtree.schema.json`. Build outputs go in `bin/`; editor build outputs such as `editors/zed-shadowtree/target/` should stay untracked. Agent skill in `.agents/skills/shadowtree`
+Shadowtree is a Go CLI module (`github.com/yusing/shadowtree`). The entry point lives in `cmd/shadowtree/`. Internal packages live under `internal/`: `recipe` resolves configured recipes and Go profile defaults, `runner` manages sandboxed execution with Linux namespace overlayfs or copied-workspace fallback plus sync-out, `configfile` loads project config, `completion` emits shell completion, `shadowtreelsp` implements editor completion/semantic tokens, and `detect` handles profile detection. User-facing mdBook docs live in `docs/src/`; the behavioral spec lives at `docs/src/reference/spec.md`. Editor integrations live under `editors/`: `zed-shadowtree` is a Zed extension with a nested Rust crate and Tree-sitter queries, and `vscode-shadowtree` is a VS Code schema-binding manifest. The shared Shadowtree config schema lives at `schemas/shadowtree.schema.json`. Build outputs go in `bin/`; editor build outputs such as `editors/zed-shadowtree/target/` should stay untracked. Agent skills under `.agents/skills/` are `using-shadowtree`, `authoring-shadowtree-recipes`, and `migrate-to-shadowtree`.
 
 ## Operating Principles
 
-Do not rely on `shadowtree` skill since you're currently working `shadowtree`.
+Do not rely on the `using-shadowtree`, `authoring-shadowtree-recipes`, or
+`migrate-to-shadowtree` skills while working on Shadowtree itself; verify
+behavior from source and project docs.
 
 Shadowtree should follow Go's product philosophy: a small set of orthogonal
 features, one obvious way to express each idea, explicit behavior over magic,
@@ -17,7 +19,7 @@ placeholders, lifecycle stages, sandboxing, and inspection output instead of
 adding a parallel mini-language.
 
 On significant changes, update (where applicable) README, `docs/src`, spec,
-json schema, agent `SKILL.md`, lsp (syntax highlighting, autocomplete and
+json schema, agent `SKILL.md` files, lsp (syntax highlighting, autocomplete and
 diagnostic), shell completion, Pages workflow, and the reference configs under
 `examples/all-features*.shadowtree.toml`.
 

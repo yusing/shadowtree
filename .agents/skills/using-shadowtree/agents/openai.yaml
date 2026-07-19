@@ -1,0 +1,4 @@
+interface:
+  display_name: "Using Shadowtree"
+  short_description: "Run existing Shadowtree recipes safely"
+  default_prompt: "Use $using-shadowtree to inspect and run this project's recipe safely."
