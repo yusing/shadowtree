@@ -146,7 +146,7 @@ type Recipe struct {
 	Vars         map[string]string       `toml:"vars"`
 	Shell        string                  `toml:"shell"`
 	ShellPrelude string                  `toml:"shell_prelude"`
-	Sandboxed    *bool                   `toml:"sandboxed"`
+	Sandboxed    *SandboxMode            `toml:"sandboxed"`
 	ForEach      Command                 `toml:"for_each"`
 	Workdir      string                  `toml:"workdir"`
 	Cmd          Command                 `toml:"cmd"`
@@ -194,7 +194,7 @@ type Resolved struct {
 	Arguments    map[string]string
 	VariadicArgs []string
 	SyncOut      []string
-	Sandboxed    bool
+	SandboxMode  SandboxMode
 	GlobalEnv    map[string]string
 	ConfigPath   string
 	Profile      string
@@ -206,6 +206,35 @@ type Resolved struct {
 	Scope        Scope
 	TargetDomain string
 	TargetSource TargetSource
+}
+
+// SandboxMode is the effective recipe execution isolation mode.
+type SandboxMode string
+
+const (
+	SandboxModeWorkspace SandboxMode = "true"
+	SandboxModeHost      SandboxMode = "false"
+	SandboxModeSystem    SandboxMode = "system"
+)
+
+func (mode *SandboxMode) UnmarshalTOML(value any) error {
+	switch value := value.(type) {
+	case bool:
+		if value {
+			*mode = SandboxModeWorkspace
+		} else {
+			*mode = SandboxModeHost
+		}
+		return nil
+	case string:
+		if value != string(SandboxModeSystem) {
+			return fmt.Errorf("sandboxed string must be %q, got %q", SandboxModeSystem, value)
+		}
+		*mode = SandboxModeSystem
+		return nil
+	default:
+		return fmt.Errorf("sandboxed must be true, false, or %q, got %T", SandboxModeSystem, value)
+	}
 }
 
 type ResolveOptions struct {
@@ -365,7 +394,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 				Default:  "./...",
 				Values:   ScriptCommand(GoFmtTargetValuesCommand),
 			}},
-			Sandboxed: new(false),
+			Sandboxed: new(SandboxModeHost),
 		},
 		"build": {
 			Help: "Build Go packages.",
@@ -410,7 +439,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 			Help:      "Tidy Go module files.",
 			Cmd:       Command{"go", "mod", "tidy"},
 			Post:      StageCommands{{Cmd: ScriptCommand("if test -f go.work; then go work sync; fi")}},
-			Sandboxed: new(false),
+			Sandboxed: new(SandboxModeHost),
 		},
 	}
 	if goVersionAfter(mostCommonGoDirectiveVersion(opts.Context, opts.Dir), "1.26") {
@@ -420,7 +449,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-			Sandboxed: new(false),
+			Sandboxed: new(SandboxModeHost),
 		}
 	}
 	for _, name := range []string{"check", "lint", "test", "test-race", "vet"} {
@@ -693,9 +722,9 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	if containsVariadicArgsPlaceholder(globalSyncOut) || containsVariadicArgsPlaceholder(rec.SyncOut) {
 		return Resolved{}, fmt.Errorf("recipe %q sync_out: %s is not supported in sync_out", name, variadicArgsPlaceholder)
 	}
-	sandboxed := RecipeSandboxed(rec)
+	sandboxMode := RecipeSandboxMode(rec)
 	var syncOut []string
-	if sandboxed {
+	if sandboxMode != SandboxModeHost {
 		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values, nil)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
@@ -786,7 +815,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		Arguments:    argValues,
 		VariadicArgs: variadicArgs,
 		SyncOut:      syncOut,
-		Sandboxed:    sandboxed,
+		SandboxMode:  sandboxMode,
 		GlobalEnv:    expandedGlobalEnv,
 		ConfigPath:   configPath,
 		Profile:      profile,
@@ -855,8 +884,12 @@ func CommandWithRecipeReferenceExpandedPrelude(command Command, shell, shellPrel
 	return CommandWithRecipeReference(command, shell, shellPrelude), nil
 }
 
-func RecipeSandboxed(rec Recipe) bool {
-	return rec.Sandboxed == nil || *rec.Sandboxed
+// RecipeSandboxMode returns the recipe's effective sandbox mode.
+func RecipeSandboxMode(rec Recipe) SandboxMode {
+	if rec.Sandboxed == nil {
+		return SandboxModeWorkspace
+	}
+	return *rec.Sandboxed
 }
 
 func ValidateConfig(cfg Config) error {

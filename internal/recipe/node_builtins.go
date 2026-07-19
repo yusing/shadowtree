@@ -317,7 +317,7 @@ func addNodeRecipe(recipes map[string]Recipe, name, help string, cmd Command) {
 	recipes[name] = Recipe{
 		Help:      help,
 		Cmd:       cmd,
-		Sandboxed: new(false),
+		Sandboxed: new(SandboxModeHost),
 	}
 }
 

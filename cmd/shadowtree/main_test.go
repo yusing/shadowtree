@@ -918,7 +918,7 @@ func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	err := printRecipeHelp(t.Context(), &out, "tidy", recipe.Recipe{
 		Help:      "Tidy module files.",
 		Cmd:       recipe.Command{"go", "mod", "tidy"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 		SyncOut:   []string{"go.mod", "go.sum"},
 	}, recipeHelpOptions{})
 	if err != nil {
@@ -931,6 +931,22 @@ func TestPrintRecipeHelpHidesUnsandboxedSyncOut(t *testing.T) {
 	}
 	if strings.Contains(text, "- Sync out:") {
 		t.Fatalf("recipe help output shows ignored sync_out:\n%s", text)
+	}
+}
+
+func TestPrintRecipeHelpShowsSystemSandboxModeAndSyncOut(t *testing.T) {
+	var out bytes.Buffer
+	err := printRecipeHelp(t.Context(), &out, "build", recipe.Recipe{
+		Cmd:       recipe.Command{"go", "build"},
+		Sandboxed: new(recipe.SandboxModeSystem),
+		SyncOut:   []string{"bin/app"},
+	}, recipeHelpOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "- Sandboxed:\n\n    system") || !strings.Contains(text, "- Sync out:\n\n    bin/app") {
+		t.Fatalf("recipe help missing system mode or sync-out:\n%s", text)
 	}
 }
 

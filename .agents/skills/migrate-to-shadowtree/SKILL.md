@@ -67,6 +67,7 @@ For every legacy surface, record its destination before implementation:
 | Required executable check | `requires` |
 | Selected generated output | Recipe-local `sync_out` |
 | Intentional direct checkout or host mutation | `sandboxed = false` |
+| Explicit immutable system-container workflow | `sandboxed = "system"` |
 | Shared literal or environment setting | `vars` or `env` |
 | Persistent run output | Recipe logging |
 

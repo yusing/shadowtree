@@ -15,7 +15,7 @@ slices:
     acceptance: The package compiles and returns independent docker, podman, nerdctl candidate lists in stable order.
     non_goals: [mode decoding, runtime probing, image planning, container execution, cache operations]
   - id: SYSTEM-MODE
-    status: pending
+    status: implemented
     requirement_ids: [REQ-SBOX-001]
     depends_on: [SYSTEM-SKELETON]
   - id: SYSTEM-RUNTIME

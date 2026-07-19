@@ -3,6 +3,18 @@
 Sandboxed recipe writes stay inside the temporary workspace. The host checkout
 is unchanged unless sync-out is requested.
 
+The `sandboxed` field accepts three values:
+
+- omitted or `true`: namespace overlayfs with copied-workspace fallback;
+- `false`: direct host-checkout execution;
+- `"system"`: the system-container backend, with no fallback to either other
+  mode.
+
+Static help, completion, config validation, and `--print` do not probe a
+container runtime. A system plan reports `runtime: <not probed>`. Until the
+runtime adapter is available, execution fails explicitly without creating a
+workspace or falling back.
+
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
 workspace with the same isolation contract.

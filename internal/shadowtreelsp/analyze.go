@@ -1626,7 +1626,13 @@ func valueCompletions(key string) []completion {
 		return argumentTypeValues
 	case "path_kind":
 		return pathKindValues
-	case "sandboxed", "required", "log_tee":
+	case "sandboxed":
+		return []completion{
+			{Label: string(recipe.SandboxModeWorkspace), InsertText: string(recipe.SandboxModeWorkspace), Kind: completionKindValue, Detail: "Disposable workspace sandbox"},
+			{Label: string(recipe.SandboxModeHost), InsertText: string(recipe.SandboxModeHost), Kind: completionKindValue, Detail: "Direct host-checkout execution"},
+			{Label: string(recipe.SandboxModeSystem), InsertText: string(recipe.SandboxModeSystem), Kind: completionKindValue, Detail: "System container sandbox", Quote: true},
+		}
+	case "required", "log_tee":
 		return boolValues
 	case "log_stages":
 		return logStageValues

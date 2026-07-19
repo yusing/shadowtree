@@ -18,6 +18,10 @@ For an unsandboxed recipe, Shadowtree skips the temporary workspace and runs
 directly from the source checkout. Sync-out is not performed because command
 writes already target the host checkout.
 
+`sandboxed = "system"` is a distinct sandboxed lifecycle. It retains sync-out
+semantics and never falls back to the ordinary disposable workspace or direct
+host execution. Static inspection does not probe a runtime.
+
 ## Failure Behavior
 
 - If a `pre` command fails, the main command is skipped.

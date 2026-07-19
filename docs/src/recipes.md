@@ -20,8 +20,9 @@ sync_out = ["internal/generated"]
 - `pre`: commands that run before the main command.
 - `post`: commands that run after `pre` or the main command, including after
   failures.
-- `sandboxed`: `true` by default. Set `false` only for recipes that should edit
-  the host checkout directly.
+- `sandboxed`: `true` or omitted uses the disposable workspace, `false` edits
+  the host checkout directly, and `"system"` selects the system-container
+  backend without fallback.
 - `sync_out`: sandboxed paths copied back to the host checkout after success.
 - `for_each`: value provider that runs the main command once per candidate.
 - `workdir`: relative working directory for the main command.

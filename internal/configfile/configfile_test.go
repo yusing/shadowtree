@@ -367,7 +367,7 @@ count = 5
 	if got := loaded.Config.Recipes["test"].Help; got != "Run tests." {
 		t.Fatalf("Help = %q", got)
 	}
-	if got := loaded.Config.Recipes["test"].Sandboxed; got == nil || *got {
+	if got := loaded.Config.Recipes["test"].Sandboxed; got == nil || *got != recipe.SandboxModeHost {
 		t.Fatalf("Sandboxed = %#v, want false", got)
 	}
 	if got := loaded.Config.Recipes["test"].Cmd; len(got) != 2 || got[0] != "__shadowtree_script__" {
@@ -628,6 +628,39 @@ cmd = "pytest"
 	_, err := Load(path)
 	if err == nil || err.Error() != "unsupported profile: python" {
 		t.Fatalf("Load() error = %v, want unsupported profile error", err)
+	}
+}
+
+func TestLoadAcceptsSystemSandboxMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+	if err := os.WriteFile(path, []byte("[recipes.test]\nsandboxed = \"system\"\ncmd = \"go test ./...\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recipe.RecipeSandboxMode(loaded.Config.Recipes["test"]); got != recipe.SandboxModeSystem {
+		t.Fatalf("sandbox mode = %q, want system", got)
+	}
+}
+
+func TestLoadRejectsInvalidSandboxModes(t *testing.T) {
+	for name, value := range map[string]string{
+		"unknown string": `"docker"`,
+		"integer":        `1`,
+		"array":          `[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".shadowtree.toml")
+			if err := os.WriteFile(path, []byte("[recipes.test]\nsandboxed = "+value+"\ncmd = \"true\"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), "sandboxed") {
+				t.Fatalf("Load() error = %v, want sandboxed rejection", err)
+			}
+		})
 	}
 }
 

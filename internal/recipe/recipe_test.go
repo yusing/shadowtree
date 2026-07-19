@@ -85,14 +85,14 @@ func TestEnumSetValidation(t *testing.T) {
 func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	base := Recipe{
 		Cmd:       Command{"go", "test", "{pkg}", "{@}"},
-		Sandboxed: new(true),
+		Sandboxed: new(SandboxModeWorkspace),
 		Log:       "base.log",
 		LogStages: []string{LogStageCmd},
 		LogTee:    new(false),
 	}
 	override := Recipe{
 		Pre:       stageCommands(Command{"go", "generate", "./..."}),
-		Sandboxed: new(false),
+		Sandboxed: new(SandboxModeHost),
 		Log:       "override.log",
 		LogStages: []string{LogStagePre, LogStagePost},
 	}
@@ -104,7 +104,7 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	if len(got.Pre) != 1 || !slices.Equal(got.Pre[0].Cmd, Command{"go", "generate", "./..."}) {
 		t.Fatalf("Pre = %#v", got.Pre)
 	}
-	if got.Sandboxed == nil || *got.Sandboxed {
+	if got.Sandboxed == nil || *got.Sandboxed != SandboxModeHost {
 		t.Fatalf("Sandboxed = %#v, want false", got.Sandboxed)
 	}
 	if got.Log != "override.log" {
@@ -869,18 +869,73 @@ func TestResolveDefaultsToSandboxed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Sandboxed {
-		t.Fatal("Sandboxed = false, want true")
+	if got.SandboxMode != SandboxModeWorkspace {
+		t.Fatalf("SandboxMode = %q, want %q", got.SandboxMode, SandboxModeWorkspace)
 	}
 }
 
 func TestResolvePreservesUnsandboxedRecipe(t *testing.T) {
-	got, err := Resolve("tidy", Recipe{Cmd: Command{"go", "mod", "tidy"}, Sandboxed: new(false)}, nil, nil, nil, "", GoProfile)
+	got, err := Resolve("tidy", Recipe{Cmd: Command{"go", "mod", "tidy"}, Sandboxed: new(SandboxModeHost)}, nil, nil, nil, "", GoProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sandboxed {
-		t.Fatal("Sandboxed = true, want false")
+	if got.SandboxMode != SandboxModeHost {
+		t.Fatalf("SandboxMode = %q, want %q", got.SandboxMode, SandboxModeHost)
+	}
+}
+
+func TestSandboxModeUnmarshalAcceptsOnlyThreeValueContract(t *testing.T) {
+	for name, tt := range map[string]struct {
+		value   any
+		want    SandboxMode
+		wantErr string
+	}{
+		"workspace":      {value: true, want: SandboxModeWorkspace},
+		"host":           {value: false, want: SandboxModeHost},
+		"system":         {value: "system", want: SandboxModeSystem},
+		"unknown string": {value: "docker", wantErr: `sandboxed string must be "system"`},
+		"integer":        {value: int64(1), wantErr: "sandboxed must be true, false"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got SandboxMode
+			err := got.UnmarshalTOML(tt.value)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("UnmarshalTOML(%#v) error = %v, want %q", tt.value, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("UnmarshalTOML(%#v) = %q, %v; want %q", tt.value, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolvePreservesSystemSandboxModeAndSyncOut(t *testing.T) {
+	got, err := Resolve("build", Recipe{
+		Cmd:       Command{"go", "build"},
+		Sandboxed: new(SandboxModeSystem),
+		SyncOut:   []string{"bin/app"},
+	}, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SandboxMode != SandboxModeSystem {
+		t.Fatalf("SandboxMode = %q, want %q", got.SandboxMode, SandboxModeSystem)
+	}
+	if !slices.Equal(got.SyncOut, []string{"bin/app"}) {
+		t.Fatalf("SyncOut = %#v, want system sandbox sync-out retained", got.SyncOut)
+	}
+}
+
+func TestMergeRecipeOverridesSystemSandboxMode(t *testing.T) {
+	base := Recipe{Sandboxed: new(SandboxModeHost)}
+	if got := RecipeSandboxMode(MergeRecipe(base, Recipe{})); got != SandboxModeHost {
+		t.Fatalf("omitted override mode = %q, want inherited host", got)
+	}
+	if got := RecipeSandboxMode(MergeRecipe(base, Recipe{Sandboxed: new(SandboxModeSystem)})); got != SandboxModeSystem {
+		t.Fatalf("system override mode = %q, want system", got)
 	}
 }
 
@@ -889,7 +944,7 @@ func TestResolveUnsandboxedIgnoresSyncOut(t *testing.T) {
 		"tidy",
 		Recipe{
 			Cmd:       Command{"go", "mod", "tidy"},
-			Sandboxed: new(false),
+			Sandboxed: new(SandboxModeHost),
 			SyncOut:   []string{"{missing}"},
 		},
 		nil,
@@ -964,17 +1019,17 @@ func TestValidateConfigRejectsInvalidForEachBuiltin(t *testing.T) {
 
 func TestBuiltinTidySandboxedCanBeOverridden(t *testing.T) {
 	builtins := Builtins(GoProfile, BuiltinOptions{})
-	if RecipeSandboxed(builtins["tidy"]) {
+	if RecipeSandboxMode(builtins["tidy"]) != SandboxModeHost {
 		t.Fatal("built-in tidy is sandboxed, want unsandboxed")
 	}
 
 	merged := MergeRecipe(builtins["tidy"], Recipe{Help: "Custom tidy."})
-	if RecipeSandboxed(merged) {
+	if RecipeSandboxMode(merged) != SandboxModeHost {
 		t.Fatal("partial override reset tidy sandboxing")
 	}
 
-	merged = MergeRecipe(merged, Recipe{Sandboxed: new(true)})
-	if !RecipeSandboxed(merged) {
+	merged = MergeRecipe(merged, Recipe{Sandboxed: new(SandboxModeWorkspace)})
+	if RecipeSandboxMode(merged) != SandboxModeWorkspace {
 		t.Fatal("explicit override failed to reset tidy sandboxing")
 	}
 }
@@ -1005,7 +1060,7 @@ func TestBuiltinTidyRunsWorkspaceSyncPostHook(t *testing.T) {
 func TestGoBuiltinsHostMutatingRecipesAreUnsandboxed(t *testing.T) {
 	builtins := go1264Builtins(t)
 	for _, name := range []string{"fix", "fmt", "tidy"} {
-		if RecipeSandboxed(builtins[name]) {
+		if RecipeSandboxMode(builtins[name]) != SandboxModeHost {
 			t.Fatalf("built-in %s is sandboxed, want unsandboxed", name)
 		}
 	}
@@ -1055,7 +1110,7 @@ func TestGoBuiltinsIncludeWorkflowRecipes(t *testing.T) {
 			t.Fatalf("built-in %q is missing", name)
 		}
 	}
-	if RecipeSandboxed(builtins["fmt"]) {
+	if RecipeSandboxMode(builtins["fmt"]) != SandboxModeHost {
 		t.Fatal("built-in fmt is sandboxed, want unsandboxed")
 	}
 	if !slices.Equal(builtins["fmt"].Cmd, Command{"go", "fmt", "{target}", "{@}"}) {
@@ -1948,7 +2003,7 @@ func TestResolveRejectsVariadicArgsPlaceholderInSyncOut(t *testing.T) {
 func TestResolveRejectsVariadicArgsPlaceholderInUnsandboxedSyncOut(t *testing.T) {
 	rec := Recipe{
 		Cmd:       Command{"go", "test", "{@}"},
-		Sandboxed: new(false),
+		Sandboxed: new(SandboxModeHost),
 		SyncOut:   []string{"{@}"},
 	}
 
@@ -3254,7 +3309,7 @@ func TestNodeBuiltinsAreUnsandboxed(t *testing.T) {
 	}`)
 
 	for name, rec := range Builtins(NodeProfile, BuiltinOptions{Dir: dir}) {
-		if rec.Sandboxed == nil || *rec.Sandboxed {
+		if rec.Sandboxed == nil || *rec.Sandboxed != SandboxModeHost {
 			t.Fatalf("%s Sandboxed = %#v, want false", name, rec.Sandboxed)
 		}
 	}

@@ -35,7 +35,7 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-002
     title: REQ-SBOX-002 — Detect one usable system runtime
     kind: requirement

@@ -20,7 +20,7 @@ shadowtree help test color=false
 - recipe name and help text
 - `--all` support and target domain
 - command
-- sandboxed marker for unsandboxed recipes
+- explicit `false` or `system` sandbox marker
 - tool requirements
 - `pre` and `post`
 - `for_each`
@@ -49,7 +49,8 @@ shadowtree --all --print test
 
 The plan includes fields such as recipe name, profile, config path,
 unsandboxed marker, declared requirements, stages, `for_each`, `workdir`, main
-command, post commands, and sync-out paths.
+command, post commands, and sync-out paths. Static system plans also report
+`runtime: <not probed>`.
 Aggregate plans also print `scope`, `target_domain`, and `target_source` so a
 native workspace command and a per-target plan remain distinguishable.
 

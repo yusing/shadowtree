@@ -2143,6 +2143,14 @@ position = 1
 	}
 }
 
+func TestDocumentDiagnosticsRejectUnknownSandboxMode(t *testing.T) {
+	diagnostics := documentDiagnostics(t.Context(), `[recipes.test]
+sandboxed = "docker"
+cmd = "true"
+`)
+	assertOneDiagnostic(t, diagnostics, `sandboxed string must be "system", got "docker"`)
+}
+
 func assertDiagnosticRange(t *testing.T, diagnostic lspDiagnostic, line, start, end int) {
 	t.Helper()
 	editRange := diagnostic.Range

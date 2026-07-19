@@ -91,7 +91,7 @@ Shadowtree puts those workflows behind one recipe interface:
 | Surface | What it does |
 | --- | --- |
 | Recipe config | `.shadowtree.toml` recipes with `pre`, `cmd`, `post`, `for_each`, `workdir`, `env`, `vars`, requirements, logs, and sync-out |
-| Sandboxed runs | Overlayfs in a user and mount namespace on Linux, with a copied-workspace fallback when overlayfs is unavailable |
+| Sandboxed runs | `sandboxed = true` uses overlayfs/copy isolation, `false` runs directly, and `"system"` selects the system-container backend |
 | Explicit checkout writes | Recipe `sync_out`, CLI `--sync-out`, `--sync-out-all`, or `sandboxed = false` for workflows that intentionally edit the host checkout |
 | Typed arguments | Positional and named recipe inputs with defaults, validation, value providers, presets, and completion |
 | Recipe references | `@recipe` and `@path:recipe` references for composing workflows without a second task language |
@@ -140,6 +140,12 @@ Recipes are sandboxed unless they set `sandboxed = false` or inherit behavior
 from a built-in profile. Use `sync_out` when a sandboxed recipe should copy
 specific generated paths back after a successful run. Prefer narrow sync-out
 paths over `--sync-out-all`.
+
+`sandboxed = "system"` is an explicit third mode. Static help and plan output
+show it as `system` with `runtime: <not probed>` and never contact a container
+engine. Runtime execution is enabled by the progressive system-sandbox backend;
+until that adapter is available, execution fails explicitly. It never falls
+back to workspace or host execution.
 
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle
 stages, and recipe references are documented in the

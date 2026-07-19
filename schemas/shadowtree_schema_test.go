@@ -58,6 +58,31 @@ func TestProfileEnumMatchesRuntimeProfiles(t *testing.T) {
 	}
 }
 
+func TestSandboxedSchemaHasBooleanAndSystemContract(t *testing.T) {
+	data, err := os.ReadFile("shadowtree.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	definitions := schemaObject(t, schema, "definitions")
+	recipeDefinition := schemaObject(t, definitions, "recipe")
+	properties := schemaObject(t, recipeDefinition, "properties")
+	sandboxed := schemaObject(t, properties, "sandboxed")
+	options, ok := sandboxed["oneOf"].([]any)
+	if !ok || len(options) != 2 {
+		t.Fatalf("sandboxed oneOf = %#v, want boolean and system", sandboxed["oneOf"])
+	}
+	if first := options[0].(map[string]any)["type"]; first != "boolean" {
+		t.Fatalf("sandboxed first option = %#v", options[0])
+	}
+	if second := options[1].(map[string]any)["const"]; second != "system" {
+		t.Fatalf("sandboxed second option = %#v", options[1])
+	}
+}
+
 func schemaPatternProperty(t *testing.T, definitionName string) string {
 	t.Helper()
 	data, err := os.ReadFile("shadowtree.schema.json")

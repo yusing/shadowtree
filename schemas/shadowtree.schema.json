@@ -129,8 +129,11 @@
           "description": "Recipe-local shell code appended after the top-level shell_prelude and expanded with recipe placeholders."
         },
         "sandboxed": {
-          "type": "boolean",
-          "description": "Whether to run this recipe in a disposable workspace. Defaults to true.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string", "const": "system" }
+          ],
+          "description": "Execution isolation: true or omitted uses a disposable workspace, false runs in the host checkout, and \"system\" selects a system container runtime.",
           "default": true
         },
         "for_each": {

@@ -125,7 +125,7 @@ func TestRunPresentRequiredCommandAllowsExecution(t *testing.T) {
 	resolved, err := recipe.Resolve("run", recipe.Recipe{
 		Requires:  recipe.Requirements{Commands: []string{"shadow-ok"}},
 		Cmd:       recipe.Command{"shadow-ok"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestRunMissingOptionalCommandsWarnsAndContinues(t *testing.T) {
 			OptionalCommands: []string{"h2load"},
 		},
 		Cmd:       recipe.Command{"shadow-ok"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestRunMissingGoCommandReportsInstallGuidance(t *testing.T) {
 	resolved, err := recipe.Resolve("generate", recipe.Recipe{
 		Requires:  recipe.Requirements{GoCommands: map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@latest"}},
 		Cmd:       recipe.Command{"stringer"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestRunMissingNodeCommandReportsPackageManagerCLIInstallGuidance(t *testing
 	resolved, err := recipe.Resolve("lint", recipe.Recipe{
 		Requires:  recipe.Requirements{NodeCommands: map[string]string{"eslint": "eslint@^9"}},
 		Cmd:       recipe.Command{"eslint"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestRunMissingNodeCommandGuidanceUsesStaticWorkdirPackageManager(t *testing
 		Requires:  recipe.Requirements{NodeCommands: map[string]string{"eslint": "eslint@^9"}},
 		Workdir:   "frontend",
 		Cmd:       recipe.Command{"eslint"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestRunNestedRecipeChecksNestedRequirementsWhenReached(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	parent, err := recipe.Resolve("parent", recipe.Recipe{
 		Cmd:       recipe.Command{"@child"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestRunNestedRecipeChecksNestedRequirementsWhenReached(t *testing.T) {
 	child := recipe.Recipe{
 		Requires:  recipe.Requirements{Commands: []string{"child-tool"}},
 		Cmd:       recipe.Command{"child-tool"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}
 
 	err = Run(t.Context(), Options{
@@ -526,7 +526,7 @@ func TestRunUnsandboxedMutatesSourceWithoutSyncOut(t *testing.T) {
 	}
 	resolved, err := recipe.Resolve(
 		"run",
-		recipe.Recipe{Cmd: recipe.Command{"sh", "-c", "printf shadow > file.txt"}, Sandboxed: new(false)},
+		recipe.Recipe{Cmd: recipe.Command{"sh", "-c", "printf shadow > file.txt"}, Sandboxed: new(recipe.SandboxModeHost)},
 		nil,
 		nil,
 		nil,
@@ -603,7 +603,7 @@ func TestRunVerbosePrintsStageBoundaries(t *testing.T) {
 			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n'\nprintf 'again\n'")),
 			Cmd:       recipe.Command{"@child"},
 			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -651,7 +651,7 @@ func TestRunLogsAllStagesByDefault(t *testing.T) {
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
 			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Log:       "logs/{run_id}.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -688,7 +688,7 @@ func TestRunLogsStdoutAndStderr(t *testing.T) {
 			Cmd:       recipe.ScriptCommand("printf 'out\n'; printf 'err\n' >&2"),
 			Log:       "run.log",
 			LogTee:    new(false),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -727,7 +727,7 @@ func TestRunLogsCmdStageForEachItemsOnly(t *testing.T) {
 			Cmd:       recipe.ScriptCommand("printf 'cmd:%s\n' '{item}'"),
 			Log:       "run.log",
 			LogStages: []string{recipe.LogStageCmd},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -760,7 +760,7 @@ func TestRunLogTeeFalseSuppressesSelectedTerminalOutput(t *testing.T) {
 			Log:       "run.log",
 			LogStages: []string{recipe.LogStageCmd},
 			LogTee:    new(false),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -791,7 +791,7 @@ func TestRunRejectsEscapingLogPath(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.Command{"true"},
 			Log:       "../outside.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -823,7 +823,7 @@ func TestRunLogReplacesParentSymlinkWithoutMutatingTarget(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
 			Log:       "logs/run.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -861,7 +861,7 @@ func TestRunLogPreservesRegularParentFile(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
 			Log:       "logs/run.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -895,7 +895,7 @@ func TestRunLogReplacesLeafSymlinkWithoutMutatingTarget(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
 			Log:       "run.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -937,7 +937,7 @@ func TestRunLogPreservesLeafDirectory(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
 			Log:       "run.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -977,7 +977,7 @@ func TestRunCopiedWorkspaceSyncPreservesHostLog(t *testing.T) {
 					Cmd:       recipe.ScriptCommand("printf 'logged\n'"),
 					Log:       "logs/run.log",
 					SyncOut:   []string{"logs"},
-					Sandboxed: new(true),
+					Sandboxed: new(recipe.SandboxModeWorkspace),
 				},
 				nil,
 				nil,
@@ -1027,7 +1027,7 @@ func TestRunCopiedWorkspaceSyncOutDirectoryRemovesStaleFile(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.Command{"sh", "-c", "rm dir/stale.txt; printf shadow > dir/new.txt"},
 			SyncOut:   []string{"dir"},
-			Sandboxed: new(true),
+			Sandboxed: new(recipe.SandboxModeWorkspace),
 		},
 		nil,
 		nil,
@@ -1057,7 +1057,7 @@ func TestRunLogsPostAfterMainFailure(t *testing.T) {
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'; exit 7"),
 			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n'")),
 			Log:       "run.log",
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1088,7 +1088,7 @@ func TestRunPostReceivesSuccessfulStageStatuses(t *testing.T) {
 			Pre:       stageCommands(recipe.Command{"true"}),
 			Cmd:       recipe.Command{"true"},
 			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1113,7 +1113,7 @@ func TestRunCmdReceivesPreStatus(t *testing.T) {
 		recipe.Recipe{
 			Pre:       stageCommands(recipe.Command{"true"}),
 			Cmd:       recipe.ScriptCommand(`printf '%s' "{status:pre}" > status.txt`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1137,7 +1137,7 @@ func TestRunCmdReceivesEmptyPreStatusWhenPreDidNotRun(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand(`printf '<%s>' "{status:pre}" > status.txt`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1162,7 +1162,7 @@ func TestRunPostReceivesMainFailureStatus(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("exit 7"),
 			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1189,7 +1189,7 @@ func TestRunPostReceivesPreFailureAndSkippedMainStatus(t *testing.T) {
 			Pre:       stageCommands(recipe.ScriptCommand("exit 5")),
 			Cmd:       recipe.ScriptCommand("printf 'cmd' > cmd.txt"),
 			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1219,7 +1219,7 @@ func TestRunPostReceivesTimeoutStatus(t *testing.T) {
 			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("sleep 1"), Timeout: "20ms"}},
 			Cmd:       recipe.Command{"true"},
 			Post:      stageCommands(recipe.ScriptCommand(`printf '%s:%s' "{status:pre}" "{status:cmd}" > status.txt`)),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1254,7 +1254,7 @@ func TestRunPostRunsWithEOFStdinAfterContextCancellation(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("printf ready > ready.txt; sleep 10"),
 			Post:      stageCommands(recipe.ScriptCommand("if read value; then printf got; else printf eof; fi > post.txt")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1314,7 +1314,7 @@ func TestRunPostStopsOnLaterContextCancellation(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("exit 1"),
 			Post:      stageCommands(recipe.ScriptCommand("printf ready > post-ready.txt; read value; printf got > post.txt")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1366,7 +1366,7 @@ func TestRunPostRecipeReferenceReceivesStatus(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("exit 3"),
 			Post:      stageCommands(recipe.ScriptCommand("@cleanup[code={status:cmd}]")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1407,7 +1407,7 @@ func TestRunLogsNestedRecipeOutputThroughParentStage(t *testing.T) {
 			Cmd:       recipe.Command{"@child"},
 			Log:       "parent.log",
 			LogStages: []string{recipe.LogStageCmd},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1444,7 +1444,7 @@ func TestRunStageCommandTimesOut(t *testing.T) {
 		recipe.Recipe{
 			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("sleep 1"), Timeout: "20ms"}},
 			Cmd:       recipe.ScriptCommand("printf 'cmd\n'"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1473,7 +1473,7 @@ func TestRunStageTimeoutKillsBackgroundWriter(t *testing.T) {
 		recipe.Recipe{
 			Pre:       recipe.StageCommands{{Cmd: recipe.ScriptCommand("(printf started > started.txt; while [ ! -e gate ]; do sleep 0.01; done; printf late > late.txt) & sleep 5"), Timeout: "30ms"}},
 			Cmd:       recipe.Command{"true"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1485,7 +1485,12 @@ func TestRunStageTimeoutKillsBackgroundWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard})
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		SourceDir: source,
+		Stdout:    io.Discard,
+		Stderr:    io.Discard,
+	})
 	if err == nil || !strings.Contains(err.Error(), "pre[0] timed out after 30ms") {
 		t.Fatalf("Run() error = %v, want pre timeout", err)
 	}
@@ -1506,7 +1511,7 @@ func TestRunRetryHelperRetriesCommand(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand(`@retry[count=3,delay=1ms] sh -c 'count=$(cat attempts 2>/dev/null || printf 0); count=$((count+1)); printf "%s" "$count" > attempts; test "$count" -ge 3'`),
 			Post:      stageCommands(recipe.ScriptCommand("cat attempts")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1573,7 +1578,7 @@ printf 'status=%s' "$status"`,
 				"test",
 				recipe.Recipe{
 					Cmd:       recipe.ScriptCommand(tt.script),
-					Sandboxed: new(false),
+					Sandboxed: new(recipe.SandboxModeHost),
 				},
 				nil,
 				nil,
@@ -1611,7 +1616,7 @@ cleanup() {
 }
 @retry[count=2,delay=1ms] cleanup
 cat attempts`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1640,7 +1645,7 @@ func TestRunRetryHelperRejectsGeneratedNameCollision(t *testing.T) {
 		recipe.Recipe{
 			Cmd: recipe.ScriptCommand(`__shadowtree_retry_2_1_1() { return 0; }
 @retry[count=2,delay=0s] false`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1665,7 +1670,7 @@ func TestRunRetryHelperRetriesRecipeReference(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand(`@retry[count=3,delay=1ms] @flaky`),
 			Post:      stageCommands(recipe.ScriptCommand("cat attempts")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1706,7 +1711,7 @@ func TestRunInvokesRecipeReferenceDirectly(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.Command{"cat", "out.txt"},
 			Pre:       stageCommands(recipe.Command{"@gen", "value=shadow"}),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1747,7 +1752,7 @@ func TestRunInvokesStringRecipeReferenceWithBracketArguments(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.Command{"cat", "out.txt"},
 			Pre:       stageCommands(recipe.ScriptCommand("@gen[value=shadow]")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1787,7 +1792,7 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithArguments(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@gen value=shadow\ncat out.txt"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1839,7 +1844,7 @@ func TestRunExpandsScriptVariablesInRecipeReferenceArguments(t *testing.T) {
 	recipes["bench"] = recipe.Recipe{
 		Cmd:       recipe.ScriptCommand("run_bench() {\n\tpkg=./internal/runner\n\tbench=BenchmarkRun\n\t@test \"$pkg\" -run '^$' -bench \"$bench\" -benchtime=1x -count=1 {@}\n}\nrun_bench"),
 		Env:       map[string]string{"GO_CAPTURE": capture, "PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH")},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}
 	resolved, err := recipe.Resolve(
 		"bench",
@@ -1886,7 +1891,7 @@ func TestRunScriptRecipeReferenceUsesRelativePathFromRecipeDir(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@echo"),
 			Env:       map[string]string{"PATH": "bin"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1927,7 +1932,7 @@ func TestRunScriptRecipeReferenceRespectsUnsetPath(t *testing.T) {
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("unset PATH\n@echo"),
 			Env:       map[string]string{"PATH": bin},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1955,7 +1960,7 @@ func TestRunInvokesLiteralScriptRecipeReferenceInConditional(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("if @check; then printf ok; else printf fail; fi"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -1988,7 +1993,7 @@ func TestRunComposesScriptRecipeReferencesWithAndOr(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@fail || @ok && printf done"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2024,7 +2029,7 @@ func TestRunInvokesLiteralScriptRecipeReferenceWithBracketArguments(t *testing.T
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@gen[value=shadow]\ncat out.txt"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2073,7 +2078,7 @@ func TestRunForEachRunsMainPerItem(t *testing.T) {
 			Pre:       stageCommands(recipe.ScriptCommand("printf 'pre\n' > out.txt")),
 			Cmd:       recipe.ScriptCommand(`printf '%s:%s:%s:%s\n' "{item_index}" "{item}" "{item_help}" "$(basename "$PWD")" >> ../out.txt`),
 			Post:      stageCommands(recipe.ScriptCommand("printf 'post\n' >> out.txt")),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2112,7 +2117,7 @@ func TestRunAllPackageTargetsUseOwningModuleWorkdirs(t *testing.T) {
 	}
 	rec := recipe.Recipe{
 		Cmd:       recipe.Command{"sh", "-c", `printf '%s\t%s\n' "$PWD" "$1"`, "shadowtree", "{item}"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 	}
 	resolved, err := recipe.ResolveWithOptions("fmt", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
 		Scope:        recipe.ScopeAll,
@@ -2157,7 +2162,7 @@ func TestRunAllMainDiscoveryUsesResolvedBuildContext(t *testing.T) {
 			rec := recipe.Recipe{
 				Cmd:       recipe.Command{"sh", "-c", `printf '%s\n' "$1"`, "shadowtree", "{item}", "{@}"},
 				Env:       map[string]string{"GOFLAGS": tt.goFlags},
-				Sandboxed: new(false),
+				Sandboxed: new(recipe.SandboxModeHost),
 			}
 			resolved, err := recipe.ResolveWithOptions("build", rec, tt.cliArgs, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
 				Scope:        recipe.ScopeAll,
@@ -2179,7 +2184,7 @@ func TestRunAllMainDiscoveryUsesResolvedBuildContext(t *testing.T) {
 }
 
 func TestRunAllRejectsEmptyTargetDiscovery(t *testing.T) {
-	rec := recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(false)}
+	rec := recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeHost)}
 	resolved, err := recipe.ResolveWithOptions("fmt", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
 		Scope:        recipe.ScopeAll,
 		TargetDomain: "packages",
@@ -2213,7 +2218,7 @@ func TestRunUsesWorkdirWithoutForEach(t *testing.T) {
 		recipe.Recipe{
 			Workdir:   "module",
 			Cmd:       recipe.ScriptCommand(`printf '%s' "$(basename "$PWD")"`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2242,7 +2247,7 @@ func TestRunForEachStopsOnFirstFailureAndRunsPost(t *testing.T) {
 			ForEach:   recipe.ScriptCommand("@enum a b c"),
 			Cmd:       recipe.ScriptCommand(`printf '%s\n' "{item}" >> out.txt; test "{item}" != b`),
 			Post:      stageCommands(recipe.ScriptCommand(`printf 'post:%s\n' "{status:cmd}" >> out.txt`)),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2276,7 +2281,7 @@ func TestRunForEachCmdReceivesPreStatus(t *testing.T) {
 			Pre:       stageCommands(recipe.Command{"true"}),
 			ForEach:   recipe.ScriptCommand("@enum a b"),
 			Cmd:       recipe.ScriptCommand(`printf '%s:%s\n' "{item}" "{status:pre}" >> out.txt`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2301,7 +2306,7 @@ func TestRunForEachUsesCommandBackedValues(t *testing.T) {
 		recipe.Recipe{
 			ForEach:   recipe.ScriptCommand("printf 'a\\talpha\\nb\\tbeta\\n'"),
 			Cmd:       recipe.ScriptCommand(`printf '%s:%s\n' "{item}" "{item_help}" >> out.txt`),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2332,7 +2337,7 @@ func TestRunPreservesScriptArgsWithLiteralRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@noop\nprintf %s 'shadow'"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2365,7 +2370,7 @@ func TestRunSupportsExportBeforeScriptRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("VALUE=shadow\nexport VALUE\n@echo-value"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2400,7 +2405,7 @@ func TestRunUsesCurrentExportedValueForScriptRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("export VALUE=old\nVALUE=shadow\n@echo-value"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2435,7 +2440,7 @@ func TestRunDoesNotReexportUnsetValueForScriptRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("export VALUE=shadow\nunset VALUE\n@echo-value"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2470,7 +2475,7 @@ func TestRunSupportsExportBeforeExternalCommandInScriptWithRecipeReference(t *te
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("VALUE=shadow\nexport VALUE\n@noop\nsh -c 'printf %s \"$VALUE\"'"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2503,7 +2508,7 @@ func TestRunDoesNotPassUnexportedVariablesToScriptRecipeReference(t *testing.T) 
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("VALUE=shadow\n@echo-value"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2539,7 +2544,7 @@ func TestRunDoesNotPassRecreatedUnexportedVariableToScriptRecipeReference(t *tes
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("unset VALUE\nVALUE=shadow\n@echo-value"),
 			Env:       map[string]string{"VALUE": "base"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2574,7 +2579,7 @@ func TestRunPreservesDashPrefixedScriptArgsWithLiteralRecipeReference(t *testing
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("@noop\nprintf '%s:%s' '-n' 'shadow'"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2607,7 +2612,7 @@ func TestRunDoesNotDispatchVariableExpandedScriptRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("FOO=@gen\n$FOO 2>/dev/null || printf no-dispatch"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2660,7 +2665,7 @@ required = true
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"@webui:gen-schema", "value=shadow"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2710,7 +2715,7 @@ cmd = "printf shadow > out.txt"
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"@webui:gen-schema"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,
@@ -2740,7 +2745,7 @@ func TestRunSameConfigRecipeReferenceExpandsGlobalEnvForTarget(t *testing.T) {
 	configEnv := map[string]string{"VALUE": "{value}"}
 	parent := recipe.Recipe{
 		Cmd:       recipe.Command{"@child", "value=shadow"},
-		Sandboxed: new(false),
+		Sandboxed: new(recipe.SandboxModeHost),
 		Arguments: map[string]recipe.Argument{
 			"value": {Default: "parent"},
 		},
@@ -2876,7 +2881,7 @@ sync_out = ["out.txt"]
 }
 
 func TestRunRejectsRecipeReferenceCycle(t *testing.T) {
-	resolved, err := recipe.Resolve("a", recipe.Recipe{Cmd: recipe.Command{"@b"}, Sandboxed: new(false)}, nil, nil, nil, "", "")
+	resolved, err := recipe.Resolve("a", recipe.Recipe{Cmd: recipe.Command{"@b"}, Sandboxed: new(recipe.SandboxModeHost)}, nil, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3111,7 +3116,7 @@ func TestPrintPlanHidesUnsandboxedSyncOut(t *testing.T) {
 		"tidy",
 		recipe.Recipe{
 			Cmd:       recipe.Command{"go", "mod", "tidy"},
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 			SyncOut:   []string{"go.mod", "go.sum"},
 		},
 		nil,
@@ -3132,6 +3137,154 @@ func TestPrintPlanHidesUnsandboxedSyncOut(t *testing.T) {
 	}
 	if strings.Contains(text, "sync_out:") {
 		t.Fatalf("plan output shows ignored sync_out:\n%s", text)
+	}
+}
+
+func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
+	resolved, err := recipe.Resolve("test", recipe.Recipe{
+		Cmd:       recipe.Command{"go", "test", "./..."},
+		Sandboxed: new(recipe.SandboxModeSystem),
+	}, nil, nil, nil, "", recipe.GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, expanded := range map[string]bool{"compact": false, "expanded": true} {
+		t.Run(name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), PrintOnly: true, PrintExpanded: expanded, Stdout: &stdout}); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n"} {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("plan missing %q:\n%s", want, stdout.String())
+				}
+			}
+		})
+	}
+}
+
+func TestSystemSandboxExecutionDoesNotFallBackToWorkspaceOrHost(t *testing.T) {
+	resolved, err := recipe.Resolve("test", recipe.Recipe{
+		Cmd:       recipe.Command{"false"},
+		Sandboxed: new(recipe.SandboxModeSystem),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := newOverlayWorkspace
+	called := false
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		called = true
+		return nil, errors.New("unexpected workspace fallback")
+	}
+	t.Cleanup(func() { newOverlayWorkspace = original })
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) || !strings.Contains(err.Error(), "not available yet") {
+		t.Fatalf("Run() error = %v, want explicit unavailable system mode", err)
+	}
+	if called {
+		t.Fatal("system mode attempted workspace sandbox fallback")
+	}
+}
+
+func TestSystemSandboxCheckDoesNotReportUnavailableBackendAsReady(t *testing.T) {
+	resolved, err := recipe.Resolve("test", recipe.Recipe{
+		Cmd:       recipe.Command{"true"},
+		Sandboxed: new(recipe.SandboxModeSystem),
+	}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), CheckOnly: true, Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
+		t.Fatalf("Run() error = %v, want unavailable system mode", err)
+	}
+}
+
+func TestRecipeReferencesDoNotBypassSystemSandboxMode(t *testing.T) {
+	for _, parentMode := range []recipe.SandboxMode{recipe.SandboxModeHost, recipe.SandboxModeWorkspace} {
+		t.Run(string(parentMode), func(t *testing.T) {
+			source := t.TempDir()
+			resolved, err := recipe.Resolve("parent", recipe.Recipe{
+				Cmd:       recipe.Command{"@child"},
+				Sandboxed: new(parentMode),
+			}, nil, nil, nil, filepath.Join(source, ".shadowtree.toml"), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = Run(t.Context(), Options{
+				Resolved: resolved,
+				Recipes: map[string]recipe.Recipe{
+					"child": {
+						Cmd:       recipe.Command{"sh", "-c", "printf bypass > bypass.txt"},
+						Sandboxed: new(recipe.SandboxModeSystem),
+					},
+				},
+				SourceDir: source,
+				Stdout:    io.Discard,
+				Stderr:    io.Discard,
+			})
+			if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
+				t.Fatalf("Run() error = %v, want unavailable system mode", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
+			}
+		})
+	}
+}
+
+func TestCrossConfigRecipeReferenceDoesNotBypassSystemSandboxMode(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".shadowtree.toml"), []byte(`
+[recipes.child]
+sandboxed = "system"
+cmd = '''printf bypass > bypass.txt'''
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("parent", recipe.Recipe{
+		Cmd:       recipe.Command{"@webui:child"},
+		Sandboxed: new(recipe.SandboxModeHost),
+	}, nil, nil, nil, filepath.Join(source, ".shadowtree.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(t.Context(), Options{
+		Resolved:  resolved,
+		Recipes:   map[string]recipe.Recipe{"parent": {Cmd: recipe.Command{"@webui:child"}}},
+		SourceDir: source,
+		Stdout:    io.Discard,
+		Stderr:    io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
+		t.Fatalf("Run() error = %v, want unavailable system mode", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(target, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestCommandOutputDoesNotBypassSystemSandboxMode(t *testing.T) {
+	source := t.TempDir()
+	_, err := CommandOutput(t.Context(), source, nil, recipe.Command{"@child"}, CommandOutputOptions{
+		Recipes: map[string]recipe.Recipe{
+			"child": {
+				Cmd:       recipe.Command{"sh", "-c", "printf bypass > bypass.txt"},
+				Sandboxed: new(recipe.SandboxModeSystem),
+			},
+		},
+		SourceDir: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), `sandboxed = "system"`) {
+		t.Fatalf("CommandOutput() error = %v, want unavailable system mode", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(source, "bypass.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("bypass.txt stat error = %v, want not exist", statErr)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/systemsandbox"
 )
 
 type Options struct {
@@ -332,6 +333,9 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		printPlan(stdout, options.Resolved)
 		return nil
 	}
+	if err := validateExecutionMode(options.Resolved); err != nil {
+		return err
+	}
 	if options.CheckOnly {
 		if err := validatePlan(ctx, options); err != nil {
 			return err
@@ -343,7 +347,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err := checkRecipeRequirements(options.Resolved, source, env, stderr); err != nil {
 		return err
 	}
-	if !options.Resolved.Sandboxed {
+	if options.Resolved.SandboxMode == recipe.SandboxModeHost {
 		if options.Verbose {
 			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
 		}
@@ -393,6 +397,13 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		}
 	}
 	return nil
+}
+
+func validateExecutionMode(resolved recipe.Resolved) error {
+	if resolved.SandboxMode != recipe.SandboxModeSystem {
+		return nil
+	}
+	return fmt.Errorf("recipe %q uses sandboxed = %q, but system sandbox execution is not available yet (runtime candidates: %v)", resolved.Name, recipe.SandboxModeSystem, systemsandbox.RuntimeCandidates())
 }
 
 type sandboxWorkspace struct {
@@ -901,6 +912,9 @@ func runRecipeReference(ctx context.Context, sandbox *sandboxWorkspace, dir stri
 	if err != nil {
 		return err
 	}
+	if err := validateExecutionMode(resolved); err != nil {
+		return err
+	}
 	nested := options
 	nested.Resolved = resolved
 	nested.SyncOutAll = false
@@ -929,6 +943,9 @@ func runCrossConfigRecipeReference(ctx context.Context, sandbox *sandboxWorkspac
 	}
 	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{RunID: options.Resolved.RunID, Recipes: target.Recipes, EnumSets: target.Loaded.Config.EnumSets})
 	if err != nil {
+		return err
+	}
+	if err := validateExecutionMode(resolved); err != nil {
 		return err
 	}
 	nested := options
@@ -976,6 +993,9 @@ func CommandOutput(ctx context.Context, dir string, env map[string]string, comma
 	if err != nil {
 		return "", err
 	}
+	if err := validateExecutionMode(resolved); err != nil {
+		return "", err
+	}
 	var stdout bytes.Buffer
 	envList := mergedEnv(os.Environ(), resolved.GlobalEnv, resolved.Recipe.Env)
 	if err := checkRecipeRequirements(resolved, dir, envList, io.Discard); err != nil {
@@ -1006,6 +1026,9 @@ func crossConfigCommandOutput(ctx context.Context, dir string, env map[string]st
 	}
 	resolved, err := recipe.ResolveWithOptions(ref.Name, rec, ref.Args, nil, target.Loaded.Config.Env, target.Loaded.Path, target.Profile, recipe.ResolveOptions{Recipes: target.Recipes, EnumSets: target.Loaded.Config.EnumSets})
 	if err != nil {
+		return "", err
+	}
+	if err := validateExecutionMode(resolved); err != nil {
 		return "", err
 	}
 	var stdout bytes.Buffer
@@ -1092,8 +1115,11 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 		fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
 		fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
 	}
-	if !resolved.Sandboxed {
-		fmt.Fprintln(w, "sandboxed: false")
+	if resolved.SandboxMode != recipe.SandboxModeWorkspace {
+		fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
+		if resolved.SandboxMode == recipe.SandboxModeSystem {
+			fmt.Fprintln(w, "runtime: <not probed>")
+		}
 	}
 	printPlanRequirements(w, resolved.Recipe.Requires)
 	for i, command := range resolved.Recipe.Pre {
@@ -1121,7 +1147,10 @@ func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
 	printPlanValue(w, "target_source", string(resolved.TargetSource))
 	printPlanValue(w, "config", resolved.ConfigPath)
 	printPlanValue(w, "profile", resolved.Profile)
-	fmt.Fprintf(w, "sandboxed: %t\n", resolved.Sandboxed)
+	fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
+	if resolved.SandboxMode == recipe.SandboxModeSystem {
+		fmt.Fprintln(w, "runtime: <not probed>")
+	}
 	printPlanValue(w, "workdir", cmp.Or(resolved.Recipe.Workdir, "."))
 	if len(resolved.SyncOut) == 0 {
 		fmt.Fprintln(w, "sync_out: <none>")

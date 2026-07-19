@@ -1147,6 +1147,13 @@ func TestCompletionsIncludeProfileValues(t *testing.T) {
 	assertLabels(t, items, "go", "node", "rust")
 }
 
+func TestCompletionsIncludeSandboxModes(t *testing.T) {
+	text := `[recipes.test]
+sandboxed = `
+	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: len(`sandboxed = `)})
+	assertLabels(t, items, "false", "system", "true")
+}
+
 func TestCompletionsIncludeRustBuiltinsWhenConfigSetsProfile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {

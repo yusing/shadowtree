@@ -13,7 +13,7 @@ func TestRunSupportsAssignmentBeforeScriptRecipeReference(t *testing.T) {
 		"test",
 		recipe.Recipe{
 			Cmd:       recipe.ScriptCommand("FOO=bar @child alpha beta"),
-			Sandboxed: new(false),
+			Sandboxed: new(recipe.SandboxModeHost),
 		},
 		nil,
 		nil,

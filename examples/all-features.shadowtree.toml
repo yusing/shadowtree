@@ -243,3 +243,8 @@ post = ["printf 'dispatch complete\\n'"]
 help = "Exercise sandboxed=false; sync_out is unnecessary for direct checkout writes."
 sandboxed = false
 cmd = "printf 'unsandboxed demo only\\n'"
+
+[recipes.system-mode-demo]
+help = "Exercise static system-sandbox planning without probing a runtime."
+sandboxed = "system"
+cmd = "printf 'system sandbox demo only\\n'"

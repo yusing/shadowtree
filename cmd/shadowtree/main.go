@@ -518,9 +518,9 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 	} else {
 		fmt.Fprintf(w, "    %s\n", colors.literal("unsupported: "+unsupported))
 	}
-	if !recipe.RecipeSandboxed(rec) {
+	if mode := recipe.RecipeSandboxMode(rec); mode != recipe.SandboxModeWorkspace {
 		fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sandboxed:"))
-		fmt.Fprintf(w, "    %s\n", colors.literal("false"))
+		fmt.Fprintf(w, "    %s\n", colors.literal(string(mode)))
 	}
 	if !rec.Requires.Empty() {
 		printRecipeRequirements(w, rec.Requires, colors)
@@ -593,7 +593,7 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 		}
 		fmt.Fprintln(w)
 	}
-	if recipe.RecipeSandboxed(rec) {
+	if recipe.RecipeSandboxMode(rec) != recipe.SandboxModeHost {
 		if len(rec.SyncOut) > 0 {
 			fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sync out:"))
 			for _, path := range rec.SyncOut {

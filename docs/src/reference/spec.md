@@ -6,6 +6,13 @@ commands that benefit from one inspectable recipe interface. Sandboxed recipes
 run in a disposable workspace so commands do not mutate the host checkout unless
 the recipe or invocation explicitly asks for that.
 
+The recipe `sandboxed` field accepts omitted/`true` for the existing disposable
+workspace, `false` for direct host execution, and `"system"` for the explicit
+system-container backend. No other string or type is accepted. System mode is
+sandboxed for sync-out and lifecycle purposes and never falls back to either
+other mode. Static help, completion, config loading, and print output do not
+probe an engine; plans report `runtime: <not probed>`.
+
 This document describes the behavior currently implemented by the project.
 
 ## Goals

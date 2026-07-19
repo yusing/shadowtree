@@ -95,6 +95,10 @@ shadowtree --check --shell <recipe> [args...]
 
 Recipes are sandboxed unless their resolved definition says otherwise.
 
+Treat `sandboxed = "system"` as a distinct container backend, not as the normal
+workspace sandbox. Static plans report `runtime: <not probed>` and must not be
+interpreted as proof that execution capability exists.
+
 - Expect ordinary sandbox writes to disappear after the run.
 - Trust recipe-local `sync_out` declared by the existing recipe.
 - Add invocation-local sync-out only when the requested output must persist:

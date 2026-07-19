@@ -52,6 +52,7 @@ language. Prefer one readable path from `pre` through `cmd` to `post`.
 | Shared configuration mixin | `include` | Use for fields and recipes that should merge into the current config. Use `@path:recipe` when the other workflow should stay isolated in its own directory. |
 | Persist selected sandbox results | recipe `sync_out` | Use narrow workspace-relative paths copied back only after complete success. |
 | Intentionally edit the host checkout directly | `sandboxed = false` | Use for format, tidy, install, or dev workflows whose writes are inherently direct. Do not combine with sync-out. |
+| Run through the system container backend | `sandboxed = "system"` | Select explicitly when immutable system images and an ephemeral container are required. It is sandboxed for sync-out and never falls back to `true` or `false`. Inspect statically before execution. |
 | Retry a flaky readiness check | `@retry` in `pre` or another shell command position | Use bounded attempts and delay; do not retry deterministic failures or the whole recipe blindly. |
 
 Do not add a field merely because it exists. Every selected feature must answer a
@@ -139,6 +140,8 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   success.
 - Set `sandboxed = false` when the workflow must edit the checkout or another
   host location directly.
+- Set `sandboxed = "system"` only for the explicit system-container contract;
+  do not use runtime names or truthy string aliases.
 - Never define top-level `sync_out`.
 - Prefer narrow sync-out paths; a selected path missing in the sandbox mirrors
   as a host deletion.
