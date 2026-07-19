@@ -1835,7 +1835,7 @@ func TestRunExpandsScriptVariablesInRecipeReferenceArguments(t *testing.T) {
 	if err := os.WriteFile(fakeGo, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GO_CAPTURE\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Dir: source})
+	recipes := recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{Context: t.Context(), Dir: source})
 	recipes["bench"] = recipe.Recipe{
 		Cmd:       recipe.ScriptCommand("run_bench() {\n\tpkg=./internal/runner\n\tbench=BenchmarkRun\n\t@test \"$pkg\" -run '^$' -bench \"$bench\" -benchtime=1x -count=1 {@}\n}\nrun_bench"),
 		Env:       map[string]string{"GO_CAPTURE": capture, "PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH")},
@@ -2095,6 +2095,111 @@ func TestRunForEachRunsMainPerItem(t *testing.T) {
 	want := "pre\n0:a:alpha item:a\n1:b:beta item:b\npost\n"
 	if string(data) != want {
 		t.Fatalf("out.txt = %q, want %q", data, want)
+	}
+}
+
+func TestRunAllPackageTargetsUseOwningModuleWorkdirs(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(source, "services", "api")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := recipe.Recipe{
+		Cmd:       recipe.Command{"sh", "-c", `printf '%s\t%s\n' "$PWD" "$1"`, "shadowtree", "{item}"},
+		Sandboxed: new(false),
+	}
+	resolved, err := recipe.ResolveWithOptions("fmt", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
+		Scope:        recipe.ScopeAll,
+		TargetDomain: "packages",
+		TargetSource: recipe.GoPackageTargets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	want := source + "\t./...\n" + nested + "\t./...\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+}
+
+func TestRunAllMainDiscoveryUsesResolvedBuildContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		goFlags string
+		cliArgs []string
+	}{
+		{name: "recipe environment", goFlags: "-tags=tools"},
+		{name: "forwarded build flag", cliArgs: []string{"--", "-tags=tools"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/project\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mainDir := filepath.Join(source, "cmd", "tools")
+			if err := os.MkdirAll(mainDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(mainDir, "main.go"), []byte("//go:build tools\n\npackage main\nfunc main() {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			rec := recipe.Recipe{
+				Cmd:       recipe.Command{"sh", "-c", `printf '%s\n' "$1"`, "shadowtree", "{item}", "{@}"},
+				Env:       map[string]string{"GOFLAGS": tt.goFlags},
+				Sandboxed: new(false),
+			}
+			resolved, err := recipe.ResolveWithOptions("build", rec, tt.cliArgs, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
+				Scope:        recipe.ScopeAll,
+				TargetDomain: "main packages",
+				TargetSource: recipe.GoMainPackageTargets,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout bytes.Buffer
+			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout, Stderr: io.Discard}); err != nil {
+				t.Fatal(err)
+			}
+			if stdout.String() != "./cmd/tools\n" {
+				t.Fatalf("stdout = %q, want selected tools package", stdout.String())
+			}
+		})
+	}
+}
+
+func TestRunAllRejectsEmptyTargetDiscovery(t *testing.T) {
+	rec := recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(false)}
+	resolved, err := recipe.ResolveWithOptions("fmt", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
+		Scope:        recipe.ScopeAll,
+		TargetDomain: "packages",
+		TargetSource: recipe.GoPackageTargets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), `recipe "fmt" with --all found no packages`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestResolveExecutionTargetsPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := recipe.ResolveExecutionTargets(ctx, recipe.GoPackageTargets, t.TempDir(), os.Environ(), nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
 	}
 }
 

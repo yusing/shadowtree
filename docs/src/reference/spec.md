@@ -91,6 +91,7 @@ shadowtree __complete zsh <words...>
 ```text
 --config PATH       use an explicit config file
 --profile PROFILE   use a profile; supported profiles are go and node
+--all               run the recipe's profile-defined aggregate plan
 --sync-out PATH     copy path back after success; repeatable or comma-separated
 --sync-out-all      copy the entire workspace back after success
 --print             print the resolved plan without running
@@ -104,6 +105,14 @@ shadowtree __complete zsh <words...>
 
 Global flags are parsed before the command or recipe name. Arguments after the
 recipe name are passed to the recipe's main command.
+
+`--all` is valid only for a recipe that declares aggregate support. Its target
+domain and execution strategy are recipe-specific. It cannot be combined with
+the recipe's explicit primary target. A post-recipe `--all` remains a
+recipe/tool argument. Before the passthrough delimiter, a bare token is treated
+as an explicit target and rejected. Tool flags with separate values therefore
+use `--`, for example `shadowtree --all test -- -run TestName`; single-token
+flags such as `-count=1` do not require the delimiter.
 
 ## Config Discovery
 
@@ -778,8 +787,9 @@ then trailing recipe args
 
 Config recipes with the same name as a built-in recipe override only specified
 fields, except `for_each` and `workdir`. Those scheduling fields are not
-inherited from the built-in recipe; set them in the override when the custom
-recipe should keep or replace built-in fan-out behavior.
+inherited. Any project override also removes the built-in profile-owned
+aggregate plan, so `--all` fails unless a future supported configuration
+surface explicitly supplies one.
 
 Example:
 
@@ -797,19 +807,25 @@ required = true
 values = "@go-packages"
 ```
 
-The built-in `test` recipe normally uses module fan-out from the Go profile:
+The built-in `test` recipe normally executes once from the recipe workspace:
 
 ```text
-for_each = @go-modules
-workdir = {item}
 cmd = "go test ./... {@}"
 ```
 
-The built-in `test` recipe runs once per module. In each module workdir it runs:
+`shadowtree --all test` selects a distinct aggregate plan. After `pre`, it
+discovers package batches in the active workspace and runs once from each
+owning module with:
 
 ```sh
 go test ./...
 ```
+
+Aggregate `build` and `install` main-package discovery uses the active Go
+toolchain with the resolved command environment, so `GOOS`, `GOARCH`,
+`GOFLAGS`, and other build constraints determine which main packages are
+selected. Forwarded Go build-context flags such as `-tags` are also applied to
+discovery before the same arguments reach the recipe command.
 
 With the override above, the recipe runs once from the root workdir and CLI
 args are parsed by the custom typed argument:
@@ -930,25 +946,29 @@ The Go profile is selected when:
 Built-in Go recipes:
 
 ```text
-build      for each @go-modules: go build ./...
+build      go build {pkg}; --all targets main packages
 check      @vet && @test
-fix        for each @go-modules when go > 1.26: go fix ./...
-fmt        for each @go-modules: go fmt ./...
-generate   for each @go-modules: go generate ./...
-install    for each @go-modules: go install -ldflags="-s -w" ./...
-lint       for each @go-modules: golangci-lint run ./... if available, otherwise go vet ./...
+fix        go fix {pkg} when go > 1.26; --all targets packages
+fmt        go fmt {target}; --all targets packages
+generate   go generate {pkg}; --all targets packages
+install    go install -ldflags="-s -w" {pkg}; --all targets main packages
+lint       lint {pkg}; --all targets packages
 run        go -C {cwd} run {command}
-test       for each @go-modules: go test ./...
-test-race  for each @go-modules: go test -race ./...
-tidy       for each @go-modules: go mod tidy; if go.work exists, go work sync
-vet        for each @go-modules: go vet ./...
+test       go test {pkg}; --all targets packages
+test-race  go test -race {pkg}; --all targets packages
+tidy       go mod tidy; --all targets modules, then syncs go.work
+vet        go vet {pkg}; --all targets packages
 ```
 
 Built-in `fix`, `fmt`, and `tidy` are unsandboxed by default, so `go fix`,
 `go fmt`, `go mod tidy`, and `go work sync` update the host checkout directly.
-Other built-in Go recipes are sandboxed unless project config overrides them. Module-wide Go built-ins use
-`for_each = "@go-modules"` and `workdir = "{item}"`; the `./...` package pattern
-is evaluated inside each module directory, not at the repo root. Built-in
+Other built-in Go recipes are sandboxed unless project config overrides them.
+Normal built-ins are leaf recipes and preserve explicit targets from the
+recipe workspace. `--all` selects a recipe-specific aggregate target domain:
+package recipes batch `./...` per module, `build` and `install` execute each
+main package from its owning module, and `tidy` executes each module. `run`
+rejects `--all` because multi-process supervision is undefined. Discovery runs
+after `pre` in the active workspace, and an empty target set fails. Built-in
 `build` exposes an optional positional `pkg` argument with shell completion from
 `@go-main-packages`; `install` exposes a named `ldflags` argument defaulting to
 `-s -w` plus an optional positional `pkg` completed from `@go-main-packages`;
@@ -973,7 +993,9 @@ The Node profile is selected when:
 
 Node built-ins resolve the nearest `package.json` directory and generate shell
 commands that `cd` there before invoking the package manager or tool. This
-makes subdirectory invocation run against the package root. Every Node built-in
+makes subdirectory invocation run against the package root. The profile
+currently rejects `--all` because npm, pnpm, Yarn, and Bun require
+package-manager-specific workspace semantics. Every Node built-in
 recipe has `sandboxed = false` by default because package-manager and framework
 commands commonly mutate lockfiles, dependency state, caches, and generated
 outputs.
@@ -1096,11 +1118,13 @@ no `help`, Shadowtree falls back to a compact command summary.
 ```sh
 shadowtree --print test ./internal/runner
 shadowtree --print --expanded test ./internal/runner
+shadowtree --all --print test
 ```
 
 The plan includes these fields when present or applicable:
 
 - recipe name
+- selected `scope`, aggregate `target_domain`, and `target_source` for `--all`
 - profile
 - config path
 - `sandboxed: false` for unsandboxed recipes

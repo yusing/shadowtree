@@ -521,7 +521,7 @@ func ResolveRecipes(ctx context.Context, loaded Loaded, dir string, opts Resolve
 			dynamicVars[name] = "{" + name + "}"
 		}
 	}
-	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, recipe.BuiltinOptions{Dir: dir}), loaded.Config.Recipes)
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(profile, recipe.BuiltinOptions{Context: ctx, Dir: dir}), loaded.Config.Recipes)
 	if err != nil {
 		return nil, "", err
 	}

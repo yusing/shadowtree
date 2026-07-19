@@ -82,16 +82,18 @@ shadowtree --verbose build
 commands run. Multiline scripts are shown as `<script>`, so verbose headers do
 not dump script bodies.
 
-Built-in Go workflow recipes run once per discovered Go module:
+Built-in Go workflow recipes normally run once. Select the recipe-specific
+aggregate plan explicitly:
 
 ```sh
-shadowtree --print test
+shadowtree --all --print test
 ```
 
-prints the module fan-out:
+prints its semantic scope and target source:
 
 ```text
-for_each: @go-modules
-workdir: {item}
-main: go test ./... {@}
+scope: all
+target_domain: packages
+target_source: go-packages
+main: go test {item} {@}
 ```

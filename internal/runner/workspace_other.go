@@ -28,6 +28,10 @@ func (sandbox *sandboxWorkspace) runNamespaceValueBuiltinCommand(context.Context
 	return nil, errors.New("overlay namespace requires linux")
 }
 
+func (sandbox *sandboxWorkspace) runNamespaceExecutionTargets(context.Context, []string, string, recipe.TargetSource, []string, io.Writer) ([]recipe.ExecutionTarget, error) {
+	return nil, errors.New("overlay namespace requires linux")
+}
+
 func OverlayHelperMain(context.Context, []string) int {
 	return 125
 }

@@ -209,9 +209,9 @@ func builtinValuesForCall(call valueBuiltinCall, opts ValueBuiltinOptions) ([]Va
 	case globValuesName:
 		return globCandidates(valueBuiltinBaseDir(opts), args[0], opts.ValuePrefix)
 	case goMainPackagesValuesName:
-		return discoverGoMainPackages(valueBuiltinBaseDir(opts), opts.ValuePrefix)
+		return discoverGoMainPackages(opts.Context, valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case goModulesValuesName:
-		return discoverGoModules(valueBuiltinBaseDir(opts), opts.ValuePrefix)
+		return discoverGoModules(opts.Context, valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case goPackagesValuesName:
 		return discoverGoPackagesContext(opts.Context, valueBuiltinBaseDir(opts), opts.ValuePrefix)
 	case linesValuesName:
@@ -383,9 +383,12 @@ func enumCandidateValueHelp(value string) (string, string) {
 	return candidateValue, help
 }
 
-func discoverGoModules(baseDir, prefix string) ([]ValueCandidate, error) {
+func discoverGoModules(ctx context.Context, baseDir, prefix string) ([]ValueCandidate, error) {
 	var candidates []ValueCandidate
 	if err := filepath.WalkDir(baseDir, func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -441,11 +444,14 @@ func goModuleHelp(path, fallback string) string {
 	return fallback
 }
 
-func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
+func discoverGoMainPackages(ctx context.Context, baseDir, prefix string) ([]ValueCandidate, error) {
 	packageHelp := map[string]string{}
 	finalDirs := map[string]bool{}
 	fset := token.NewFileSet()
 	if err := filepath.WalkDir(baseDir, func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -510,9 +516,6 @@ func discoverGoMainPackages(baseDir, prefix string) ([]ValueCandidate, error) {
 }
 
 func discoverGoPackagesContext(parent context.Context, baseDir, prefix string) ([]ValueCandidate, error) {
-	if parent == nil {
-		parent = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(parent, goListTimeout)
 	defer cancel()
 	seen := map[string]ValueCandidate{}

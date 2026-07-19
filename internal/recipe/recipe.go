@@ -156,6 +156,7 @@ type Recipe struct {
 	LogStages    []string                `toml:"log_stages"`
 	LogTee       *bool                   `toml:"log_tee"`
 	varsExpanded bool
+	all          *allPlan
 }
 
 // Requirements declares external tools a recipe expects before commands run.
@@ -200,12 +201,18 @@ type Resolved struct {
 	LogStages    []string
 	LogTee       bool
 	Warnings     []string
+	Scope        Scope
+	TargetDomain string
+	TargetSource TargetSource
 }
 
 type ResolveOptions struct {
-	RunID    string
-	Recipes  map[string]Recipe
-	EnumSets map[string]Command
+	RunID        string
+	Recipes      map[string]Recipe
+	EnumSets     map[string]Command
+	Scope        Scope
+	TargetDomain string
+	TargetSource TargetSource
 }
 
 type ConfigErrorTarget string
@@ -272,7 +279,8 @@ var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var supportedProfiles = []string{GoProfile, NodeProfile}
 
 type BuiltinOptions struct {
-	Dir string
+	Context context.Context
+	Dir     string
 }
 
 func SupportsProfile(profile string) bool {
@@ -291,11 +299,6 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		}
 		return map[string]Recipe{}
 	}
-	moduleWide := func(rec Recipe) Recipe {
-		rec.ForEach = ScriptCommand(GoModuleValuesCommand)
-		rec.Workdir = "{" + ForEachItemPlaceholder + "}"
-		return rec
-	}
 	defaultGoPackageArgument := Argument{
 		Type:     "rel_path",
 		Position: 1,
@@ -304,50 +307,50 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 	}
 	defaultGoMainPackageArgument := defaultGoPackageArgument
 	defaultGoMainPackageArgument.Values = ScriptCommand(GoMainPackageValuesCommand)
-	lint := moduleWide(Recipe{
+	lint := Recipe{
 		Help: "Run Go lint checks.",
 		Cmd:  Command{"golangci-lint", "run", "{pkg}", "{@}"},
 		Arguments: map[string]Argument{
 			"pkg": defaultGoPackageArgument,
 		},
-	})
+	}
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
-		lint = moduleWide(Recipe{
+		lint = Recipe{
 			Help: "Run Go static checks with go vet.",
 			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		})
+		}
 	}
 	recipes := map[string]Recipe{
 		"check": {
 			Help: "Run vet and tests.",
 			Cmd:  ScriptCommand(`set -e; @vet {@}; @test {@}`),
 		},
-		"test": moduleWide(Recipe{
+		"test": {
 			Help: "Run Go tests.",
 			Cmd:  Command{"go", "test", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		}),
-		"test-race": moduleWide(Recipe{
+		},
+		"test-race": {
 			Help: "Run Go tests with the race detector.",
 			Cmd:  Command{"go", "test", "-race", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		}),
-		"vet": moduleWide(Recipe{
+		},
+		"vet": {
 			Help: "Run go vet.",
 			Cmd:  Command{"go", "vet", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		}),
+		},
 		"lint": lint,
-		"fmt": moduleWide(Recipe{
+		"fmt": {
 			Help: "Format Go source files.",
 			Cmd:  Command{"go", "fmt", "{target}", "{@}"},
 			Arguments: map[string]Argument{"target": {
@@ -357,29 +360,29 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 				Values:   ScriptCommand(GoFmtTargetValuesCommand),
 			}},
 			Sandboxed: new(false),
-		}),
-		"build": moduleWide(Recipe{
+		},
+		"build": {
 			Help: "Build Go packages.",
 			Cmd:  Command{"go", "build", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoMainPackageArgument,
 			},
-		}),
-		"generate": moduleWide(Recipe{
+		},
+		"generate": {
 			Help: "Run go generate.",
 			Cmd:  Command{"go", "generate", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
-		}),
-		"install": moduleWide(Recipe{
+		},
+		"install": {
 			Help: "Install Go package.",
 			Cmd:  Command{"go", "install", "-ldflags={ldflags}", "{pkg}"},
 			Arguments: map[string]Argument{
 				"ldflags": {Default: "-s -w"},
 				"pkg":     defaultGoMainPackageArgument,
 			},
-		}),
+		},
 		"run": {
 			Help: "Run a Go command.",
 			Cmd:  Command{"go", "-C", "{cwd}", "run", "{command}", "{@}"},
@@ -397,31 +400,61 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 				},
 			},
 		},
-		"tidy": moduleWide(Recipe{
+		"tidy": {
 			Help:      "Tidy Go module files.",
 			Cmd:       Command{"go", "mod", "tidy"},
 			Post:      StageCommands{{Cmd: ScriptCommand("if test -f go.work; then go work sync; fi")}},
 			Sandboxed: new(false),
-		}),
+		},
 	}
-	if goVersionAfter(mostCommonGoDirectiveVersion(opts.Dir), "1.26") {
-		recipes["fix"] = moduleWide(Recipe{
+	if goVersionAfter(mostCommonGoDirectiveVersion(opts.Context, opts.Dir), "1.26") {
+		recipes["fix"] = Recipe{
 			Help: "Update Go source with go fix.",
 			Cmd:  Command{"go", "fix", "{pkg}", "{@}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoPackageArgument,
 			},
 			Sandboxed: new(false),
-		})
+		}
 	}
+	for _, name := range []string{"check", "lint", "test", "test-race", "vet"} {
+		rec := recipes[name]
+		argument := "pkg"
+		if name == "check" {
+			argument = ""
+		}
+		all := rec
+		if argument != "" {
+			all = allTargetRecipe(rec, argument)
+		}
+		recipes[name] = withAllPlan(rec, "packages", GoPackageTargets, all)
+	}
+	for _, name := range []string{"fmt", "generate"} {
+		rec := recipes[name]
+		argument := "pkg"
+		if name == "fmt" {
+			argument = "target"
+		}
+		recipes[name] = withAllPlan(rec, "packages", GoPackageTargets, allTargetRecipe(rec, argument))
+	}
+	for _, name := range []string{"build", "install"} {
+		rec := recipes[name]
+		recipes[name] = withAllPlan(rec, "main packages", GoMainPackageTargets, allTargetRecipe(rec, "pkg"))
+	}
+	tidy := recipes["tidy"]
+	recipes["tidy"] = withAllPlan(tidy, "modules", GoModuleTargets, tidy)
+	if fix, ok := recipes["fix"]; ok {
+		recipes["fix"] = withAllPlan(fix, "packages", GoPackageTargets, allTargetRecipe(fix, "pkg"))
+	}
+	recipes["run"] = withUnsupportedAll(recipes["run"], "running multiple main packages has no defined process policy")
 	return recipes
 }
 
-func mostCommonGoDirectiveVersion(dir string) string {
+func mostCommonGoDirectiveVersion(ctx context.Context, dir string) string {
 	if dir == "" {
 		return "unknown"
 	}
-	modules, err := discoverGoModules(dir, "")
+	modules, err := discoverGoModules(ctx, dir, "")
 	if err != nil {
 		return "unknown"
 	}
@@ -482,6 +515,7 @@ func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) 
 		baseRecipe := merged[name]
 		baseRecipe.ForEach = nil
 		baseRecipe.Workdir = ""
+		baseRecipe.all = nil
 		merged[name] = MergeRecipe(baseRecipe, override)
 	}
 	return merged, nil
@@ -600,6 +634,11 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	if len(rec.Cmd) == 0 {
 		return Resolved{}, fmt.Errorf("recipe %q has no cmd", name)
 	}
+	if opts.Scope == ScopeAll {
+		if err := validateAllCLIArgs(rec, cliArgs); err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
+		}
+	}
 	runID := opts.RunID
 	if runID == "" {
 		var err error
@@ -630,7 +669,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	values := mergeStringMaps(vars, argValues)
 	values[RunIDPlaceholder] = runID
 	commandValues := values
-	if len(rec.ForEach) > 0 {
+	if len(rec.ForEach) > 0 || opts.TargetSource != "" {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
 	}
 	cmd, err := expandCommandWithOptions(rec.Cmd, commandValues, variadicArgs, rec.Shell, placeholderExpansionOptions{commandStage: LogStageCmd})
@@ -750,6 +789,9 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		LogStages:    logStages,
 		LogTee:       logTee,
 		Warnings:     warnings,
+		Scope:        opts.Scope,
+		TargetDomain: opts.TargetDomain,
+		TargetSource: opts.TargetSource,
 	}, nil
 }
 
