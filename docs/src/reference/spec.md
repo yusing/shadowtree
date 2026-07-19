@@ -17,8 +17,8 @@ System execution and host-capability checks probe Docker, Podman, then nerdctl
 in stable order through direct argument vectors. Presence alone is insufficient:
 the selected client must reach its engine and expose the required image, build,
 labelled-volume, nested/read-only mount, UID/GID, attached-start, signalling,
-and forced-removal operations. Probes are bounded and state-free, report progress on
-stderr, continue after an unusable installed candidate, and aggregate all
+and forced-removal operations. Probes are bounded and state-free, report
+progress on stderr, continue after an unusable installed candidate, and aggregate all
 candidate failures when none is usable.
 
 System images form five deterministic immutable stages above a pinned external
@@ -32,6 +32,10 @@ One ephemeral read-only-root container runs the complete resolved lifecycle
 against a private workspace mounted at the canonical checkout path. Nested
 references reuse that lifecycle, cancellation preserves `post`, and successful
 sync-out consumes the private workspace through the existing confinement rules.
+Go `GOCACHE` and Rust workspace `target` use canonical-project-owned named
+volumes with complete compatibility labels; compatible recipes share within
+one checkout only. Inspection never mounts caches, and reset validates exact
+ownership and active use before removing only current-project volumes.
 
 This document describes the behavior currently implemented by the project.
 
@@ -51,8 +55,8 @@ This document describes the behavior currently implemented by the project.
 
 - Shadowtree is not a complete untrusted-code security sandbox.
 - Shadowtree does not require reflinks.
-- Shadowtree does not currently provide Docker, remote execution, matrix jobs,
-  watch mode, or persistent named sessions.
+- Shadowtree does not currently provide remote execution, matrix jobs, watch
+  mode, or persistent named sessions.
 - Shadowtree does not try to cover every language-specific workflow. Supported
   profiles provide focused defaults, and projects can add more dynamic argument
   completion with recipe `values` commands.
@@ -104,6 +108,8 @@ shadowtree [flags] exec -- <cmd> [args...]
 shadowtree help [recipe [color=false]]
 shadowtree recipes
 shadowtree config
+shadowtree cache inspect [recipe] [--json]
+shadowtree cache reset <recipe>|--all
 shadowtree init [path]
 shadowtree completion bash|fish|zsh
 shadowtree __complete fish <words...>

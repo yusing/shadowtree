@@ -95,7 +95,7 @@ func TestDetectReportsEveryCandidateFailure(t *testing.T) {
 }
 
 func TestRuntimeProbeRequiresNeededLifecycleAndVolumeFlags(t *testing.T) {
-	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--read-only", "--user", "--name", "--interactive", "--attach", "--signal", "--force"} {
+	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--read-only", "--user", "--name", "--interactive", "--attach", "--signal", "--force", "--filter", "--format"} {
 		t.Run(missing, func(t *testing.T) {
 			err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				output := successfulProbeOutput(args)
@@ -171,6 +171,12 @@ func successfulProbeOutput(args []string) []byte {
 	}
 	if slices.Equal(args, []string{"volume", "create", "--help"}) {
 		return []byte("--label")
+	}
+	if slices.Equal(args, []string{"volume", "inspect", "--help"}) {
+		return []byte("--format")
+	}
+	if slices.Equal(args, []string{"volume", "ls", "--help"}) || slices.Equal(args, []string{"ps", "--help"}) {
+		return []byte("--filter --format")
 	}
 	if slices.Equal(args, []string{"create", "--help"}) {
 		return []byte("--mount --read-only --user --platform --name --interactive")

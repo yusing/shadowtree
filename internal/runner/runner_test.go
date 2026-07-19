@@ -3199,6 +3199,29 @@ func TestSystemSandboxExpandedPlanPrintsDependencyInputsWithoutRuntime(t *testin
 	}
 }
 
+func TestSystemSandboxStaticPlanPrintsMutableCacheContract(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("test", recipe.Recipe{Cmd: recipe.Command{"go", "test"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", recipe.GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, PrintOnly: true, PrintExpanded: true, Stdout: &stdout}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"cache[0].provider: go-build", "cache[0].volume: shadowtree-cache-", "cache[0].mount: /opt/shadowtree/cache/go-build",
+		"cache[0].concurrency: shared", "cache[0].sync_intersections:", "cache[0].uid_gid:",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("static plan missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestSystemSandboxExecutionDoesNotFallBackToWorkspaceOrHost(t *testing.T) {
 	t.Setenv("PATH", "")
 	resolved, err := recipe.Resolve("test", recipe.Recipe{
@@ -3229,6 +3252,9 @@ func TestSystemSandboxSelectsUsableRuntimeBeforeImageExecution(t *testing.T) {
 	writeExecutable(t, bin, "docker", `
 case "$*" in
   "volume create --help") printf '%s' '--label' ;;
+  "volume inspect --help") printf '%s' '--format' ;;
+  "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
+  "volume rm --help") printf '%s' ok ;;
 	"build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
   "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
@@ -3283,6 +3309,9 @@ tag_file() {
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg'; exit 0 ;;
   "volume create --help") printf '%s' '--label'; exit 0 ;;
+  "volume inspect --help") printf '%s' '--format'; exit 0 ;;
+  "volume ls --help"|"ps --help") printf '%s' '--filter --format'; exit 0 ;;
+  "volume rm --help") printf '%s' ok; exit 0 ;;
   "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive'; exit 0 ;;
   "start --help") printf '%s' '--attach --interactive'; exit 0 ;;
   "kill --help") printf '%s' '--signal'; exit 0 ;;
@@ -3457,6 +3486,9 @@ func TestSystemSandboxCheckValidatesImagePlanWithoutBuilding(t *testing.T) {
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
   "volume create --help") printf '%s' '--label' ;;
+  "volume inspect --help") printf '%s' '--format' ;;
+  "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
+  "volume rm --help") printf '%s' ok ;;
   "create --help") printf '%s' '--mount --read-only --user --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;

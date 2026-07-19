@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	"github.com/yusing/shadowtree/internal/recipe"
@@ -29,10 +30,14 @@ type systemLifecyclePlan struct {
 	SourceDir      string
 	Environment    map[string]string
 	DependencySeed *systemsandbox.DependencySeed
+	Caches         []systemsandbox.CachePlan
+	SyncOut        []string
+	SyncOutAll     bool
+	ExportDir      string
 }
 
 type systemInvocation struct {
-	dir, workspace, helper, plan string
+	dir, workspace, export, helper, plan string
 }
 
 func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -49,6 +54,7 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 	err = systemsandbox.RunLifecycle(ctx, runtimeName, systemsandbox.LifecycleOptions{
 		Image: image.FinalTag, Platform: image.Platform, WorkspaceHost: workspace,
 		WorkspacePath: options.SourceDir, HelperHost: invocation.helper, PlanHost: invocation.plan,
+		Caches: image.Caches, ExportHost: invocation.export,
 		User:  strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		Stdin: stdin, Stdout: stdout, Stderr: stderr, Progress: stderr,
 	})
@@ -60,6 +66,9 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 			return cause
 		}
 		return systemContainerExitError(err)
+	}
+	if err := applySystemCacheExports(image.Caches, options, invocation.export, workspace); err != nil {
+		return err
 	}
 	fmt.Fprintln(stderr, "shadowtree: exporting system workspace")
 	if options.SyncOutAll {
@@ -86,6 +95,10 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	if err := CopyTree(options.SourceDir, workspace); err != nil {
 		return fail(fmt.Errorf("copy system workspace: %w", err))
 	}
+	export := filepath.Join(dir, "export")
+	if err := os.Mkdir(export, 0o700); err != nil {
+		return fail(fmt.Errorf("create cache export: %w", err))
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return fail(fmt.Errorf("resolve lifecycle helper: %w", err))
@@ -101,10 +114,15 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	maps.Copy(environment, map[string]string{"HOME": "/tmp/shadowtree-home", "TMPDIR": "/tmp"})
 	maps.Copy(environment, options.Resolved.GlobalEnv)
 	maps.Copy(environment, options.Resolved.Recipe.Env)
+	for _, cache := range image.Caches {
+		maps.Copy(environment, cache.Environment)
+	}
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: options.Resolved, Recipes: options.Recipes,
 		EnumSets: options.EnumSets, ConfigEnv: options.ConfigEnv, SourceDir: options.SourceDir,
 		Environment: environment, DependencySeed: image.DependencySeed,
+		Caches: image.Caches, SyncOut: options.Resolved.SyncOut, SyncOutAll: options.SyncOutAll,
+		ExportDir: "/opt/shadowtree/export",
 	}
 	planData, err := json.Marshal(plan)
 	if err != nil {
@@ -114,7 +132,7 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	if err := os.WriteFile(planPath, planData, 0o600); err != nil {
 		return fail(fmt.Errorf("write lifecycle plan: %w", err))
 	}
-	return systemInvocation{dir: dir, workspace: workspace, helper: helper, plan: planPath}, nil
+	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath}, nil
 }
 
 func systemContainerExitError(err error) error {
@@ -201,6 +219,10 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 		return runResolvedCommands(ctx, nil, plan.SourceDir, environment, logged, os.Stdin, os.Stdout, os.Stderr, []string{recipeReferenceStackKey(logged.Resolved.ConfigPath, logged.Resolved.Name)})
 	})
 	if err == nil {
+		if err := exportSystemCaches(plan); err != nil {
+			fmt.Fprintln(os.Stderr, "export cache-backed sync paths:", err)
+			return 1
+		}
 		return 0
 	}
 	if exit, ok := errors.AsType[ExitError](err); ok {
@@ -211,4 +233,82 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1
+}
+
+func cacheExportPaths(caches []systemsandbox.CachePlan, source string, syncOut []string, all bool) ([]string, error) {
+	selected := map[string]bool{}
+	for _, cache := range caches {
+		if cache.OutputPath == "" {
+			continue
+		}
+		cacheRel, ok := relInside(source, cache.OutputPath)
+		if !ok {
+			continue
+		}
+		cacheRel = filepath.Clean(cacheRel)
+		if all {
+			selected[cacheRel] = true
+			continue
+		}
+		for _, requested := range syncOut {
+			path, err := cleanSyncOutPath(requested)
+			if err != nil {
+				return nil, err
+			}
+			switch {
+			case sameOrDescendant(path, cacheRel):
+				selected[path] = true
+			case sameOrDescendant(cacheRel, path):
+				selected[cacheRel] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(selected)), nil
+}
+
+func exportSystemCaches(plan systemLifecyclePlan) error {
+	paths, err := cacheExportPaths(plan.Caches, plan.SourceDir, plan.SyncOut, plan.SyncOutAll)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		var owner *systemsandbox.CachePlan
+		sourceName := ""
+		for _, cache := range plan.Caches {
+			if cache.OutputPath == "" {
+				continue
+			}
+			outputRel, ok := relInside(plan.SourceDir, cache.OutputPath)
+			if !ok || !sameOrDescendant(path, outputRel) {
+				continue
+			}
+			subpath, err := filepath.Rel(outputRel, path)
+			if err != nil {
+				return err
+			}
+			owner = &cache
+			sourceName = subpath
+			break
+		}
+		if owner == nil {
+			return fmt.Errorf("cache export path %s has no owning cache", path)
+		}
+		if err := syncPathAs(owner.MountPath, plan.ExportDir, sourceName, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applySystemCacheExports(caches []systemsandbox.CachePlan, options Options, export, workspace string) error {
+	paths, err := cacheExportPaths(caches, options.SourceDir, options.Resolved.SyncOut, options.SyncOutAll)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := SyncPath(export, workspace, path); err != nil {
+			return fmt.Errorf("apply cache snapshot %s: %w", path, err)
+		}
+	}
+	return nil
 }

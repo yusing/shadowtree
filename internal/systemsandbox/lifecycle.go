@@ -29,6 +29,8 @@ type LifecycleOptions struct {
 	Stdout        io.Writer
 	Stderr        io.Writer
 	Progress      io.Writer
+	Caches        []CachePlan
+	ExportHost    string
 }
 
 // RunLifecycle runs one named ephemeral container and preserves graceful
@@ -49,6 +51,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 		"workspace path": options.WorkspacePath,
 		"helper host":    options.HelperHost,
 		"plan host":      options.PlanHost,
+		"export host":    options.ExportHost,
 	} {
 		if value == "" || strings.Contains(value, ",") {
 			return fmt.Errorf("system lifecycle %s path is empty or contains an unsupported comma", label)
@@ -64,9 +67,19 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 		"--mount", "type=bind,src=" + options.WorkspaceHost + ",dst=" + options.WorkspacePath,
 		"--mount", "type=bind,src=" + options.HelperHost + ",dst=/opt/shadowtree/helper,readonly",
 		"--mount", "type=bind,src=" + options.PlanHost + ",dst=/opt/shadowtree/plan.json,readonly",
+		"--mount", "type=bind,src=" + options.ExportHost + ",dst=/opt/shadowtree/export",
 		"--mount", "type=tmpfs,dst=/tmp",
-		options.Image, "/opt/shadowtree/helper", "__shadowtree_system_helper", "/opt/shadowtree/plan.json",
 	}
+	for _, cache := range options.Caches {
+		if err := validateCachePlan(cache); err != nil {
+			return err
+		}
+		if strings.Contains(cache.MountPath, ",") {
+			return fmt.Errorf("cache %s mount path contains an unsupported comma", cache.Provider)
+		}
+		createArgs = append(createArgs, "--mount", "type=volume,src="+cache.Name+",dst="+cache.MountPath)
+	}
+	createArgs = append(createArgs, options.Image, "/opt/shadowtree/helper", "__shadowtree_system_helper", "/opt/shadowtree/plan.json")
 	if options.Progress != nil {
 		fmt.Fprintln(options.Progress, "shadowtree: creating system container")
 	}

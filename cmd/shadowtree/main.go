@@ -141,6 +141,25 @@ func run(ctx context.Context, args []string) error {
 		}
 		recipeHelpColor = color
 	}
+	if rest[0] == "cache" {
+		action, cacheRecipe, all, jsonOutput, err := parseCacheCommand(rest[1:])
+		if err != nil {
+			return err
+		}
+		if opts.all || len(opts.syncOut) > 0 || opts.syncOutAll || opts.printOnly || opts.expanded || opts.checkOnly || opts.checkShell {
+			return errors.New("cache commands do not accept execution-mode flags")
+		}
+		resolvedSet, loaded, profile, err := resolveSet(ctx, opts, false)
+		if err != nil {
+			return err
+		}
+		return runner.SystemCache(ctx, runner.SystemCacheOptions{
+			Action: action, Recipe: cacheRecipe, All: all, JSON: jsonOutput,
+			Recipes: resolvedSet, EnumSets: loaded.Config.EnumSets, ConfigEnv: loaded.Config.Env,
+			ConfigPath: loaded.Path, Profile: profile, SourceDir: mustGetwd(),
+			Stdout: os.Stdout, Stderr: os.Stderr,
+		})
+	}
 	resolvedSet, loaded, profile, err := resolveSet(ctx, opts, true)
 	if err != nil {
 		return err
@@ -244,6 +263,45 @@ func run(ctx context.Context, args []string) error {
 			Stdout:        os.Stdout,
 			Stderr:        os.Stderr,
 		})
+	}
+}
+
+func parseCacheCommand(args []string) (action, recipeName string, all, jsonOutput bool, err error) {
+	if len(args) == 0 {
+		return "", "", false, false, errors.New("usage: shadowtree cache inspect [recipe] [--json] | shadowtree cache reset <recipe>|--all")
+	}
+	action = args[0]
+	switch action {
+	case "inspect":
+		for _, arg := range args[1:] {
+			switch {
+			case arg == "--json":
+				if jsonOutput {
+					return "", "", false, false, errors.New("cache inspect accepts --json once")
+				}
+				jsonOutput = true
+			case strings.HasPrefix(arg, "-"):
+				return "", "", false, false, fmt.Errorf("unknown cache inspect option: %s", arg)
+			case recipeName != "":
+				return "", "", false, false, errors.New("cache inspect accepts at most one recipe")
+			default:
+				recipeName = arg
+			}
+		}
+		return action, recipeName, false, jsonOutput, nil
+	case "reset":
+		if len(args) != 2 {
+			return "", "", false, false, errors.New("usage: shadowtree cache reset <recipe>|--all")
+		}
+		if args[1] == "--all" {
+			return action, "", true, false, nil
+		}
+		if strings.HasPrefix(args[1], "-") {
+			return "", "", false, false, fmt.Errorf("unknown cache reset option: %s", args[1])
+		}
+		return action, args[1], false, false, nil
+	default:
+		return "", "", false, false, fmt.Errorf("unknown cache command: %s", action)
 	}
 }
 
@@ -801,6 +859,8 @@ func printBasicHelp(w io.Writer) {
        shadowtree help [recipe [color=false]]
        shadowtree recipes
        shadowtree config
+	   shadowtree cache inspect [recipe] [--json]
+	   shadowtree cache reset <recipe>|--all
        shadowtree init [path]
        shadowtree completion bash|fish|zsh
 

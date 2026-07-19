@@ -153,11 +153,22 @@ System mode resolves a pinned profile image and five immutable content-keyed
 stages for base metadata, tooling, system packages, recipe tools, and locked
 project dependencies. `system.base_image` accepts a literal non-`latest`
 override; `requires.system_packages` selects normalized distribution packages.
-Expanded static plans expose every generated Containerfile without contacting
-the runtime. Execution then runs the complete lifecycle in one automatically
-removed, read-only-root container against a private copied workspace at the
-canonical checkout path. Nested references stay in that container; only a
-successful lifecycle applies configured sync-out paths.
+Expanded static plans expose every generated Containerfile and mutable cache
+plan without contacting the runtime. Go `GOCACHE` and Rust workspace `target`
+use project-owned named volumes keyed by the canonical checkout, workspace,
+toolchain, platform, ABI, and UID/GID; compatible recipes in one checkout share
+them, but different worktrees never do. Execution then runs the complete
+lifecycle in one explicitly removed, read-only-root container against a private
+copied workspace at the canonical checkout path. Nested references stay in that
+container; only a successful lifecycle applies configured sync-out paths.
+
+Inspect and reset only the current project's labelled caches with:
+
+```sh
+shadowtree cache inspect [recipe] [--json]
+shadowtree cache reset <recipe>
+shadowtree cache reset --all
+```
 
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle
 stages, and recipe references are documented in the
@@ -173,6 +184,8 @@ shadowtree [flags] exec -- <cmd> [args...]
 shadowtree help [recipe [color=false]]
 shadowtree recipes
 shadowtree config
+shadowtree cache inspect [recipe] [--json]
+shadowtree cache reset <recipe>|--all
 shadowtree init [path]
 shadowtree completion bash|fish|zsh
 ```

@@ -1267,6 +1267,35 @@ func zeroLoaded() configfile.Loaded {
 	return configfile.Loaded{}
 }
 
+func TestParseCacheCommand(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		args       []string
+		action     string
+		recipeName string
+		all, json  bool
+		wantErr    bool
+	}{
+		{name: "inspect project", args: []string{"inspect"}, action: "inspect"},
+		{name: "inspect recipe JSON", args: []string{"inspect", "test", "--json"}, action: "inspect", recipeName: "test", json: true},
+		{name: "reset recipe", args: []string{"reset", "test"}, action: "reset", recipeName: "test"},
+		{name: "reset project", args: []string{"reset", "--all"}, action: "reset", all: true},
+		{name: "missing action", wantErr: true},
+		{name: "reset missing scope", args: []string{"reset"}, wantErr: true},
+		{name: "unknown inspect flag", args: []string{"inspect", "--bad"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			action, recipeName, all, jsonOutput, err := parseCacheCommand(test.args)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseCacheCommand() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if err == nil && (action != test.action || recipeName != test.recipeName || all != test.all || jsonOutput != test.json) {
+				t.Fatalf("parseCacheCommand() = %q %q %t %t", action, recipeName, all, jsonOutput)
+			}
+		})
+	}
+}
+
 func lineWithPrefix(t *testing.T, lines []string, prefix string) string {
 	t.Helper()
 	for _, line := range lines {

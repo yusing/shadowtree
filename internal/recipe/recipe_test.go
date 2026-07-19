@@ -3123,6 +3123,20 @@ func TestRustBuiltinsProvideHostWorkflowAndExplicitWorkspaceAggregate(t *testing
 	}
 }
 
+func TestResolveCanPermitMissingRequiredArgumentsForStaticCachePlanning(t *testing.T) {
+	rec := Recipe{Cmd: Command{"echo", "{target}"}, Arguments: map[string]Argument{"target": {Type: "string", Required: true}}}
+	if _, err := ResolveWithOptions("build", rec, nil, nil, nil, "", "", ResolveOptions{}); err == nil || !strings.Contains(err.Error(), "missing required") {
+		t.Fatalf("normal ResolveWithOptions error = %v, want missing required argument", err)
+	}
+	resolved, err := ResolveWithOptions("build", rec, nil, nil, nil, "", "", ResolveOptions{AllowMissingRequiredArguments: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resolved.Main, Command{"echo", "__shadowtree_missing_argument_target"}) {
+		t.Fatalf("resolved main = %#v", resolved.Main)
+	}
+}
+
 func TestResolveRustProjectOwnsWorkspaceToolchainAndCacheContract(t *testing.T) {
 	root := t.TempDir()
 	member := filepath.Join(root, "crates", "app")

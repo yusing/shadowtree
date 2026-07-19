@@ -58,7 +58,8 @@ esac
 		done <- RunLifecycle(ctx, Docker, LifecycleOptions{
 			Image: "image:test", Platform: "linux/amd64", User: "1000:1000",
 			WorkspaceHost: workspace, WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan,
-			Progress: &progress,
+			ExportHost: t.TempDir(),
+			Progress:   &progress,
 		})
 	}()
 	deadline := time.NewTimer(2 * time.Second)
@@ -138,6 +139,34 @@ func TestRunLifecycleFinishesRegistrationAndRemovesBeforeReturningCancellation(t
 	}
 }
 
+func TestRunLifecycleMountsPlannedCacheVolume(t *testing.T) {
+	bin := t.TempDir()
+	argsPath := filepath.Join(bin, "create-args")
+	script := `#!/bin/sh
+case "$1" in
+  create) printf '%s' "$*" > "` + argsPath + `" ;;
+  start) exit 0 ;;
+  rm) exit 0 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	options := lifecycleTestOptions(t)
+	options.Caches = []CachePlan{{Name: "shadowtree-cache-key", Key: "key", ProjectKey: "project", ProjectRoot: "/project", WorkspaceRoot: "/project", Provider: "go-build", Format: "go-build-v1", MountPath: "/opt/shadowtree/cache/go-build", Concurrency: "shared"}}
+	if err := RunLifecycle(t.Context(), Docker, options); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "type=volume,src=shadowtree-cache-key,dst=/opt/shadowtree/cache/go-build") {
+		t.Fatalf("create args missing cache mount: %s", data)
+	}
+}
+
 func lifecycleTestOptions(t *testing.T) LifecycleOptions {
 	t.Helper()
 	helper := filepath.Join(t.TempDir(), "helper")
@@ -149,6 +178,6 @@ func lifecycleTestOptions(t *testing.T) LifecycleOptions {
 	}
 	return LifecycleOptions{
 		Image: "image:test", Platform: "linux/amd64", User: "1000:1000",
-		WorkspaceHost: t.TempDir(), WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan,
+		WorkspaceHost: t.TempDir(), WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan, ExportHost: t.TempDir(),
 	}
 }

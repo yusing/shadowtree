@@ -32,7 +32,7 @@ const probeTimeout = 5 * time.Second
 
 const (
 	probeWaitDelay   = time.Second
-	probeOutputLimit = 4 << 10
+	probeOutputLimit = 64 << 10
 )
 
 type commandRunner func(context.Context, string, ...string) ([]byte, error)
@@ -50,6 +50,10 @@ var capabilityProbes = []capabilityProbe{
 	{phase: "image tagging", args: []string{"image", "tag", "--help"}},
 	{phase: "image building", args: []string{"build", "--help"}, requiredOptions: []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg"}},
 	{phase: "labelled volumes", args: []string{"volume", "create", "--help"}, requiredOptions: []string{"--label"}},
+	{phase: "volume inspection", args: []string{"volume", "inspect", "--help"}, requiredOptions: []string{"--format"}},
+	{phase: "filtered volume listing", args: []string{"volume", "ls", "--help"}, requiredOptions: []string{"--filter", "--format"}},
+	{phase: "volume removal", args: []string{"volume", "rm", "--help"}},
+	{phase: "container volume-use inspection", args: []string{"ps", "--help"}, requiredOptions: []string{"--filter", "--format"}},
 	{phase: "nested and read-only mounts, UID/GID, signalling identity, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--platform", "--name", "--interactive"}},
 	{phase: "attached container start", args: []string{"start", "--help"}, requiredOptions: []string{"--attach", "--interactive"}},
 	{phase: "container signalling", args: []string{"kill", "--help"}, requiredOptions: []string{"--signal"}},

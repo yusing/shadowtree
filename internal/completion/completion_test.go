@@ -1328,6 +1328,27 @@ func TestFishPathCandidatesEscapeValueWhitespace(t *testing.T) {
 	}
 }
 
+func TestCacheCommandCandidates(t *testing.T) {
+	recipes := map[string]recipe.Recipe{"test": {Cmd: recipe.Command{"go", "test"}}}
+	for _, test := range []struct {
+		words []string
+		want  []string
+	}{
+		{words: []string{"shadowtree", "cache", ""}, want: []string{"inspect", "reset"}},
+		{words: []string{"shadowtree", "cache", "inspect", ""}, want: []string{"--json", "test"}},
+		{words: []string{"shadowtree", "cache", "reset", ""}, want: []string{"--all", "test"}},
+	} {
+		candidates := complete(t, test.words, recipes)
+		got := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			got = append(got, candidate.Value)
+		}
+		if !slices.Equal(got, test.want) {
+			t.Fatalf("Candidates(%v) = %v, want %v", test.words, got, test.want)
+		}
+	}
+}
+
 func complete(t *testing.T, words []string, recipes map[string]recipe.Recipe) []Candidate {
 	t.Helper()
 	return completeWithOptions(t, words, recipes, Options{})

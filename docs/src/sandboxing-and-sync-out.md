@@ -67,6 +67,35 @@ otherwise. Cancellation sends `TERM` so `post` can run, followed by a bounded
 forced kill only if cleanup does not finish. Sync-out runs only after complete
 success, while recipe logs are preserved after failures.
 
+## Project build caches
+
+System mode gives Go a mutable `GOCACHE` volume and Rust a workspace-scoped
+Cargo `target` volume. Cache identities include the canonical checkout and
+workspace roots, provider format, target platform, exact toolchain, immutable
+ABI inputs, and effective UID/GID. Recipe names, commands, ordinary arguments,
+run IDs, source hashes, and lockfile contents do not split an otherwise
+compatible cache. Different repositories, checkouts, and linked worktrees
+never share a volume.
+
+Go cache access is shared-concurrent. Cargo target access is exclusive; a
+contending invocation reports that it is waiting and cancellation stops the
+wait. Cache-backed sync-out paths are copied into a private ordinary snapshot
+only after the complete lifecycle succeeds. Failure and cancellation preserve
+the cache but export nothing.
+
+```sh
+shadowtree cache inspect
+shadowtree cache inspect test
+shadowtree cache inspect test --json
+shadowtree cache reset test
+shadowtree cache reset --all
+```
+
+Inspection is read-only and reports unknown size rather than mounting a volume
+to measure it. Reset validates exact ownership labels, refuses active volumes,
+treats missing volumes as already reset, and confines `--all` to the current
+canonical project's caches.
+
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
 workspace with the same isolation contract.

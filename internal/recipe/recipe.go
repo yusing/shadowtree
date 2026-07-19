@@ -245,12 +245,13 @@ func (mode *SandboxMode) UnmarshalTOML(value any) error {
 }
 
 type ResolveOptions struct {
-	RunID        string
-	Recipes      map[string]Recipe
-	EnumSets     map[string]Command
-	Scope        Scope
-	TargetDomain string
-	TargetSource TargetSource
+	RunID                         string
+	Recipes                       map[string]Recipe
+	EnumSets                      map[string]Command
+	Scope                         Scope
+	TargetDomain                  string
+	TargetSource                  TargetSource
+	AllowMissingRequiredArguments bool
 }
 
 type ConfigErrorTarget string
@@ -695,7 +696,7 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 		}
 	}
 	runtimeValues := map[string]string{RunIDPlaceholder: runID}
-	presetName, argValues, variadicArgs, warnings, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets})
+	presetName, argValues, variadicArgs, warnings, err := resolveArgumentsWithPreset(rec, cliArgs, ValueBuiltinOptions{Recipes: opts.Recipes, EnumSets: opts.EnumSets}, opts.AllowMissingRequiredArguments)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("recipe %q args: %w", name, err)
 	}
@@ -1165,7 +1166,7 @@ func ValidatePresetSelection(rec Recipe, selectedPreset, value string) error {
 	return nil
 }
 
-func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBuiltinOptions) (string, map[string]string, []string, []string, error) {
+func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBuiltinOptions, allowMissingRequired bool) (string, map[string]string, []string, []string, error) {
 	presetName, cliArgs, err := extractRecipePreset(rec, cliArgs)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -1261,7 +1262,10 @@ func resolveArgumentsWithPreset(rec Recipe, cliArgs []string, valueOpts ValueBui
 	for name, arg := range rec.Arguments {
 		if arg.Required {
 			if _, ok := values[name]; !ok {
-				return "", nil, nil, nil, fmt.Errorf("missing required argument %q", name)
+				if !allowMissingRequired {
+					return "", nil, nil, nil, fmt.Errorf("missing required argument %q", name)
+				}
+				values[name] = "__shadowtree_missing_argument_" + name
 			}
 		}
 	}

@@ -31,6 +31,7 @@ type ImagePlan struct {
 	Stages         []ImageStage
 	FinalTag       string
 	DependencySeed *DependencySeed
+	Caches         []CachePlan
 }
 
 // DependencySeed describes image-owned Node/Bun dependency state copied into
@@ -223,7 +224,7 @@ func PlanImages(resolved recipe.Resolved, sourceDir string) (ImagePlan, error) {
 		return ImagePlan{}, fmt.Errorf("recipe %q system packages require a supported Debian/Ubuntu base, got %q", resolved.Name, base)
 	}
 	platform := profile.platform
-	projectKey := digestKey(map[string]any{"root": source})
+	projectKey := CanonicalProjectKey(source)
 	configIdentity := resolved.ConfigPath
 	if configIdentity != "" {
 		if absolute, err := filepath.Abs(configIdentity); err == nil {
@@ -273,7 +274,10 @@ func PlanImages(resolved recipe.Resolved, sourceDir string) (ImagePlan, error) {
 		parentTag, parentKey = tag, key
 	}
 	final := "shadowtree.local/" + projectKey + "/" + recipeKey + ":" + parentKey
-	return ImagePlan{BaseImage: base, Platform: platform, Stages: stages, FinalTag: final, DependencySeed: dependency.seed}, nil
+	return ImagePlan{
+		BaseImage: base, Platform: platform, Stages: stages, FinalTag: final, DependencySeed: dependency.seed,
+		Caches: planCaches(profile.caches, source, projectKey, platform, stages),
+	}, nil
 }
 
 type stageInput struct {
@@ -295,6 +299,7 @@ type profileImageInput struct {
 	platform   string
 	tooling    []string
 	dependency dependencyInput
+	caches     []cacheDescriptor
 }
 
 func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileImageInput, error) {
@@ -318,11 +323,24 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 		}
 		lockfile := nearestContextFile(files, workdir, "go.sum")
 		metadata := map[string]string{"toolchain": toolchain.Version, "toolchain_provenance": relativeProvenance(source, toolchain.Provenance), "workdir": workdir}
-		tooling := []string{"RUN test \"$(go version | awk '{print $3}')\" = go" + toolchain.Version, "RUN mkdir -p /opt/shadowtree/bin", "ENV PATH=/opt/shadowtree/bin:$PATH"}
+		tooling := []string{"RUN test \"$(go version | awk '{print $3}')\" = go" + toolchain.Version, "RUN mkdir -p /opt/shadowtree/bin", "RUN install -d -m 0777 /opt/shadowtree/cache/go-build", "ENV PATH=/opt/shadowtree/bin:$PATH"}
 		if len(resolved.Recipe.Requires.NodeCommands) > 0 {
 			tooling = append(tooling, "COPY --from="+recipe.DefaultNodeImage+" /usr/local/ /usr/local/", "RUN test \"$(node --version)\" = v"+recipe.DefaultNodeRelease+" && npm --version")
 		}
-		return profileImageInput{base: "golang:" + toolchain.Version + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "go mod download"), context: files, metadata: metadata}}, nil
+		workspace := nearestContextFile(files, workdir, "go.work")
+		if workspace == "" {
+			workspace = nearestContextFile(files, workdir, "go.mod")
+		}
+		workspace = path.Dir(workspace)
+		if workspace == "." {
+			workspace = ""
+		}
+		cache := cacheDescriptor{
+			provider: "go-build", format: "go-build-v1", workspace: workspace,
+			mountPath: "/opt/shadowtree/cache/go-build", toolchain: toolchain.Version,
+			concurrency: "shared", environment: map[string]string{"GOCACHE": "/opt/shadowtree/cache/go-build"},
+		}
+		return profileImageInput{base: "golang:" + toolchain.Version + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "go mod download"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
 	case recipe.NodeProfile:
 		manager, err := recipe.ResolveNodePackageManagerWithin(dir, source)
 		if err != nil {
@@ -397,8 +415,24 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 			return profileImageInput{}, err
 		}
 		lockfile := nearestContextFile(files, workdir, "Cargo.lock")
+		manifests, err := recipe.RustDependencyManifestPaths(files, workdir)
+		if err != nil {
+			return profileImageInput{}, err
+		}
+		workspace := rustWorkspacePath(files, manifests, workdir)
+		environment := os.Getenv("CARGO_BUILD_TARGET")
+		if target := resolved.GlobalEnv["CARGO_BUILD_TARGET"]; target != "" {
+			environment = target
+		}
+		if target := resolved.Recipe.Env["CARGO_BUILD_TARGET"]; target != "" {
+			environment = target
+		}
+		target, err := rustCacheTarget(files, workdir, resolved.Main, resolved.VariadicArgs, environment, host)
+		if err != nil {
+			return profileImageInput{}, err
+		}
 		metadata := map[string]string{"toolchain": toolchain, "toolchain_release": release, "toolchain_host": host, "workdir": workdir}
-		tooling := []string{"RUN rustc --version --verbose | grep -F " + shellQuote("release: "+release) + " && cargo --version", "RUN mkdir -p /opt/shadowtree/bin", "ENV PATH=/opt/shadowtree/bin:$PATH"}
+		tooling := []string{"RUN rustc --version --verbose | grep -F " + shellQuote("release: "+release) + " && cargo --version", "RUN mkdir -p /opt/shadowtree/bin", "RUN install -d -m 0777 /opt/shadowtree/cache/cargo-target", "ENV PATH=/opt/shadowtree/bin:$PATH"}
 		if host != "" {
 			tooling[0] = "RUN rustc --version --verbose | grep -F " + shellQuote("release: "+release) + " && rustc --version --verbose | grep -F " + shellQuote("host: "+host) + " && cargo --version"
 		}
@@ -408,7 +442,15 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 		if len(resolved.Recipe.Requires.NodeCommands) > 0 {
 			tooling = append(tooling, "COPY --from="+recipe.DefaultNodeImage+" /usr/local/ /usr/local/")
 		}
-		return profileImageInput{base: "rust:" + release + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "cargo fetch --locked"), context: files, metadata: metadata}}, nil
+		outputPath := filepath.Join(source, filepath.FromSlash(workspace), "target")
+		cache := cacheDescriptor{
+			provider: "cargo-target", format: "cargo-target-v1", workspace: workspace,
+			mountPath: "/opt/shadowtree/cache/cargo-target", outputPath: outputPath,
+			toolchain: toolchain, concurrency: recipe.RustTargetCacheConcurrency,
+			environment: map[string]string{"CARGO_TARGET_DIR": "/opt/shadowtree/cache/cargo-target"},
+			inputs:      map[string]string{"host": host, "target": target},
+		}
+		return profileImageInput{base: "rust:" + release + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "cargo fetch --locked"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
 	default:
 		tooling := []string{"RUN mkdir -p /opt/shadowtree/bin", "ENV PATH=/opt/shadowtree/bin:$PATH"}
 		if len(resolved.Recipe.Requires.GoCommands) > 0 {
@@ -587,6 +629,85 @@ func filterRustManifestContext(files map[string][]byte, workdir string) error {
 		}
 	}
 	return nil
+}
+
+func rustWorkspacePath(files map[string][]byte, manifests []string, workdir string) string {
+	selected := nearestContextFile(files, workdir, "Cargo.toml")
+	root := selected
+	for _, manifest := range manifests {
+		dir := path.Dir(manifest)
+		if dir == "." {
+			dir = ""
+		}
+		selectedDir := path.Dir(selected)
+		if selectedDir == "." {
+			selectedDir = ""
+		}
+		if !slashAncestor(dir, selectedDir) {
+			continue
+		}
+		var marker struct {
+			Workspace *struct{} `toml:"workspace"`
+		}
+		if _, err := toml.Decode(string(files[manifest]), &marker); err == nil && marker.Workspace != nil {
+			root = manifest
+		}
+	}
+	dir := path.Dir(root)
+	if dir == "." {
+		return ""
+	}
+	return dir
+}
+
+func rustCacheTarget(files map[string][]byte, workdir string, command, variadicArgs []string, environment, host string) (string, error) {
+	if len(command) > 0 && filepath.Base(command[0]) == "cargo" && !recipe.IsScriptCommand(command) {
+		args := append(slices.Clone(command[1:]), variadicArgs...)
+		for index, arg := range args {
+			if target, ok := strings.CutPrefix(arg, "--target="); ok && target != "" {
+				if strings.HasPrefix(target, "__shadowtree_missing_argument_") {
+					return "", errors.New("cache identity requires the omitted Cargo --target argument")
+				}
+				return target, nil
+			}
+			if arg == "--target" && index+1 < len(args) {
+				target := args[index+1]
+				if strings.HasPrefix(target, "__shadowtree_missing_argument_") {
+					return "", errors.New("cache identity requires the omitted Cargo --target argument")
+				}
+				return target, nil
+			}
+		}
+	}
+	if environment != "" {
+		return environment, nil
+	}
+	for current := workdir; ; {
+		for _, name := range []string{".cargo/config.toml", ".cargo/config"} {
+			candidate := path.Join(current, name)
+			if current == "" {
+				candidate = name
+			}
+			if data := files[candidate]; data != nil {
+				var config struct {
+					Build struct {
+						Target string `toml:"target"`
+					} `toml:"build"`
+				}
+				if _, err := toml.Decode(string(data), &config); err == nil && config.Build.Target != "" {
+					return config.Build.Target, nil
+				}
+			}
+		}
+		if current == "" {
+			break
+		}
+		current = path.Dir(current)
+		if current == "." {
+			current = ""
+		}
+	}
+	return host, nil
 }
 
 func slashAncestor(ancestor, candidate string) bool {

@@ -210,6 +210,87 @@ func TestSystemHelperAggregateFailureStillRunsPostOnce(t *testing.T) {
 	}
 }
 
+func TestSystemCacheExportSnapshotsSelectedVolumePath(t *testing.T) {
+	source := t.TempDir()
+	export := t.TempDir()
+	workspace := t.TempDir()
+	cacheMount := filepath.Join(t.TempDir(), "cargo-target")
+	cache := systemsandbox.CachePlan{Name: "cache", Key: "key", ProjectKey: "project", Provider: "cargo-target", MountPath: cacheMount, OutputPath: filepath.Join(source, "target")}
+	if err := os.MkdirAll(filepath.Join(cacheMount, "debug"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheMount, "debug", "app"), []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "target", "debug"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "target", "debug", "app"), []byte("stale"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := systemLifecyclePlan{
+		Caches: []systemsandbox.CachePlan{cache}, SourceDir: source,
+		SyncOut: []string{"target/debug/app"}, ExportDir: export,
+	}
+	if err := exportSystemCaches(plan); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{SourceDir: source, Resolved: recipe.Resolved{SyncOut: plan.SyncOut}}
+	if err := applySystemCacheExports(plan.Caches, options, export, workspace); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(workspace, "target", "debug", "app"), "new")
+}
+
+func TestSystemCacheExportRejectsSymlinkedCacheAncestor(t *testing.T) {
+	source := t.TempDir()
+	cacheMount := t.TempDir()
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "secret"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(cacheMount, "debug")); err != nil {
+		t.Fatal(err)
+	}
+	plan := systemLifecyclePlan{
+		Caches:    []systemsandbox.CachePlan{{MountPath: cacheMount, OutputPath: filepath.Join(source, "target")}},
+		SourceDir: source, SyncOut: []string{"target/debug/secret"}, ExportDir: t.TempDir(),
+	}
+	if err := exportSystemCaches(plan); err == nil {
+		t.Fatal("exportSystemCaches followed a symlinked cache ancestor")
+	}
+	if _, err := os.Stat(filepath.Join(plan.ExportDir, "target", "debug", "secret")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("exported secret stat error = %v, want not exist", err)
+	}
+}
+
+func TestSystemCacheApplyReplacesSymlinkedWorkspaceAncestorWithoutEscaping(t *testing.T) {
+	source := t.TempDir()
+	export := t.TempDir()
+	workspace := t.TempDir()
+	external := t.TempDir()
+	marker := filepath.Join(external, "marker")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(workspace, "target")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(export, "target", "debug"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(export, "target", "debug", "app"), []byte("app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := systemsandbox.CachePlan{OutputPath: filepath.Join(source, "target")}
+	options := Options{SourceDir: source, Resolved: recipe.Resolved{SyncOut: []string{"target/debug/app"}}}
+	if err := applySystemCacheExports([]systemsandbox.CachePlan{cache}, options, export, workspace); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, marker, "keep")
+	assertFileContent(t, filepath.Join(workspace, "target", "debug", "app"), "app")
+}
+
 func runSystemHelperPlan(t *testing.T, plan systemLifecyclePlan) int {
 	t.Helper()
 	data, err := json.Marshal(plan)

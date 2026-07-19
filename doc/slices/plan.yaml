@@ -31,7 +31,7 @@ slices:
     requirement_ids: [REQ-SBOX-008, REQ-SBOX-009]
     depends_on: [SYSTEM-IMAGES]
   - id: SYSTEM-CACHES
-    status: pending
+    status: implemented
     requirement_ids: [REQ-SBOX-007, REQ-SBOX-010]
     depends_on: [SYSTEM-LIFECYCLE]
   - id: SYSTEM-CONFINEMENT

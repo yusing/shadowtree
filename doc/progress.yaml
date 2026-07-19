@@ -71,7 +71,7 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-008
     title: REQ-SBOX-008 — Run one ephemeral lifecycle at a stable path
     kind: requirement
@@ -89,7 +89,7 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented
   - id: REQ-SBOX-011
     title: REQ-SBOX-011 — Fail closed at trust and compatibility boundaries
     kind: requirement

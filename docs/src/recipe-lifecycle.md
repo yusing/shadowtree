@@ -27,6 +27,9 @@ container. A private read-only helper and resolved-plan file run `pre`, main or
 `for_each`, nested references, and `post` without mounting the host checkout.
 Successful runs apply existing sync-out rules from the private copy; failures
 and cancellation export no selected outputs. Logs retain their normal behavior.
+Cache-backed selected outputs are first copied from the runtime volume to a
+private ordinary snapshot, so the same sync-out confinement rules still own the
+host write.
 
 ## Failure Behavior
 

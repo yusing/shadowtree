@@ -146,6 +146,9 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   declare distribution packages through `requires.system_packages`.
 - System-mode `pre`, `cmd`, nested references, and `post` share one ephemeral
   container; nested references do not perform nested sync-out.
+- Go and Rust system recipes receive provider-owned project caches
+  automatically; do not add arbitrary host cache mounts or split compatible
+  caches by recipe name, command, ordinary arguments, or lockfile content.
 - Never define top-level `sync_out`.
 - Prefer narrow sync-out paths; a selected path missing in the sandbox mirrors
   as a host deletion.

@@ -335,11 +335,15 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	if candidates, ok := argumentCandidates(ctx, spec, words, recipes, opts); ok {
 		return candidates, nil
 	}
+	if candidates, ok := cacheCandidates(spec, words, recipes); ok {
+		return candidates, nil
+	}
 	if commandSelected(words) {
 		return nil, nil
 	}
 	candidates := []Candidate{
 		{Value: "exec", Help: "Run an explicit command in a shadow workspace"},
+		{Value: "cache", Help: "Inspect or reset project build caches"},
 		{Value: "help", Help: "Show CLI and recipe help"},
 		{Value: "recipes", Help: "List resolved recipes"},
 		{Value: "init", Help: "Create .shadowtree.toml"},
@@ -348,6 +352,27 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	}
 	candidates = append(candidates, recipeCandidates(words, recipes)...)
 	return filterPrefix(candidates, currentWord(words)), nil
+}
+
+func cacheCandidates(spec shellSpec, words []string, recipes map[string]recipe.Recipe) ([]Candidate, bool) {
+	positionals := normalizedWords(spec, positionalWords(words))
+	if len(positionals) == 0 || positionals[0] != "cache" {
+		return nil, false
+	}
+	current := currentWord(words)
+	if len(positionals) == 1 || len(positionals) == 2 && positionals[1] == current {
+		return filterPrefix([]Candidate{{Value: "inspect", Help: "Inspect project caches"}, {Value: "reset", Help: "Reset project caches"}}, current), true
+	}
+	action := positionals[1]
+	candidates := recipeCandidates(words, recipes)
+	if action == "inspect" {
+		candidates = append([]Candidate{{Value: "--json", Help: "Print stable JSON"}}, candidates...)
+	} else if action == "reset" {
+		candidates = append([]Candidate{{Value: "--all", Help: "Reset all caches owned by this project"}}, candidates...)
+	} else {
+		return nil, true
+	}
+	return filterPrefix(candidates, current), true
 }
 
 // StaticCandidates returns completions that do not require recipe resolution.

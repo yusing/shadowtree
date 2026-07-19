@@ -102,14 +102,19 @@ probe Docker, Podman, then nerdctl; read stderr for candidate diagnostics and
 the selected runtime.
 
 For a system recipe, expanded plans expose the pinned `system.base_image`, five
-immutable stages, context hashes, and any dependency-seed contract without
-building. Treat `requires.system_packages` as image inputs, not host package
-installation instructions.
+immutable stages, context hashes, mutable cache identities and mounts, sync-out
+intersections, and any dependency-seed contract without building. Treat
+`requires.system_packages` as image inputs, not host package installation
+instructions.
 
 Execution runs the complete lifecycle in one ephemeral container against a
 private copied workspace. Nested references do not create nested images or
 containers. Expect `post` on initial cancellation and sync-out only after full
 success, with lifecycle and cleanup progress on stderr.
+
+Use `shadowtree cache inspect [recipe] [--json]` for read-only project cache
+diagnostics. Use `shadowtree cache reset <recipe>` or `cache reset --all` only
+when removal is intended; `--all` remains confined to the canonical checkout.
 
 - Expect ordinary sandbox writes to disappear after the run.
 - Trust recipe-local `sync_out` declared by the existing recipe.

@@ -430,6 +430,17 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, progress); err != nil {
 		return fmt.Errorf("recipe %q system image build: %w", resolved.Name, err)
 	}
+	releaseCaches, err := systemsandbox.AcquireCacheExecutionLocks(ctx, plan.Caches, progress)
+	if err != nil {
+		return fmt.Errorf("recipe %q system cache lock: %w", resolved.Name, err)
+	}
+	defer releaseCaches()
+	if err := systemsandbox.PrepareCaches(ctx, runtimeName, plan.Caches, progress); err != nil {
+		return fmt.Errorf("recipe %q system caches: %w", resolved.Name, err)
+	}
+	if err := systemsandbox.WaitForCacheAvailability(ctx, runtimeName, plan.Caches, progress); err != nil {
+		return fmt.Errorf("recipe %q system cache availability: %w", resolved.Name, err)
+	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
 	return runSystemLifecycle(ctx, runtimeName, plan, options, stdin, stdout, progress)
@@ -495,6 +506,30 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		fmt.Fprintf(w, "dependency_seed.manager: %s\n", plan.DependencySeed.Manager)
 		fmt.Fprintf(w, "dependency_seed.source: %s\n", plan.DependencySeed.SourcePath)
 		fmt.Fprintf(w, "dependency_seed.target: %s\n", plan.DependencySeed.TargetPath)
+	}
+	for index, cache := range plan.Caches {
+		prefix := fmt.Sprintf("cache[%d]", index)
+		fmt.Fprintf(w, "%s.provider: %s\n", prefix, cache.Provider)
+		fmt.Fprintf(w, "%s.key: %s\n", prefix, cache.Key)
+		fmt.Fprintf(w, "%s.volume: %s\n", prefix, cache.Name)
+		fmt.Fprintf(w, "%s.workspace: %s\n", prefix, cache.WorkspaceRoot)
+		fmt.Fprintf(w, "%s.mount: %s\n", prefix, cache.MountPath)
+		if cache.OutputPath != "" {
+			fmt.Fprintf(w, "%s.output: %s\n", prefix, cache.OutputPath)
+		}
+		fmt.Fprintf(w, "%s.concurrency: %s\n", prefix, cache.Concurrency)
+		paths, err := cacheExportPaths([]systemsandbox.CachePlan{cache}, options.SourceDir, options.Resolved.SyncOut, options.SyncOutAll)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "%s.sync_intersections: %s\n", prefix, strings.Join(paths, ","))
+		if expanded {
+			fmt.Fprintf(w, "%s.format: %s\n", prefix, cache.Format)
+			fmt.Fprintf(w, "%s.platform: %s\n", prefix, cache.Platform)
+			fmt.Fprintf(w, "%s.toolchain: %s\n", prefix, cache.Toolchain)
+			fmt.Fprintf(w, "%s.abi: %s\n", prefix, cache.ABIKey)
+			fmt.Fprintf(w, "%s.uid_gid: %d:%d\n", prefix, cache.UID, cache.GID)
+		}
 	}
 	return nil
 }
@@ -1537,12 +1572,35 @@ func SyncPath(workspace, source, requested string) error {
 	if err != nil {
 		return err
 	}
+	return syncPathAs(workspace, source, cleaned, cleaned)
+}
+
+func syncPathAs(workspace, source, sourceName, destinationName string) error {
+	destinationName, err := cleanSyncOutPath(destinationName)
+	if err != nil {
+		return err
+	}
+	if sourceName == "." {
+		dstRoot, err := os.OpenRoot(source)
+		if err != nil {
+			return err
+		}
+		defer dstRoot.Close()
+		if err := removeRootPath(dstRoot, destinationName); err != nil {
+			return err
+		}
+		return copyTreeToRoot(workspace, dstRoot, destinationName)
+	}
+	sourceName, err = cleanSyncOutPath(sourceName)
+	if err != nil {
+		return err
+	}
 	srcRoot, err := os.OpenRoot(workspace)
 	if err != nil {
 		return err
 	}
 	defer srcRoot.Close()
-	info, statErr := srcRoot.Lstat(cleaned)
+	info, statErr := srcRoot.Lstat(sourceName)
 	dstRoot, err := os.OpenRoot(source)
 	if err != nil {
 		return err
@@ -1550,24 +1608,24 @@ func SyncPath(workspace, source, requested string) error {
 	defer dstRoot.Close()
 	if statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
-			return removeRootPathIfPresent(dstRoot, cleaned)
+			return removeRootPathIfPresent(dstRoot, destinationName)
 		}
 		return statErr
 	}
-	if info.IsDir() && shouldSkip(cleaned, fileInfoDirEntry{info: info}) {
-		return removeRootPath(dstRoot, cleaned)
+	if info.IsDir() && shouldSkip(sourceName, fileInfoDirEntry{info: info}) {
+		return removeRootPath(dstRoot, destinationName)
 	}
 	if info.IsDir() {
-		if err := removeRootPath(dstRoot, cleaned); err != nil {
+		if err := removeRootPath(dstRoot, destinationName); err != nil {
 			return err
 		}
 	}
-	supported, err := copyRootPathToRoot(srcRoot, cleaned, info, dstRoot, cleaned, nil)
+	supported, err := copyRootPathToRoot(srcRoot, sourceName, info, dstRoot, destinationName, nil)
 	if err != nil {
 		return err
 	}
 	if !supported {
-		return fmt.Errorf("unsupported sync_out file type: %s", requested)
+		return fmt.Errorf("unsupported sync path file type: %s", sourceName)
 	}
 	return nil
 }
