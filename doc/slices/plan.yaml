@@ -1,9 +1,40 @@
 revision: SPEC-1
 slices:
   - id: RUST-PROFILE
-    status: implemented
+    status: verified
     requirement_ids: [REQ-RUST-001, REQ-RUST-002, REQ-RUST-003, REQ-RUST-004, REQ-RUST-005]
     outcome: Cargo projects select an exact Rust toolchain and expose host-usable, workspace-aware built-ins plus project-scoped dependency and cache contracts.
     boundaries: [detect.Profile, configfile.ResolveRecipes, recipe Rust metadata and built-ins, aggregate execution, CLI and public surfaces]
     acceptance: A real Cargo project resolves and runs pinned check, test, build, run, fmt, and clippy paths; malformed selections fail closed.
     non_goals: [system sandbox]
+  - id: SYSTEM-SKELETON
+    status: implemented
+    requirement_ids: []
+    outcome: The system-sandbox package owns stable external runtime identity and candidate order without exposing an unavailable execution path.
+    boundaries: [recipe owns configuration and resolved mode, systemsandbox owns runtime/image/cache integration, runner owns lifecycle/workspace/sync-out dispatch]
+    acceptance: The package compiles and returns independent docker, podman, nerdctl candidate lists in stable order.
+    non_goals: [mode decoding, runtime probing, image planning, container execution, cache operations]
+  - id: SYSTEM-MODE
+    status: pending
+    requirement_ids: [REQ-SBOX-001]
+    depends_on: [SYSTEM-SKELETON]
+  - id: SYSTEM-RUNTIME
+    status: pending
+    requirement_ids: [REQ-SBOX-002]
+    depends_on: [SYSTEM-MODE]
+  - id: SYSTEM-IMAGES
+    status: pending
+    requirement_ids: [REQ-SBOX-003, REQ-SBOX-004, REQ-SBOX-005, REQ-SBOX-006]
+    depends_on: [SYSTEM-RUNTIME]
+  - id: SYSTEM-LIFECYCLE
+    status: pending
+    requirement_ids: [REQ-SBOX-008, REQ-SBOX-009]
+    depends_on: [SYSTEM-IMAGES]
+  - id: SYSTEM-CACHES
+    status: pending
+    requirement_ids: [REQ-SBOX-007, REQ-SBOX-010]
+    depends_on: [SYSTEM-LIFECYCLE]
+  - id: SYSTEM-CONFINEMENT
+    status: pending
+    requirement_ids: [REQ-SBOX-011]
+    depends_on: [SYSTEM-CACHES]
