@@ -73,6 +73,8 @@ cmd = '''
 set -eu
 skills_src=.agents/skills
 skills_dest=${AGENTS_SKILLS_DIR:-"$HOME/.agents/skills"}
+legacy_skill_dest=$skills_dest/shadowtree
+legacy_skill_file=$legacy_skill_dest/SKILL.md
 
 if [ ! -d "$skills_src" ]; then
 	echo "missing skills source: $skills_src" >&2
@@ -97,5 +99,10 @@ done
 if [ "$installed" -eq 0 ]; then
 	echo "no skills found in $skills_src" >&2
 	exit 1
+fi
+
+if [ -f "$legacy_skill_file" ] && grep -Fqx 'name: shadowtree' "$legacy_skill_file"; then
+	rm -rf "$legacy_skill_dest"
+	echo "removed legacy shadowtree skill from $legacy_skill_dest"
 fi
 '''

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Authoring Shadowtree Recipes"
+  short_description: "Design clear Shadowtree recipes and arguments"
+  default_prompt: "Use $authoring-shadowtree-recipes to design the smallest clear recipe for this workflow."

@@ -32,4 +32,5 @@ installs fish completion when `fish` is available, and appends single guarded
 eval lines to `~/.bashrc` and `~/.zshrc` when those shells are available.
 
 The `install-skill` recipe installs every local agent skill from
-`.agents/skills/` to `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}`.
+`.agents/skills/` to `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}`, then removes
+the legacy installed `shadowtree` skill.
