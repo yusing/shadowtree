@@ -248,6 +248,9 @@ func TestApplyOverlayUpperAppliesWhiteoutAndOpaqueDir(t *testing.T) {
 	if err := os.Mkdir(upperDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(upperDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	setOverlayXattr(t, upperDir, "opaque")
 	if err := os.WriteFile(filepath.Join(upperDir, "new.txt"), []byte("shadow"), 0o644); err != nil {
 		t.Fatal(err)
