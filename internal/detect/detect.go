@@ -30,7 +30,7 @@ func RepoRoot(cwd string) string {
 		}
 		parent := filepath.Dir(root)
 		if parent == root {
-			return cwd
+			return ""
 		}
 		root = parent
 	}
