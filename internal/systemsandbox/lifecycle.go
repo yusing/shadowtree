@@ -31,6 +31,7 @@ type LifecycleOptions struct {
 	Stdout        io.Writer
 	Stderr        io.Writer
 	Progress      io.Writer
+	Ready         func() error
 	Caches        []CachePlan
 	ExportHost    string
 }
@@ -132,6 +133,11 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	}()
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
+	}
+	if options.Ready != nil {
+		if err := options.Ready(); err != nil {
+			return fmt.Errorf("prepare attached system container output: %w", err)
+		}
 	}
 	cmd := exec.Command(string(runtime), "start", "--attach", "--interactive", name)
 	cmd.Stdin = options.Stdin

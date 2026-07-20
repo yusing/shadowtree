@@ -90,7 +90,7 @@ func TestCapableHostComposedToolchains(t *testing.T) {
 		t.Fatal(err)
 	}
 	var progress bytes.Buffer
-	if err := BuildImages(t.Context(), runtimeName, plan, &progress); err != nil {
+	if err := BuildImages(t.Context(), runtimeName, plan, ImageBuildOptions{Verbose: &progress}); err != nil {
 		t.Fatalf("build composed toolchains on %s: %v\n%s", runtimeName, err, progress.String())
 	}
 	output, err := directCommand(t.Context(), string(runtimeName), "run", "--rm", "--network", "none", "--read-only", plan.FinalTag, "/bin/sh", "-c", "go version && (node --version || bun --version) && rustc --version")

@@ -57,18 +57,51 @@ type ImageStage struct {
 	Metadata      map[string]string
 }
 
-// BuildImages reuses label-validated stages and builds each missing stage from
-// the nearest valid lower stage before publishing the recipe-scoped alias.
-func BuildImages(ctx context.Context, runtime RuntimeName, plan ImagePlan, progress io.Writer) error {
-	return buildImagesWith(ctx, runtime, plan, progress, directCommand, directStreamingCommand)
+// ImageBuildOptions separates verbose orchestration logs from semantic stage
+// progress. Container-runtime build output is always buffered by BuildImages.
+type ImageBuildOptions struct {
+	Verbose io.Writer
+	Stage   func(ImageStage) error
 }
 
-func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, progress io.Writer, run commandRunner, stream streamingCommandRunner) error {
-	if progress == nil {
-		progress = io.Discard
+type imageBuildError struct {
+	err        error
+	diagnostic []byte
+}
+
+func (err *imageBuildError) Error() string { return err.err.Error() }
+
+func (err *imageBuildError) Unwrap() error { return err.err }
+
+// WriteImageBuildDiagnostic writes buffered container-runtime output
+// attached to a failed image build. It reports whether a diagnostic existed.
+func WriteImageBuildDiagnostic(err error, output io.Writer) (bool, error) {
+	buildErr, ok := errors.AsType[*imageBuildError](err)
+	if !ok || len(buildErr.diagnostic) == 0 {
+		return false, nil
+	}
+	_, writeErr := output.Write(buildErr.diagnostic)
+	return true, writeErr
+}
+
+// BuildImages reuses label-validated stages and builds each missing stage from
+// the nearest valid lower stage before publishing the recipe-scoped alias.
+func BuildImages(ctx context.Context, runtime RuntimeName, plan ImagePlan, options ImageBuildOptions) error {
+	return buildImagesWith(ctx, runtime, plan, options, directCommand, bufferedBuildCommand)
+}
+
+func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, options ImageBuildOptions, run commandRunner, build buildCommandRunner) error {
+	verbose := options.Verbose
+	if verbose == nil {
+		verbose = io.Discard
 	}
 	for _, stage := range plan.Stages {
-		fmt.Fprintf(progress, "shadowtree: image stage %s lookup\n", stage.Name)
+		if options.Stage != nil {
+			if err := options.Stage(stage); err != nil {
+				return fmt.Errorf("report image stage %s: %w", stage.Name, err)
+			}
+		}
+		fmt.Fprintf(verbose, "shadowtree: image stage %s lookup\n", stage.Name)
 		labels, exists, err := inspectImageLabels(ctx, runtime, stage.Tag, run)
 		if err != nil {
 			return fmt.Errorf("runtime %s stage %s lookup: %w", runtime, stage.Name, err)
@@ -77,11 +110,11 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, p
 			if !labelsMatch(labels, stage.Labels) {
 				return fmt.Errorf("runtime %s stage %s tag collision at %s; remove or retag the conflicting image", runtime, stage.Name, stage.Tag)
 			}
-			fmt.Fprintf(progress, "shadowtree: image stage %s reused\n", stage.Name)
+			fmt.Fprintf(verbose, "shadowtree: image stage %s reused\n", stage.Name)
 			continue
 		}
-		fmt.Fprintf(progress, "shadowtree: image stage %s build\n", stage.Name)
-		if err := buildStage(ctx, runtime, stage, progress, stream); err != nil {
+		fmt.Fprintf(verbose, "shadowtree: image stage %s build\n", stage.Name)
+		if err := buildStage(ctx, runtime, stage, build); err != nil {
 			return fmt.Errorf("runtime %s stage %s build: %w", runtime, stage.Name, err)
 		}
 		labels, exists, err = inspectImageLabels(ctx, runtime, stage.Tag, run)
@@ -103,7 +136,7 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, p
 		}
 		return nil
 	}
-	fmt.Fprintln(progress, "shadowtree: publishing recipe image alias")
+	fmt.Fprintln(verbose, "shadowtree: publishing recipe image alias")
 	output, err := run(ctx, string(runtime), "image", "tag", plan.Stages[len(plan.Stages)-1].Tag, plan.FinalTag)
 	if err != nil {
 		return fmt.Errorf("runtime %s publish final tag: %s", runtime, commandFailure(err, output))
@@ -140,7 +173,7 @@ func labelsMatch(got, want map[string]string) bool {
 	return true
 }
 
-func buildStage(ctx context.Context, runtime RuntimeName, stage ImageStage, progress io.Writer, run streamingCommandRunner) error {
+func buildStage(ctx context.Context, runtime RuntimeName, stage ImageStage, run buildCommandRunner) error {
 	dir, err := os.MkdirTemp("", "shadowtree-image-*")
 	if err != nil {
 		return err
@@ -169,16 +202,12 @@ func buildStage(ctx context.Context, runtime RuntimeName, stage ImageStage, prog
 		args = append(args, "--label", key+"="+stage.Labels[key])
 	}
 	args = append(args, dir)
-	output, err := run(ctx, progress, string(runtime), args...)
+	diagnostic, err := run(ctx, string(runtime), args...)
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil {
 			return cause
 		}
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return err
-		}
-		return fmt.Errorf("runtime output: %s: %w", strings.Join(strings.Fields(message), " "), err)
+		return &imageBuildError{err: err, diagnostic: diagnostic}
 	}
 	return nil
 }

@@ -214,7 +214,7 @@ Global flags:
 | `--expanded` | With `--print`, include expanded scripts, values, env, logs, and sync-out paths |
 | `--check` | Validate the resolved recipe without running commands |
 | `--shell` | With `--check`, parse expanded `sh` and `bash` scripts |
-| `--verbose` | Show workspace details and compact stage boundaries |
+| `--verbose` | Show detailed execution progress, workspace details, and compact stage boundaries |
 | `--help` | Show basic CLI help |
 | `--version` | Print the version |
 

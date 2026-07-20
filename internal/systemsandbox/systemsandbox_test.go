@@ -26,7 +26,7 @@ func TestRuntimeCandidatesHaveStableOrderAndIndependentStorage(t *testing.T) {
 	}
 }
 
-func TestDirectStreamingCommandPreservesCancellation(t *testing.T) {
+func TestDirectCommandPreservesCancellation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires a POSIX shell")
 	}
@@ -35,20 +35,37 @@ func TestDirectStreamingCommandPreservesCancellation(t *testing.T) {
 		t.Skip("sh is not installed")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	progress := callbackWriter(func(p []byte) (int, error) {
-		cancel()
-		return len(p), nil
-	})
-	_, err = directStreamingCommand(ctx, progress, sh, "-c", "printf ready; exec sleep 30")
+	cancel()
+	_, err = directCommand(ctx, sh, "-c", "exec sleep 30")
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("directStreamingCommand error = %v, want context cancellation", err)
+		t.Fatalf("directCommand error = %v, want context cancellation", err)
 	}
 }
 
-type callbackWriter func([]byte) (int, error)
+func TestTailBufferBoundsOutputAndRetainsFailureTail(t *testing.T) {
+	buffer := tailBuffer{limit: 16}
+	for _, chunk := range []string{"0123456789", "abcdefghij", "ACTIONABLE"} {
+		if _, err := buffer.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := buildOutputTruncation + "efghijACTIONABLE"
+	if got := string(buffer.Bytes()); got != want {
+		t.Fatalf("tail output = %q, want %q", got, want)
+	}
+	if len(buffer.buf) != 16 {
+		t.Fatalf("retained bytes = %d, want limit 16", len(buffer.buf))
+	}
+}
 
-func (write callbackWriter) Write(p []byte) (int, error) {
-	return write(p)
+func TestTailBufferLeavesShortOutputUnmarked(t *testing.T) {
+	buffer := tailBuffer{limit: 16}
+	if _, err := buffer.Write([]byte("failure")); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(buffer.Bytes()); got != "failure" {
+		t.Fatalf("tail output = %q, want unmarked short output", got)
+	}
 }
 
 func TestDetectUsesStableOrderAndContinuesAfterUnusableRuntime(t *testing.T) {

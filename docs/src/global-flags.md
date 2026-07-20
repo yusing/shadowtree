@@ -56,7 +56,10 @@ comma-separated paths.
 : With `--check`, parse expanded shell scripts.
 
 `--verbose`
-: Show workspace information and compact command boundaries during execution.
+: Show detailed execution progress, workspace information, and compact command
+  boundaries. System-container setup otherwise uses concise stage progress;
+  successful container build output is suppressed, while failures write a
+  bounded diagnostic tail to stderr.
 
 `--help`
 : Show basic CLI help.

@@ -41,31 +41,43 @@ type systemInvocation struct {
 	skipped                              []string
 }
 
-func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
+func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr, verbose io.Writer, setup *systemProgress) error {
+	fmt.Fprintln(verbose, "shadowtree: setting up system workspace")
 	invocation, err := createSystemInvocation(image, options)
 	if err != nil {
-		return err
+		return errors.Join(err, setup.Fail())
 	}
 	for _, path := range invocation.skipped {
-		fmt.Fprintf(stderr, "shadowtree: system workspace skipped unreadable path %q\n", path)
+		fmt.Fprintf(verbose, "shadowtree: system workspace skipped unreadable path %q\n", path)
 	}
 	defer func() {
-		fmt.Fprintln(stderr, "shadowtree: cleaning system invocation")
+		fmt.Fprintln(verbose, "shadowtree: cleaning system invocation")
 		_ = os.RemoveAll(invocation.dir)
 	}()
 	workspace := invocation.workspace
-	fmt.Fprintln(stderr, "shadowtree: executing system lifecycle")
+	fmt.Fprintln(verbose, "shadowtree: executing system lifecycle")
+	ready := false
 	err = systemsandbox.RunLifecycle(ctx, runtimeName, systemsandbox.LifecycleOptions{
 		Image: image.FinalTag, Platform: image.Platform, WorkspaceHost: workspace,
 		WorkspacePath: options.SourceDir, HelperHost: invocation.helper, PlanHost: invocation.plan,
 		Caches: image.Caches, ExportHost: invocation.export,
 		Confinement: confinement,
-		Stdin:       stdin, Stdout: stdout, Stderr: stderr, Progress: stderr,
+		Stdin:       stdin, Stdout: stdout, Stderr: stderr, Progress: verbose,
+		Ready: func() error {
+			if err := setup.Succeed(); err != nil {
+				return fmt.Errorf("render system progress: %w", err)
+			}
+			ready = true
+			return nil
+		},
 	})
 	if logErr := syncSystemLog(options.Resolved, options.SourceDir, workspace); logErr != nil && err == nil {
 		err = logErr
 	}
 	if err != nil {
+		if !ready {
+			err = errors.Join(err, setup.Fail())
+		}
 		if cause := context.Cause(ctx); cause != nil {
 			return cause
 		}
@@ -74,7 +86,7 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 	if err := applySystemCacheExports(image.Caches, options, invocation.export, workspace); err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "shadowtree: exporting system workspace")
+	fmt.Fprintln(verbose, "shadowtree: exporting system workspace")
 	if options.SyncOutAll {
 		return (&sandboxWorkspace{root: workspace}).SyncAll(options.SourceDir)
 	}

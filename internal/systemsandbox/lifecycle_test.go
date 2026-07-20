@@ -115,6 +115,41 @@ esac
 	}
 }
 
+func TestRunLifecycleReportsReadyAfterCreateBeforeAttachedOutput(t *testing.T) {
+	bin := t.TempDir()
+	created := filepath.Join(bin, "created")
+	ready := filepath.Join(bin, "ready")
+	script := `#!/bin/sh
+case "$1" in
+  create) printf created > "` + created + `" ;;
+  start)
+    test -f "` + ready + `" || exit 9
+    printf recipe-output
+    ;;
+  rm) exit 0 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var stdout bytes.Buffer
+	options := lifecycleTestOptions(t)
+	options.Stdout = &stdout
+	options.Ready = func() error {
+		if _, err := os.Stat(created); err != nil {
+			return errors.New("container was not created before ready callback")
+		}
+		return os.WriteFile(ready, nil, 0o600)
+	}
+	if err := RunLifecycle(t.Context(), Docker, options); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "recipe-output" {
+		t.Fatalf("attached stdout = %q, want recipe output", stdout.String())
+	}
+}
+
 func TestRunLifecycleFinishesRegistrationAndRemovesBeforeReturningCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var removed bool

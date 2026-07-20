@@ -88,8 +88,8 @@ shadowtree --check --shell <recipe> [args...]
   relevant detail.
 - Use `--check` to validate resolution and references without executing recipe
   commands; add `--shell` only when expanded `sh` or `bash` syntax matters.
-- Use `--verbose` during execution when workspace paths and stage boundaries
-  are useful diagnostics.
+- Use `--verbose` during execution when detailed setup, workspace paths, and
+  stage boundaries are useful diagnostics.
 
 ## Respect Persistence
 

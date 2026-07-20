@@ -1,6 +1,7 @@
 package systemsandbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -511,23 +512,56 @@ func TestBuildImagesFailureDoesNotPublishFinalAlias(t *testing.T) {
 	if publications != 0 {
 		t.Fatalf("final alias publications = %d, want 0", publications)
 	}
+	var diagnostic bytes.Buffer
+	if found, writeErr := WriteImageBuildDiagnostic(err, &diagnostic); writeErr != nil || !found {
+		t.Fatalf("WriteImageBuildDiagnostic() found/error = %v/%v, want true/nil", found, writeErr)
+	}
+	if diagnostic.String() != "build failed" {
+		t.Fatalf("build diagnostic = %q, want %q", diagnostic.String(), "build failed")
+	}
 }
 
-func TestBuildImagesPropagatesStreamingBuildCancellation(t *testing.T) {
+func TestBuildImagesPreservesCompleteLongFailureDiagnostic(t *testing.T) {
 	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := imageRuntimeFake(map[string]map[string]string{}, nil, nil, nil)
-	stream := func(ctx context.Context, _ io.Writer, _ string, _ ...string) ([]byte, error) {
-		<-ctx.Done()
-		return nil, ctx.Err()
+	want := strings.Repeat("build output\n", 7000) + "actionable failure at end\n"
+	run := imageRuntimeFake(map[string]map[string]string{}, nil, nil, errors.New(want))
+	err = buildImagesForTest(t.Context(), Docker, plan, nil, run)
+	if err == nil {
+		t.Fatal("buildImages() error = nil, want failure")
+	}
+	var diagnostic bytes.Buffer
+	if found, writeErr := WriteImageBuildDiagnostic(err, &diagnostic); writeErr != nil || !found {
+		t.Fatalf("WriteImageBuildDiagnostic() found/error = %v/%v, want true/nil", found, writeErr)
+	}
+	if diagnostic.String() != want {
+		t.Fatalf("diagnostic length/tail = %d/%q, want %d/%q", diagnostic.Len(), diagnostic.String()[max(0, diagnostic.Len()-32):], len(want), want[len(want)-32:])
+	}
+}
+
+func TestBuildImagesPropagatesBuildCancellationWithoutDiagnostic(t *testing.T) {
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "build" {
+			<-ctx.Done()
+			return []byte("partial output"), ctx.Err()
+		}
+		return imageRuntimeFake(map[string]map[string]string{}, nil, nil, nil)(ctx, "", args...)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err = buildImagesWith(ctx, Docker, plan, nil, run, stream)
+	err = buildImagesWith(ctx, Docker, plan, ImageBuildOptions{}, run, bufferedTestBuildRunner(run))
 	if !errors.Is(err, context.Canceled) && (err == nil || !strings.Contains(err.Error(), context.Canceled.Error())) {
 		t.Fatalf("buildImages error = %v, want cancellation", err)
+	}
+	var diagnostic bytes.Buffer
+	if found, writeErr := WriteImageBuildDiagnostic(err, &diagnostic); writeErr != nil || found {
+		t.Fatalf("WriteImageBuildDiagnostic() found/error = %v/%v, want false/nil", found, writeErr)
 	}
 }
 
@@ -594,14 +628,17 @@ func imageRuntimeFake(images map[string]map[string]string, builds, publications 
 }
 
 func buildImagesForTest(ctx context.Context, runtime RuntimeName, plan ImagePlan, progress io.Writer, run commandRunner) error {
-	stream := func(ctx context.Context, progress io.Writer, executable string, args ...string) ([]byte, error) {
+	return buildImagesWith(ctx, runtime, plan, ImageBuildOptions{Verbose: progress}, run, bufferedTestBuildRunner(run))
+}
+
+func bufferedTestBuildRunner(run commandRunner) buildCommandRunner {
+	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
 		output, err := run(ctx, executable, args...)
-		if len(output) > 0 && progress != nil {
-			_, _ = progress.Write(output)
+		if err == nil {
+			return nil, nil
 		}
 		return output, err
 	}
-	return buildImagesWith(ctx, runtime, plan, progress, run, stream)
 }
 
 func systemImageRecipe(t *testing.T, profile string, requirements recipe.Requirements) recipe.Resolved {

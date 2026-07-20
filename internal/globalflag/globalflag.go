@@ -46,7 +46,7 @@ var specs = []Spec{
 	{Name: Expanded, Help: "Print expanded scripts and resolved values", UsageHelp: "with --print, include expanded scripts and resolved values"},
 	{Name: Check, Help: "Validate resolved recipe without running", UsageHelp: "validate resolved recipe without running"},
 	{Name: Shell, Help: "Check expanded shell script syntax", UsageHelp: "with --check, parse expanded shell scripts"},
-	{Name: Verbose, Help: "Show workspace paths and command boundaries", UsageHelp: "show workspace paths and command boundaries"},
+	{Name: Verbose, Help: "Show detailed execution progress and command boundaries", UsageHelp: "show detailed execution progress and command boundaries"},
 	{Name: Help, Help: "Show help"},
 	{Name: Version, Help: "Show version"},
 }

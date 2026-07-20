@@ -3285,9 +3285,14 @@ esac`)
 	if err == nil || !strings.Contains(err.Error(), "system image build") {
 		t.Fatalf("Run() error = %v, want image-build boundary", err)
 	}
-	for _, want := range []string{"detecting system runtime docker", "selected system runtime docker"} {
+	for _, want := range []string{"Image ", "Failed"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+	for _, unwanted := range []string{"detecting system runtime", "selected system runtime"} {
+		if strings.Contains(stderr.String(), unwanted) {
+			t.Fatalf("stderr unexpectedly contains %q:\n%s", unwanted, stderr.String())
 		}
 	}
 	if called {
@@ -3400,13 +3405,15 @@ fi`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stage := range []string{"base", "toolchains", "system-packages", "recipe-packages", "dependencies"} {
-		if !strings.Contains(stderr.String(), "built "+stage+"\n") {
-			t.Fatalf("stderr missing build for %s:\n%s", stage, stderr.String())
+	for _, status := range []string{"Image ", "Setup toolchains", "Setup system packages", "Setup recipe packages", "Setup dependencies", "Setup build cache", "Setup workspace"} {
+		if !strings.Contains(stderr.String(), status) {
+			t.Fatalf("stderr missing status %q:\n%s", status, stderr.String())
 		}
 	}
-	if !strings.Contains(stderr.String(), "publishing recipe image alias") {
-		t.Fatalf("stderr missing final publication:\n%s", stderr.String())
+	for _, unwanted := range []string{"built base", "publishing recipe image alias", "creating system container", "cleaning system invocation"} {
+		if strings.Contains(stderr.String(), unwanted) {
+			t.Fatalf("stderr unexpectedly contains %q:\n%s", unwanted, stderr.String())
+		}
 	}
 	if !strings.Contains(stderr.String(), "lifecycle ran") {
 		t.Fatalf("stderr missing lifecycle execution:\n%s", stderr.String())
@@ -3508,7 +3515,7 @@ esac`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "selected system runtime docker") || strings.Contains(stderr.String(), "image stage") {
+	if strings.Contains(stderr.String(), "selected system runtime docker") || strings.Contains(stderr.String(), "image stage") {
 		t.Fatalf("check stderr = %q", stderr.String())
 	}
 }

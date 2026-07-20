@@ -39,9 +39,10 @@ against a private workspace mounted at the canonical checkout path. Nested
 references reuse that lifecycle, cancellation preserves `post`, and successful
 sync-out consumes the private workspace through the existing confinement rules.
 The system workspace excludes `.git`, retains Shadowtree configuration for
-cross-config references, and warns while omitting source paths unreadable by the
-invoking user. An omitted path that overlaps selected sync-out, or any omission
-combined with whole-workspace sync-out, fails before lifecycle execution.
+cross-config references, and omits source paths unreadable by the invoking user;
+`--verbose` reports each omission. An omitted path that overlaps selected
+sync-out, or any omission combined with whole-workspace sync-out, fails before
+lifecycle execution.
 Go `GOCACHE` and Rust workspace `target` use canonical-project-owned named
 volumes with complete compatibility labels; compatible recipes share within
 one checkout only. Inspection never mounts caches, and reset validates exact
@@ -148,10 +149,20 @@ shadowtree __complete zsh <words...>
 --expanded          with --print, include expanded scripts and resolved values
 --check             validate the resolved recipe without running
 --shell             with --check, parse expanded shell scripts
---verbose           show workspace and compact command boundaries
+--verbose           show detailed execution progress and command boundaries
 --help              show basic CLI help
 --version           print the version
 ```
+
+System-container preparation reports concise semantic stages through image,
+toolchain, package, dependency, build-cache, and private-workspace setup.
+Progress remains active through container creation and completes immediately
+before the attached recipe starts. Interactive stderr uses one transient
+progress line; redirected stderr uses newline-delimited stage names. Runtime
+build output is buffered and omitted after success. On failure, stderr receives
+a bounded diagnostic tail with an explicit marker if earlier output was
+discarded. Detailed runtime detection, cache, and container lifecycle messages
+require `--verbose`.
 
 Global flags are parsed before the command or recipe name. Arguments after the
 recipe name are passed to the recipe's main command.

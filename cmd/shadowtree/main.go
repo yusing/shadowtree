@@ -157,7 +157,7 @@ func run(ctx context.Context, args []string) error {
 			Action: action, Recipe: cacheRecipe, All: all, JSON: jsonOutput,
 			Recipes: resolvedSet, EnumSets: loaded.Config.EnumSets, ConfigEnv: loaded.Config.Env,
 			ConfigPath: loaded.Path, Profile: profile, SourceDir: mustGetwd(),
-			Stdout: os.Stdout, Stderr: os.Stderr,
+			Stdout: os.Stdout, Stderr: os.Stderr, Verbose: opts.verbose,
 		})
 	}
 	resolvedSet, loaded, profile, err := resolveSet(ctx, opts, true)

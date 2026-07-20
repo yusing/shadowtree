@@ -73,6 +73,21 @@ type stageLogger struct {
 	tee    bool
 }
 
+type diagnosticWriter struct {
+	output  io.Writer
+	written bool
+	last    byte
+}
+
+func (writer *diagnosticWriter) Write(data []byte) (int, error) {
+	n, err := writer.output.Write(data)
+	if n > 0 {
+		writer.written = true
+		writer.last = data[n-1]
+	}
+	return n, err
+}
+
 func (err ExitError) Error() string {
 	return fmt.Sprintf("command exited with status %d", err.Code)
 }
@@ -424,32 +439,67 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	if err := validateSystemHelperPlatform(runtime.GOOS, runtime.GOARCH, plan.Platform); err != nil {
 		return fmt.Errorf("recipe %q system lifecycle helper: %w", resolved.Name, err)
 	}
-	runtimeSelection, err := systemsandbox.Detect(ctx, progress)
+	verbose := io.Discard
+	statusOutput := progress
+	if options.Verbose {
+		verbose = progress
+		statusOutput = io.Discard
+	}
+	status := newSystemProgress(statusOutput)
+	if err := status.Start("Image " + plan.BaseImage); err != nil {
+		return errors.Join(fmt.Errorf("render system progress: %w", err), status.Fail())
+	}
+	fail := func(runErr error) error {
+		return errors.Join(runErr, status.Fail())
+	}
+	runtimeSelection, err := systemsandbox.Detect(ctx, verbose)
 	if err != nil {
-		return fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err)
+		return fail(fmt.Errorf("recipe %q system runtime detection: %w", resolved.Name, err))
 	}
 	runtimeName := runtimeSelection.Name
 	plan, err = systemsandbox.ApplyConfinementPolicy(plan, runtimeSelection.Confinement)
 	if err != nil {
-		return fmt.Errorf("recipe %q system cache identity: %w", resolved.Name, err)
+		return fail(fmt.Errorf("recipe %q system cache identity: %w", resolved.Name, err))
 	}
-	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, progress); err != nil {
-		return fmt.Errorf("recipe %q system image build: %w", resolved.Name, err)
+	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, systemsandbox.ImageBuildOptions{
+		Verbose: verbose,
+		Stage: func(stage systemsandbox.ImageStage) error {
+			return status.Stage(plan.BaseImage, stage)
+		},
+	}); err != nil {
+		runErr := fail(fmt.Errorf("recipe %q system image build: %w", resolved.Name, err))
+		diagnostic := diagnosticWriter{output: progress}
+		if found, writeErr := systemsandbox.WriteImageBuildDiagnostic(err, &diagnostic); writeErr != nil {
+			return errors.Join(runErr, fmt.Errorf("write container build diagnostic: %w", writeErr))
+		} else if found && diagnostic.written {
+			if diagnostic.last != '\n' {
+				if _, writeErr := fmt.Fprintln(progress); writeErr != nil {
+					return errors.Join(runErr, fmt.Errorf("finish container build diagnostic: %w", writeErr))
+				}
+			}
+		}
+		return runErr
 	}
-	releaseCaches, err := systemsandbox.AcquireCacheExecutionLocks(ctx, plan.Caches, progress)
+	if err := status.Start("Setup build cache"); err != nil {
+		return fail(fmt.Errorf("render system progress: %w", err))
+	}
+	releaseCaches, err := systemsandbox.AcquireCacheExecutionLocks(ctx, plan.Caches, verbose)
 	if err != nil {
-		return fmt.Errorf("recipe %q system cache lock: %w", resolved.Name, err)
+		return fail(fmt.Errorf("recipe %q system cache lock: %w", resolved.Name, err))
 	}
 	defer releaseCaches()
-	if err := systemsandbox.PrepareCaches(ctx, runtimeName, plan.Caches, plan.FinalTag, progress); err != nil {
-		return fmt.Errorf("recipe %q system caches: %w", resolved.Name, err)
+	if err := systemsandbox.PrepareCaches(ctx, runtimeName, plan.Caches, plan.FinalTag, verbose); err != nil {
+		return fail(fmt.Errorf("recipe %q system caches: %w", resolved.Name, err))
 	}
-	if err := systemsandbox.WaitForCacheAvailability(ctx, runtimeName, plan.Caches, progress); err != nil {
-		return fmt.Errorf("recipe %q system cache availability: %w", resolved.Name, err)
+	if err := systemsandbox.WaitForCacheAvailability(ctx, runtimeName, plan.Caches, verbose); err != nil {
+		return fail(fmt.Errorf("recipe %q system cache availability: %w", resolved.Name, err))
+	}
+	if err := status.Start("Setup workspace"); err != nil {
+		return fail(fmt.Errorf("render system progress: %w", err))
 	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
-	return runSystemLifecycle(ctx, runtimeName, runtimeSelection.Confinement, plan, options, stdin, stdout, progress)
+	return runSystemLifecycle(ctx, runtimeName, runtimeSelection.Confinement, plan, options, stdin, stdout, progress, verbose, status)
 }
 
 func rebaseSystemConfigPath(configPath, source, canonicalSource string) (string, error) {

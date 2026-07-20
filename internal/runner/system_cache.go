@@ -29,6 +29,7 @@ type SystemCacheOptions struct {
 	SourceDir   string
 	Stdout      io.Writer
 	Stderr      io.Writer
+	Verbose     bool
 	Confinement systemsandbox.ConfinementPolicy
 }
 
@@ -44,7 +45,11 @@ func SystemCache(ctx context.Context, options SystemCacheOptions) error {
 	if err != nil {
 		return fmt.Errorf("canonical cache project: %w", err)
 	}
-	runtimeSelection, err := systemsandbox.Detect(ctx, options.Stderr)
+	detectionLog := io.Discard
+	if options.Verbose {
+		detectionLog = options.Stderr
+	}
+	runtimeSelection, err := systemsandbox.Detect(ctx, detectionLog)
 	if err != nil {
 		return err
 	}

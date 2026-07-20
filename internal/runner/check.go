@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -57,7 +58,11 @@ func validateSystemCheck(ctx context.Context, options Options) error {
 	if options.Resolved.SandboxMode != recipe.SandboxModeSystem {
 		return nil
 	}
-	if _, err := systemsandbox.Detect(ctx, options.Stderr); err != nil {
+	progress := io.Discard
+	if options.Verbose {
+		progress = options.Stderr
+	}
+	if _, err := systemsandbox.Detect(ctx, progress); err != nil {
 		return fmt.Errorf("recipe %q system runtime detection: %w", options.Resolved.Name, err)
 	}
 	request, err := resolvedSystemImageRequest(ctx, options)

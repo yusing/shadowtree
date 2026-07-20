@@ -36,10 +36,13 @@ const probeTimeout = 5 * time.Second
 const (
 	probeWaitDelay   = time.Second
 	probeOutputLimit = 64 << 10
+	buildOutputLimit = 4 << 20
 )
 
+const buildOutputTruncation = "shadowtree: earlier container build output omitted\n"
+
 type commandRunner func(context.Context, string, ...string) ([]byte, error)
-type streamingCommandRunner func(context.Context, io.Writer, string, ...string) ([]byte, error)
+type buildCommandRunner func(context.Context, string, ...string) ([]byte, error)
 
 type capabilityProbe struct {
 	phase           string
@@ -264,39 +267,69 @@ func directCommand(ctx context.Context, executable string, args ...string) ([]by
 	return output.buf.Bytes(), err
 }
 
-func directStreamingCommand(ctx context.Context, progress io.Writer, executable string, args ...string) ([]byte, error) {
+func bufferedBuildCommand(ctx context.Context, executable string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.WaitDelay = probeWaitDelay
-	output := commandOutput{progress: progress}
+	output := tailBuffer{limit: buildOutputLimit}
 	cmd.Stdout = &output
 	cmd.Stderr = &output
-	err := cmd.Run()
+	runErr := cmd.Run()
 	if cause := context.Cause(ctx); cause != nil {
-		return output.Bytes(), cause
+		return nil, cause
 	}
-	return output.Bytes(), err
-}
-
-type commandOutput struct {
-	mu       sync.Mutex
-	progress io.Writer
-	buf      boundedBuffer
-}
-
-func (output *commandOutput) Write(p []byte) (int, error) {
-	output.mu.Lock()
-	defer output.mu.Unlock()
-	_, _ = output.buf.Write(p)
-	if output.progress == nil {
-		return len(p), nil
+	if runErr != nil {
+		return output.Bytes(), runErr
 	}
-	return output.progress.Write(p)
+	return nil, nil
 }
 
-func (output *commandOutput) Bytes() []byte {
-	output.mu.Lock()
-	defer output.mu.Unlock()
-	return bytes.Clone(output.buf.buf.Bytes())
+type tailBuffer struct {
+	mu        sync.Mutex
+	buf       []byte
+	limit     int
+	start     int
+	truncated bool
+}
+
+func (buffer *tailBuffer) Write(data []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	written := len(data)
+	if buffer.limit <= 0 || len(data) == 0 {
+		return written, nil
+	}
+	if len(data) >= buffer.limit {
+		buffer.buf = append(buffer.buf[:0], data[len(data)-buffer.limit:]...)
+		buffer.start = 0
+		buffer.truncated = true
+		return written, nil
+	}
+	if available := buffer.limit - len(buffer.buf); available > 0 {
+		n := min(available, len(data))
+		buffer.buf = append(buffer.buf, data[:n]...)
+		data = data[n:]
+		if len(data) == 0 {
+			return written, nil
+		}
+	}
+	first := min(len(data), buffer.limit-buffer.start)
+	copy(buffer.buf[buffer.start:], data[:first])
+	copy(buffer.buf, data[first:])
+	buffer.start = (buffer.start + len(data)) % buffer.limit
+	buffer.truncated = true
+	return written, nil
+}
+
+func (buffer *tailBuffer) Bytes() []byte {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	if !buffer.truncated {
+		return bytes.Clone(buffer.buf)
+	}
+	output := make([]byte, 0, len(buildOutputTruncation)+len(buffer.buf))
+	output = append(output, buildOutputTruncation...)
+	output = append(output, buffer.buf[buffer.start:]...)
+	return append(output, buffer.buf[:buffer.start]...)
 }
 
 type boundedBuffer struct {

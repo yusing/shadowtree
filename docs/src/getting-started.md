@@ -78,9 +78,14 @@ shadowtree --check --shell test
 shadowtree --verbose build
 ```
 
-`--verbose` prints compact stage boundaries such as `== cmd: @build ==` before
-commands run. Multiline scripts are shown as `<script>`, so verbose headers do
-not dump script bodies.
+System-container setup normally prints concise image, toolchain, package,
+dependency, build-cache, and private-workspace progress. Progress remains active
+through container creation, until the attached recipe is ready to start.
+`--verbose` additionally prints detailed runtime setup and compact stage
+boundaries such as `== cmd: @build ==` before commands run. Multiline scripts
+are shown as `<script>`, so verbose headers do not dump script bodies. Successful
+container build output is suppressed; failures write a bounded diagnostic tail
+to stderr and mark when earlier output was omitted.
 
 Built-in Go workflow recipes normally run once. Select the recipe-specific
 aggregate plan explicitly:
