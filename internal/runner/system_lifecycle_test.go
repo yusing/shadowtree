@@ -132,12 +132,12 @@ func TestSystemHelperCopiesDependencySeedBeforeLifecycle(t *testing.T) {
 	}
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: resolved, SourceDir: source,
-		DependencySeeds: []systemsandbox.DependencySeed{{SourcePath: seed, TargetPath: ".", Provider: "npm"}},
+		DependencySeeds: []systemsandbox.DependencySeed{{SourcePath: seed, TargetPath: "dependencies", Provider: "npm"}},
 	}
 	if code := runSystemHelperPlan(t, plan); code != 0 {
 		t.Fatalf("SystemHelperMain code = %d", code)
 	}
-	assertFileContent(t, filepath.Join(source, "node_modules", "tool", "index.js"), "seed")
+	assertFileContent(t, filepath.Join(source, "dependencies", "node_modules", "tool", "index.js"), "seed")
 }
 
 func TestSystemHelperValidatesEveryDependencySeedBeforeCopying(t *testing.T) {
@@ -162,6 +162,55 @@ func TestSystemHelperValidatesEveryDependencySeedBeforeCopying(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(source, "first")); !os.IsNotExist(err) {
 		t.Fatalf("first seed was copied before full validation: %v", err)
+	}
+}
+
+func TestSystemHelperReplacesStaleDependencySeedTarget(t *testing.T) {
+	source := t.TempDir()
+	seed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(seed, "current"), []byte("current"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "node_modules", "stale"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("root", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := systemLifecyclePlan{Protocol: systemHelperProtocol, Resolved: resolved, SourceDir: source, DependencySeeds: []systemsandbox.DependencySeed{{SourcePath: seed, TargetPath: "node_modules", Provider: "npm"}}}
+	if code := runSystemHelperPlan(t, plan); code != 0 {
+		t.Fatalf("SystemHelperMain code = %d", code)
+	}
+	assertFileContent(t, filepath.Join(source, "node_modules", "current"), "current")
+	if _, err := os.Stat(filepath.Join(source, "node_modules", "stale")); !os.IsNotExist(err) {
+		t.Fatalf("stale dependency survived seed replacement: %v", err)
+	}
+}
+
+func TestSystemHelperRejectsSymlinkedDependencySeedTarget(t *testing.T) {
+	source := t.TempDir()
+	external := t.TempDir()
+	seed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(seed, "payload"), []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(source, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("root", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := systemLifecyclePlan{Protocol: systemHelperProtocol, Resolved: resolved, SourceDir: source, DependencySeeds: []systemsandbox.DependencySeed{{SourcePath: seed, TargetPath: "linked/node_modules", Provider: "npm"}}}
+	if code := runSystemHelperPlan(t, plan); code != 1 {
+		t.Fatalf("SystemHelperMain code = %d, want symlink rejection", code)
+	}
+	if _, err := os.Stat(filepath.Join(external, "node_modules")); !os.IsNotExist(err) {
+		t.Fatalf("dependency seed escaped through symlink: %v", err)
 	}
 }
 

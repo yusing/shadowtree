@@ -194,13 +194,24 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "create private home:", err)
 		return 1
 	}
-	if err := validateDependencySeeds(plan.DependencySeeds); err != nil {
+	if err := validateDependencySeeds(plan.DependencySeeds, plan.SourceDir); err != nil {
 		fmt.Fprintln(os.Stderr, "validate dependency seeds:", err)
 		return 1
 	}
+	workspaceRoot, err := os.OpenRoot(plan.SourceDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open dependency seed workspace:", err)
+		return 1
+	}
+	defer workspaceRoot.Close()
 	for _, seed := range plan.DependencySeeds {
-		target := filepath.Join(plan.SourceDir, filepath.FromSlash(seed.TargetPath))
-		if err := CopyTree(seed.SourcePath, target); err != nil {
+		if err := workspaceRoot.RemoveAll(filepath.ToSlash(seed.TargetPath)); err != nil {
+			fmt.Fprintf(os.Stderr, "clear dependency seed target %s: %v\n", seed.TargetPath, err)
+			return 1
+		}
+	}
+	for _, seed := range plan.DependencySeeds {
+		if err := copyTreeToRoot(seed.SourcePath, workspaceRoot, filepath.ToSlash(seed.TargetPath)); err != nil {
 			fmt.Fprintf(os.Stderr, "copy dependency seed %s to %s: %v\n", seed.Provider, seed.TargetPath, err)
 			return 1
 		}
@@ -235,9 +246,14 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 	return 1
 }
 
-func validateDependencySeeds(seeds []systemsandbox.DependencySeed) error {
+func validateDependencySeeds(seeds []systemsandbox.DependencySeed, workspace string) error {
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	for index, seed := range seeds {
-		if seed.Provider == "" || !filepath.IsAbs(seed.SourcePath) || !filepath.IsLocal(filepath.FromSlash(seed.TargetPath)) {
+		if seed.Provider == "" || !filepath.IsAbs(seed.SourcePath) || seed.TargetPath == "." || !filepath.IsLocal(filepath.FromSlash(seed.TargetPath)) {
 			return fmt.Errorf("seed %d has incomplete or unsafe ownership", index)
 		}
 		info, err := os.Stat(seed.SourcePath)
@@ -246,6 +262,27 @@ func validateDependencySeeds(seeds []systemsandbox.DependencySeed) error {
 		}
 		if !info.IsDir() {
 			return fmt.Errorf("%s source %s is not a directory", seed.Provider, seed.SourcePath)
+		}
+		target := filepath.Clean(filepath.FromSlash(seed.TargetPath))
+		var ancestors []string
+		for current := target; current != "."; current = filepath.Dir(current) {
+			ancestors = append(ancestors, filepath.ToSlash(current))
+		}
+		slices.Reverse(ancestors)
+		for _, current := range ancestors {
+			info, err := root.Lstat(current)
+			if errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("%s target %s: %w", seed.Provider, current, err)
+			}
+			if info.Mode().Type() == os.ModeSymlink {
+				return fmt.Errorf("%s target %s has a symlink component", seed.Provider, current)
+			}
+			if current != filepath.ToSlash(target) && !info.IsDir() {
+				return fmt.Errorf("%s target parent %s is not a directory", seed.Provider, current)
+			}
 		}
 		for prior := range index {
 			left, right := seeds[prior].TargetPath, seed.TargetPath
