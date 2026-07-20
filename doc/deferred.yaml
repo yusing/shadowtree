@@ -24,3 +24,7 @@ items:
     title: Manage immutable image retention and refresh
     reason: The container runtime owns immutable images and build cache; the first slice provides mutable project-cache inspection/reset but no hidden mutable-tag refresh or automatic image garbage collection.
     reconsider_when: "When measured disk pressure or stale-base incidents justify explicit image inspection, refresh, or retention behavior."
+  - id: DFR-008
+    title: Add constrained project-tooling image setup
+    reason: "Typed system packages, exact provider commands, lifecycle pre, and pinned base images cover current setup needs; arbitrary build commands would otherwise weaken stage ownership, context confinement, secret handling, and deterministic image identity."
+    reconsider_when: "When a concrete project needs expensive reusable tooling setup that cannot be expressed through a typed provider, lifecycle pre, or a pinned base image, and can declare a static command plus confined hashable inputs without secrets."

@@ -8,6 +8,7 @@ pjdoc:
   files:
     - system-sandbox.md
     - rust-profile.md
+    - toolchain-composition.md
 ---
 # Shadowtree specification
 
@@ -21,3 +22,5 @@ Rust profile requirements before beginning the system sandbox requirements.
 - [System sandbox requirements](system-sandbox.md)
 
 - [Rust profile requirements](rust-profile.md)
+
+- [Composable toolchain requirements](toolchain-composition.md)

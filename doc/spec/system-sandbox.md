@@ -47,20 +47,24 @@ probe a runtime. Static output reports `runtime: <not probed>`. Runtime-specific
 flags and result parsing remain inside one direct-argv adapter; Shadowtree does
 not construct shell commands.
 
-## REQ-SBOX-003 — Select profile-owned default images and tooling
+## REQ-SBOX-003 — Select a managed foundation and composed tooling
 
 An optional `[recipes.<name>.system].base_image` overrides the default and is
 valid only when effective `sandboxed = "system"`. Runtime arguments and
 `var_commands` cannot select image identity.
 
-Without an override, the effective profile selects a release-pinned, tested,
-non-`latest` slim image family:
+Without an override, system recipes use the managed release-pinned
+`debian:trixie-slim` foundation. The root recipe and every transitively
+referenced recipe contribute their supported profile toolchain to the canonical
+contract defined by REQ-TOOL-001 through REQ-TOOL-003. Toolchain setup never
+depends on one dominant profile image, root-profile precedence, or reference
+traversal order.
 
-- Go: supported Go directive version or documented release default;
-- Node with npm, pnpm, or Yarn: release-pinned slim Node;
-- Node with Bun: release-pinned slim Bun;
-- Rust: the exact/default toolchain resolved by REQ-RUST-002;
-- no profile: release-pinned minimal Ubuntu.
+An override combined with any toolchain or system package must select a
+supported pinned Debian or Ubuntu foundation. Other explicit bases fail during
+planning. Shadowtree performs complete provider setup on an accepted override
+and never assumes it already contains the root profile toolchain. A recipe with
+no toolchains or system packages may use another valid pinned base.
 
 Explicit profile selection wins over detection. Commands are never inspected to
 guess a profile or distribution. A locally present mutable base tag is not
@@ -80,9 +84,9 @@ is version-checked after setup.
 The final recipe image uses this lower-to-higher chain:
 
 ```text
-external profile/default image
+external managed or explicit foundation
 -> base
--> tooling
+-> composed tooling
 -> system packages
 -> recipe packages (`requires`)
 -> project dependencies (final recipe image)
@@ -110,8 +114,9 @@ shadowtree.local/stage/dependencies:<key>
 The recipe-scoped reference
 `shadowtree.local/<project-key>/<recipe-key>:<dependency-key>` aliases the exact
 dependency-stage image. Base/tooling and other immutable stages may be shared
-across compatible projects. Existing tags with absent or mismatched labels are
-collisions and are neither executed nor overwritten silently.
+across projects with the same exact canonical contract under REQ-TOOL-004.
+Existing tags with absent or mismatched labels are collisions and are neither
+executed nor overwritten silently.
 
 ## REQ-SBOX-005 — Give each immutable stage one owner
 
@@ -119,17 +124,19 @@ Stage responsibilities are:
 
 1. Base derives from the resolved external image and adds only versioned
    base-plan metadata. The invocation helper is not image content.
-2. Tooling installs profile/package-manager tools and shims under a managed
-   prefix. Its key omits project/recipe identity so compatible projects share
-   exact tooling such as one Corepack/pnpm image.
+2. Tooling installs every canonical profile/package-manager provider under
+   disjoint managed prefixes and publishes declared commands and environment.
+   Its key omits project/recipe/provenance identity so projects with the same
+   exact combination share the layer under REQ-TOOL-003 and REQ-TOOL-004.
 3. System packages installs normalized `requires.system_packages` using one
    supported distribution provider and owns ordinary OS/package-database
    changes.
 4. Recipe packages installs exact `requires.go_commands` and
    `requires.node_commands` collected from the transitive recipe-reference
    closure. Direct/optional command requirements are checked, not guessed.
-5. Project dependencies performs supported locked preparation without storing
-   a source snapshot and becomes the final recipe image.
+5. Project dependencies performs every contributed provider's supported locked
+   preparation without storing a source snapshot and becomes the final recipe
+   image under REQ-TOOL-005.
 
 Generated Containerfiles and minimal contexts are inspectable and form the
 single plan consumed by every runtime adapter. Build progress phases and runtime
@@ -153,12 +160,15 @@ because they can consume arbitrary source that cannot be safely pre-keyed. A
 recipe needing generation performs it explicitly in `pre` inside the ephemeral
 container.
 
-Dependency keys include the parent key, package-manager identity, platform,
-workdir, canonical manifest/lockfile contents, and every statically known
-workspace/config/patch input consumed by the manager. Ordinary project source
-is excluded. Go module and Rust registry/Git sources live outside the project
-mount. Node/Bun adapters must prove that seeded stores, links, workspace paths,
-and ownership remain valid after the temporary workspace mount.
+Each provider contributes a separately owned dependency plan and optional seed.
+Dependency keys include the parent key, provider and package-manager identity,
+platform, canonical owning config/workdir, canonical manifest/lockfile contents,
+and every statically known workspace/config/patch input consumed by the
+manager. Plans are validated and canonically ordered before rendering; root
+profile and traversal order do not select or discard them. Ordinary project
+source is excluded. Go module and Rust registry/Git sources live outside the
+project mount. Node/Bun adapters must prove that seeded stores, links, workspace
+paths, and ownership remain valid after the temporary workspace mount.
 
 Private credentials are invocation authority, never image inputs. A runtime
 adapter must prove non-persistent secret mounts before enabling private fetch.
@@ -242,8 +252,11 @@ symlink, mode, confinement, and missing-path-as-deletion rules. Failure and
 cancellation keep compatible cache data but export nothing.
 
 Nested references execute inside the top-level container, build no nested
-image, and perform no nested sync-out. Their image requirements join the
-top-level keys; incompatible backend/base contracts fail during resolution.
+image, and perform no nested sync-out. Their image requirements, toolchains,
+dependencies, seeds, and caches join the top-level canonical contract under
+REQ-TOOL-001 through REQ-TOOL-006. Conflicting exact versions, platforms, or
+provider ownership fail during resolution; different supported profile kinds
+do not.
 Aggregate execution treats each selected top-level recipe as its own container
 invocation while preserving existing aggregate failure and cancellation rules.
 
