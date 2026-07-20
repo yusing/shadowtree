@@ -68,10 +68,11 @@ forced kill only if cleanup does not finish. Sync-out runs only after complete
 success, while recipe logs are preserved after failures.
 
 Runtime detection reads the engine's current security state in addition to
-checking exact CLI capabilities. Rootless Podman uses `keep-id` so the
-configured process identity maps to the host UID/GID. Rootless Docker and
-nerdctl use mapped container root because host numeric IDs are not directly
-mapped. On SELinux-enabled engines, private relabelling applies only to the
+checking exact CLI capabilities. Rootless engines use mapped container root;
+for Podman, Shadowtree also verifies that the engine reports container root as
+mapped to the invoking host UID/GID and passes `--userns=host` so environment
+or engine defaults cannot replace that mapping. On SELinux-enabled engines,
+private relabelling applies only to the
 temporary workspace, helper, plan, and export copies; Shadowtree never
 relabels the source checkout. Missing mapping, relabelling, or parseable
 security metadata rejects that runtime without retrying weaker flags.

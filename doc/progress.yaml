@@ -95,4 +95,4 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
-    status: pending
+    status: implemented

@@ -73,10 +73,10 @@ type RuntimeSelection struct {
 // Detect probes supported runtimes in stable order and returns the first usable
 // direct-argv adapter. It creates no images, volumes, workspaces, or containers.
 func Detect(ctx context.Context, progress io.Writer) (RuntimeSelection, error) {
-	return detect(ctx, progress, RuntimeCandidates(), directCommand)
+	return detect(ctx, progress, RuntimeCandidates(), os.Getuid(), os.Getgid(), directCommand)
 }
 
-func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, run commandRunner) (RuntimeSelection, error) {
+func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, uid, gid int, run commandRunner) (RuntimeSelection, error) {
 	if progress == nil {
 		progress = io.Discard
 	}
@@ -96,8 +96,15 @@ func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, r
 			fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
 			continue
 		}
+		policy, err := confinementPolicy(candidate, security, uid, gid)
+		if err != nil {
+			failure := fmt.Sprintf("%s: rootless UID/GID mapping: %v", candidate, err)
+			failures = append(failures, failure)
+			fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
+			continue
+		}
 		fmt.Fprintf(progress, "shadowtree: selected system runtime %s\n", candidate)
-		return RuntimeSelection{Name: candidate, Confinement: confinementPolicy(candidate, security, os.Getuid(), os.Getgid())}, nil
+		return RuntimeSelection{Name: candidate, Confinement: policy}, nil
 	}
 	return RuntimeSelection{}, fmt.Errorf("no usable system runtime: %s", strings.Join(failures, "; "))
 }
@@ -140,8 +147,10 @@ func probe(ctx context.Context, name RuntimeName, run commandRunner) (runtimeSec
 }
 
 type runtimeSecurity struct {
-	rootless bool
-	selinux  bool
+	rootless                 bool
+	selinux                  bool
+	rootHostUID, rootHostGID int
+	hasRootMapping           bool
 }
 
 // ConfinementPolicy is the runtime-specific identity and bind-labelling policy
@@ -152,17 +161,19 @@ type ConfinementPolicy struct {
 	SELinux       bool
 }
 
-func confinementPolicy(runtime RuntimeName, security runtimeSecurity, uid, gid int) ConfinementPolicy {
+func confinementPolicy(runtime RuntimeName, security runtimeSecurity, uid, gid int) (ConfinementPolicy, error) {
 	policy := ConfinementPolicy{User: fmt.Sprintf("%d:%d", uid, gid), SELinux: security.selinux}
 	if !security.rootless {
-		return policy
+		return policy, nil
 	}
 	if runtime == Podman {
-		policy.UserNamespace = "keep-id"
-		return policy
+		if !security.hasRootMapping || security.rootHostUID != uid || security.rootHostGID != gid {
+			return ConfinementPolicy{}, fmt.Errorf("container root maps to host %d:%d, want %d:%d", security.rootHostUID, security.rootHostGID, uid, gid)
+		}
+		policy.UserNamespace = "host"
 	}
 	policy.User = "0:0"
-	return policy
+	return policy, nil
 }
 
 func inspectRuntimeSecurity(ctx context.Context, runtime RuntimeName, run commandRunner) (runtimeSecurity, error) {
@@ -194,6 +205,10 @@ func inspectRuntimeSecurity(ctx context.Context, runtime RuntimeName, run comman
 		}
 		var document struct {
 			Host struct {
+				IDMappings struct {
+					UIDMap []runtimeIDMap `json:"uidmap"`
+					GIDMap []runtimeIDMap `json:"gidmap"`
+				} `json:"idMappings"`
 				Security struct {
 					Rootless       *bool `json:"rootless"`
 					SELinuxEnabled *bool `json:"selinuxEnabled"`
@@ -206,10 +221,34 @@ func inspectRuntimeSecurity(ctx context.Context, runtime RuntimeName, run comman
 		if document.Host.Security.Rootless == nil || document.Host.Security.SELinuxEnabled == nil {
 			return runtimeSecurity{}, errors.New("runtime security inspection omitted rootless or SELinux state")
 		}
-		return runtimeSecurity{rootless: *document.Host.Security.Rootless, selinux: *document.Host.Security.SELinuxEnabled}, nil
+		security := runtimeSecurity{rootless: *document.Host.Security.Rootless, selinux: *document.Host.Security.SELinuxEnabled}
+		if security.rootless {
+			uid, uidOK := runtimeRootMapping(document.Host.IDMappings.UIDMap)
+			gid, gidOK := runtimeRootMapping(document.Host.IDMappings.GIDMap)
+			if !uidOK || !gidOK {
+				return runtimeSecurity{}, errors.New("runtime security inspection omitted rootless UID/GID mappings")
+			}
+			security.rootHostUID, security.rootHostGID, security.hasRootMapping = uid, gid, true
+		}
+		return security, nil
 	default:
 		return runtimeSecurity{}, fmt.Errorf("unsupported system runtime %q", runtime)
 	}
+}
+
+type runtimeIDMap struct {
+	ContainerID int `json:"container_id"`
+	HostID      int `json:"host_id"`
+	Size        int `json:"size"`
+}
+
+func runtimeRootMapping(mappings []runtimeIDMap) (int, bool) {
+	for _, mapping := range mappings {
+		if mapping.ContainerID == 0 && mapping.Size > 0 {
+			return mapping.HostID, true
+		}
+	}
+	return 0, false
 }
 
 func directCommand(ctx context.Context, executable string, args ...string) ([]byte, error) {
@@ -285,12 +324,27 @@ func helpOptions(output []byte) map[string]struct{} {
 }
 
 func commandFailure(err error, output []byte) string {
+	message := commandDiagnostic(output)
+	if message == "" {
+		return err.Error()
+	}
+	return fmt.Sprintf("%v: %s", err, message)
+}
+
+func commandDiagnostic(output []byte) string {
 	message := strings.TrimSpace(string(output))
 	if len(message) > 240 {
 		message = message[:240] + "..."
 	}
-	if message == "" {
-		return err.Error()
+	return strings.Join(strings.Fields(message), " ")
+}
+
+func redactedCommandDiagnostic(output []byte, values ...string) string {
+	message := string(output)
+	for _, value := range values {
+		if value != "" {
+			message = strings.ReplaceAll(message, value, "<redacted>")
+		}
 	}
-	return fmt.Sprintf("%v: %s", err, strings.Join(strings.Fields(message), " "))
+	return commandDiagnostic([]byte(message))
 }

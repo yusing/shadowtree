@@ -167,7 +167,31 @@ esac
 	}
 }
 
-func TestRunLifecycleAppliesRootlessUserNamespaceAndSELinuxRelabelling(t *testing.T) {
+func TestRunLifecyclePreservesCreateDiagnosticAndRecovery(t *testing.T) {
+	options := lifecycleTestOptions(t)
+	wantErr := errors.New("exit status 1")
+	err := runLifecycle(t.Context(), Nerdctl, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			return []byte("snapshotter rejected bind mount: " + strings.Join(args, " ")), wantErr
+		}
+		return nil, nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runLifecycle error = %v, want wrapped error", err)
+	}
+	for _, want := range []string{"runtime nerdctl create system container", "snapshotter rejected bind mount", "verify image, mount, identity, and runtime storage compatibility, then retry"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("runLifecycle error = %v, want %q", err, want)
+		}
+	}
+	for _, sensitive := range []string{options.Image, options.Platform, options.WorkspaceHost, options.WorkspacePath, options.HelperHost, options.PlanHost, options.ExportHost, options.Confinement.User} {
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatalf("runLifecycle error exposed %q: %v", sensitive, err)
+		}
+	}
+}
+
+func TestRunLifecycleAppliesMappedRootAndSELinuxRelabelling(t *testing.T) {
 	bin := t.TempDir()
 	argsPath := filepath.Join(bin, "create-args")
 	script := `#!/bin/sh
@@ -182,7 +206,7 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	options := lifecycleTestOptions(t)
-	options.Confinement = ConfinementPolicy{User: "1000:998", UserNamespace: "keep-id", SELinux: true}
+	options.Confinement = ConfinementPolicy{User: "0:0", UserNamespace: "host", SELinux: true}
 	if err := RunLifecycle(t.Context(), Podman, options); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +216,7 @@ esac
 	}
 	arguments := string(data)
 	for _, want := range []string{
-		"--user 1000:998 --mount type=tmpfs,dst=/tmp --userns keep-id",
+		"--user 0:0 --mount type=tmpfs,dst=/tmp --userns host",
 		"--volume " + options.WorkspaceHost + ":" + options.WorkspacePath + ":Z",
 		"--volume " + options.HelperHost + ":/opt/shadowtree/helper:ro,Z",
 	} {

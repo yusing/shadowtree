@@ -54,7 +54,7 @@ func (write callbackWriter) Write(p []byte) (int, error) {
 func TestDetectUsesStableOrderAndContinuesAfterUnusableRuntime(t *testing.T) {
 	var calls []string
 	var progress bytes.Buffer
-	selected, err := detect(t.Context(), &progress, RuntimeCandidates(), func(_ context.Context, executable string, args ...string) ([]byte, error) {
+	selected, err := detect(t.Context(), &progress, RuntimeCandidates(), 1000, 998, func(_ context.Context, executable string, args ...string) ([]byte, error) {
 		calls = append(calls, executable+" "+strings.Join(args, " "))
 		if executable == string(Docker) {
 			return []byte("daemon unavailable"), errors.New("exit status 1")
@@ -81,7 +81,7 @@ func TestDetectUsesStableOrderAndContinuesAfterUnusableRuntime(t *testing.T) {
 }
 
 func TestDetectReportsEveryCandidateFailure(t *testing.T) {
-	_, err := detect(t.Context(), io.Discard, RuntimeCandidates(), func(_ context.Context, executable string, _ ...string) ([]byte, error) {
+	_, err := detect(t.Context(), io.Discard, RuntimeCandidates(), 1000, 998, func(_ context.Context, executable string, _ ...string) ([]byte, error) {
 		return []byte("cannot reach engine"), fmt.Errorf("%s failed", executable)
 	})
 	if err == nil {
@@ -94,6 +94,30 @@ func TestDetectReportsEveryCandidateFailure(t *testing.T) {
 	}
 }
 
+func TestDetectDoesNotAnnounceRuntimeRejectedByConfinementPolicy(t *testing.T) {
+	var progress bytes.Buffer
+	selected, err := detect(t.Context(), &progress, []RuntimeName{Podman, Nerdctl}, 1000, 998, func(_ context.Context, executable string, args ...string) ([]byte, error) {
+		if executable == string(Podman) && slices.Equal(args, []string{"info", "--format", "json"}) {
+			return []byte(`{"host":{"idMappings":{"uidmap":[{"container_id":0,"host_id":1001,"size":1}],"gidmap":[{"container_id":0,"host_id":998,"size":1}]},"security":{"rootless":true,"selinuxEnabled":false}}}`), nil
+		}
+		return successfulProbeOutput(args), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Name != Nerdctl {
+		t.Fatalf("runtime = %q, want %q", selected.Name, Nerdctl)
+	}
+	if strings.Contains(progress.String(), "selected system runtime podman") {
+		t.Fatalf("progress announced rejected runtime:\n%s", progress.String())
+	}
+	for _, want := range []string{"system runtime rejected: podman: rootless UID/GID mapping", "selected system runtime nerdctl"} {
+		if !strings.Contains(progress.String(), want) {
+			t.Fatalf("progress missing %q:\n%s", want, progress.String())
+		}
+	}
+}
+
 func TestResolveConfinementPolicyHandlesRootlessMappingsAndSELinux(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -102,9 +126,9 @@ func TestResolveConfinementPolicyHandlesRootlessMappingsAndSELinux(t *testing.T)
 		want     ConfinementPolicy
 	}{
 		{
-			name: "rootless Podman keeps host identity", runtime: Podman,
-			security: runtimeSecurity{rootless: true},
-			want:     ConfinementPolicy{User: "1000:998", UserNamespace: "keep-id"},
+			name: "rootless Podman uses validated mapped root", runtime: Podman,
+			security: runtimeSecurity{rootless: true, rootHostUID: 1000, rootHostGID: 998, hasRootMapping: true},
+			want:     ConfinementPolicy{User: "0:0", UserNamespace: "host"},
 		},
 		{
 			name: "rootless Docker uses mapped root and private relabelling", runtime: Docker,
@@ -117,7 +141,10 @@ func TestResolveConfinementPolicyHandlesRootlessMappingsAndSELinux(t *testing.T)
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			policy := confinementPolicy(test.runtime, test.security, 1000, 998)
+			policy, err := confinementPolicy(test.runtime, test.security, 1000, 998)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if policy != test.want {
 				t.Fatalf("policy = %#v, want %#v", policy, test.want)
 			}
@@ -142,6 +169,25 @@ func TestRuntimeSecurityInspectionRejectsIncompletePodmanState(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "omitted rootless or SELinux state") {
 		t.Fatalf("inspectRuntimeSecurity error = %v, want incomplete-state rejection", err)
+	}
+}
+
+func TestRuntimeSecurityInspectionParsesRootlessPodmanMappings(t *testing.T) {
+	security, err := inspectRuntimeSecurity(t.Context(), Podman, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte(`{"host":{"idMappings":{"uidmap":[{"container_id":0,"host_id":1000,"size":1}],"gidmap":[{"container_id":0,"host_id":998,"size":1}]},"security":{"rootless":true,"selinuxEnabled":false}}}`), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !security.rootless || !security.hasRootMapping || security.rootHostUID != 1000 || security.rootHostGID != 998 {
+		t.Fatalf("runtime security = %#v", security)
+	}
+}
+
+func TestConfinementPolicyRejectsUnexpectedPodmanRootMapping(t *testing.T) {
+	_, err := confinementPolicy(Podman, runtimeSecurity{rootless: true, rootHostUID: 1001, rootHostGID: 998, hasRootMapping: true}, 1000, 998)
+	if err == nil || !strings.Contains(err.Error(), "want 1000:998") {
+		t.Fatalf("confinementPolicy error = %v, want mapping rejection", err)
 	}
 }
 
@@ -174,7 +220,7 @@ func TestRuntimeProbeRequiresOnlyApplicableConfinementFlags(t *testing.T) {
 		runtime       RuntimeName
 		security      []byte
 	}{
-		{name: "rootless Podman user namespace", missing: "--userns", runtime: Podman, security: []byte(`{"host":{"security":{"rootless":true,"selinuxEnabled":false}}}`)},
+		{name: "rootless Podman user namespace", missing: "--userns", runtime: Podman, security: []byte(`{"host":{"idMappings":{"uidmap":[{"container_id":0,"host_id":1000,"size":1}],"gidmap":[{"container_id":0,"host_id":998,"size":1}]},"security":{"rootless":true,"selinuxEnabled":false}}}`)},
 		{name: "SELinux private volume relabelling", missing: "--volume", runtime: Docker, security: []byte(`["name=selinux"]`)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -209,7 +255,7 @@ func TestDetectPropagatesCancellationWithoutTryingLaterCandidates(t *testing.T) 
 	ctx, cancel := context.WithCancelCause(t.Context())
 	want := errors.New("stop detection")
 	var calls int
-	_, err := detect(ctx, io.Discard, []RuntimeName{Docker, Podman}, func(context.Context, string, ...string) ([]byte, error) {
+	_, err := detect(ctx, io.Discard, []RuntimeName{Docker, Podman}, 1000, 998, func(context.Context, string, ...string) ([]byte, error) {
 		calls++
 		cancel(want)
 		return nil, context.Canceled
@@ -269,7 +315,7 @@ func successfulProbeOutput(args []string) []byte {
 		return []byte("[]")
 	}
 	if slices.Equal(args, []string{"info", "--format", "json"}) {
-		return []byte(`{"host":{"security":{"rootless":false,"selinuxEnabled":false}}}`)
+		return []byte(`{"host":{"idMappings":{"uidmap":[{"container_id":0,"host_id":1000,"size":1}],"gidmap":[{"container_id":0,"host_id":998,"size":1}]},"security":{"rootless":false,"selinuxEnabled":false}}}`)
 	}
 	if slices.Equal(args, []string{"start", "--help"}) {
 		return []byte("--attach --interactive")

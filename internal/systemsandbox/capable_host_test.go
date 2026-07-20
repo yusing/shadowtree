@@ -28,7 +28,10 @@ func TestCapableHostRuntimeConfinement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("probe %s: %v", runtimeName, err)
 	}
-	policy := confinementPolicy(runtimeName, security, os.Getuid(), os.Getgid())
+	policy, err := confinementPolicy(runtimeName, security, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	workspace := t.TempDir()
 	invocation := t.TempDir()

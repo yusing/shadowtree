@@ -36,8 +36,9 @@ Go `GOCACHE` and Rust workspace `target` use canonical-project-owned named
 volumes with complete compatibility labels; compatible recipes share within
 one checkout only. Inspection never mounts caches, and reset validates exact
 ownership and active use before removing only current-project volumes.
-Rootless Podman uses explicit keep-ID mapping; rootless Docker/nerdctl use
-their mapped root identity. SELinux-enabled engines privately relabel only
+Rootless engines use their mapped root identity; Podman's reported container
+root-to-host UID/GID mapping must match the invoking user and is bound to an
+explicit host namespace mode. SELinux-enabled engines privately relabel only
 Shadowtree-owned temporary bind sources. Missing or malformed security
 capability rejects the runtime before mutable execution state is created.
 

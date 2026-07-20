@@ -48,7 +48,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	if options.Image == "" || options.Platform == "" || options.Confinement.User == "" {
 		return errors.New("system lifecycle requires image, platform, and user identity")
 	}
-	if options.Confinement.UserNamespace != "" && options.Confinement.UserNamespace != "keep-id" {
+	if options.Confinement.UserNamespace != "" && options.Confinement.UserNamespace != "host" {
 		return fmt.Errorf("unsupported system lifecycle user namespace %q", options.Confinement.UserNamespace)
 	}
 	name, err := lifecycleContainerName()
@@ -92,7 +92,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 		fmt.Fprintln(options.Progress, "shadowtree: creating system container")
 	}
 	createCtx, cancelCreate := context.WithTimeout(context.WithoutCancel(ctx), lifecycleCreateTimeout)
-	_, err = control(createCtx, string(runtime), createArgs...)
+	createOutput, err := control(createCtx, string(runtime), createArgs...)
 	cancelCreate()
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
@@ -101,7 +101,18 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 		if cause := context.Cause(ctx); cause != nil {
 			return cause
 		}
-		return fmt.Errorf("create system container: %w", err)
+		redactions := []string{
+			name, options.Image, options.Platform, options.WorkspaceHost, options.WorkspacePath,
+			options.HelperHost, options.PlanHost, options.ExportHost, options.Confinement.User,
+			options.Confinement.UserNamespace,
+		}
+		for _, cache := range options.Caches {
+			redactions = append(redactions, cache.Name, cache.MountPath)
+		}
+		if output := redactedCommandDiagnostic(createOutput, redactions...); output != "" {
+			return fmt.Errorf("runtime %s create system container: %s; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, output, err)
+		}
+		return fmt.Errorf("runtime %s create system container; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, err)
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)

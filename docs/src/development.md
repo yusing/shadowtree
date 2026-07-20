@@ -31,9 +31,9 @@ for Docker, Podman, and nerdctl with a small Linux image that provides
 `/bin/sh`, `id`, and `tr`:
 
 ```sh
-SHADOWTREE_CAPABLE_RUNTIME=docker SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
-SHADOWTREE_CAPABLE_RUNTIME=podman SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
-SHADOWTREE_CAPABLE_RUNTIME=nerdctl SHADOWTREE_CAPABLE_IMAGE=busybox:1.37.0 go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -v
+go run ./cmd/shadowtree capable-host runtime=docker
+go run ./cmd/shadowtree capable-host runtime=podman
+go run ./cmd/shadowtree capable-host runtime=nerdctl
 ```
 
 Do not mark the multi-engine confinement gate complete from mocked adapters or
