@@ -19,6 +19,7 @@ import (
 const (
 	SystemHelperCommand  = "__shadowtree_system_helper"
 	systemHelperProtocol = 1
+	systemDefaultLocale  = "C.UTF-8"
 )
 
 type systemLifecyclePlan struct {
@@ -127,16 +128,7 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	if err := copyRegularFile(executable, helper, 0o500); err != nil {
 		return fail(fmt.Errorf("copy lifecycle helper: %w", err))
 	}
-	environment := envListMap(os.Environ())
-	for _, name := range []string{"PATH", "HOME", "TMPDIR"} {
-		delete(environment, name)
-	}
-	maps.Copy(environment, map[string]string{"HOME": "/tmp/shadowtree-home", "TMPDIR": "/tmp"})
-	maps.Copy(environment, options.Resolved.GlobalEnv)
-	maps.Copy(environment, options.Resolved.Recipe.Env)
-	for _, cache := range image.Caches {
-		maps.Copy(environment, cache.Environment)
-	}
+	environment := systemLifecycleEnvironment(os.Environ(), options.Resolved, image.Caches)
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: options.Resolved, Recipes: options.Recipes,
 		EnumSets: options.EnumSets, ConfigEnv: options.ConfigEnv, SourceDir: options.SourceDir,
@@ -153,6 +145,41 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 		return fail(fmt.Errorf("write lifecycle plan: %w", err))
 	}
 	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath, skipped: skipped}, nil
+}
+
+func systemLifecycleEnvironment(host []string, resolved recipe.Resolved, caches []systemsandbox.CachePlan) map[string]string {
+	environment := envListMap(host)
+	for name := range environment {
+		if name == "PATH" || name == "HOME" || name == "TMPDIR" || systemLocaleEnvironmentName(name) {
+			delete(environment, name)
+		}
+	}
+	maps.Copy(environment, map[string]string{
+		"HOME":   "/tmp/shadowtree-home",
+		"TMPDIR": "/tmp",
+		"LANG":   systemDefaultLocale,
+	})
+	maps.Copy(environment, resolved.GlobalEnv)
+	maps.Copy(environment, resolved.Recipe.Env)
+	for _, cache := range caches {
+		maps.Copy(environment, cache.Environment)
+	}
+	return environment
+}
+
+func systemRuntimeEnvironment(runtime []string, planned map[string]string) []string {
+	environment := envListMap(runtime)
+	for name := range environment {
+		if systemLocaleEnvironmentName(name) {
+			delete(environment, name)
+		}
+	}
+	maps.Copy(environment, planned)
+	return envMapList(environment)
+}
+
+func systemLocaleEnvironmentName(name string) bool {
+	return name == "LANG" || name == "LANGUAGE" || strings.HasPrefix(name, "LC_")
 }
 
 func validateSkippedSystemPaths(skipped, syncOut []string, syncOutAll bool) error {
@@ -257,7 +284,7 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 			return 1
 		}
 	}
-	environment := mergedEnv(os.Environ(), plan.Environment)
+	environment := systemRuntimeEnvironment(os.Environ(), plan.Environment)
 	options := Options{
 		Resolved: plan.Resolved, Recipes: plan.Recipes, EnumSets: plan.EnumSets,
 		ConfigEnv: plan.ConfigEnv, SourceDir: plan.SourceDir, Stdin: os.Stdin,

@@ -148,6 +148,9 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   distribution packages through `requires.system_packages`.
 - System-mode `pre`, `cmd`, nested references, and `post` share one ephemeral
   container; nested references do not perform nested sync-out.
+- System mode defaults to `LANG=C.UTF-8` instead of inheriting host locale
+  variables. Set `env.LANG` or an `LC_*` value explicitly only when the selected
+  base provides that locale.
 - Go and Rust system recipes receive provider-owned project caches
   automatically; do not add arbitrary host cache mounts or split compatible
   caches by recipe name, command, ordinary arguments, or lockfile content.

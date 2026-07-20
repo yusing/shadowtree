@@ -76,6 +76,85 @@ esac`)
 	}
 }
 
+func TestSystemLifecycleEnvironmentUsesDeterministicLocaleUnlessExplicitlyOverridden(t *testing.T) {
+	host := []string{
+		"PATH=/host/bin",
+		"HOME=/host/home",
+		"TMPDIR=/host/tmp",
+		"LANG=zh_HK.UTF-8",
+		"LANGUAGE=zh_HK:zh",
+		"LC_ALL=en_US.UTF-8",
+		"LC_TIME=de_DE.UTF-8",
+		"LC_FUTURE=malformed locale value",
+		"LOCAL_SETTING=preserved",
+		"XLC_ALL=preserved",
+	}
+
+	environment := systemLifecycleEnvironment(host, recipe.Resolved{}, nil)
+	for _, name := range []string{"LANGUAGE", "LC_ALL", "LC_TIME", "LC_FUTURE"} {
+		if _, ok := environment[name]; ok {
+			t.Errorf("inherited %s was preserved: %#v", name, environment)
+		}
+	}
+	for name, want := range map[string]string{
+		"LANG":          systemDefaultLocale,
+		"HOME":          "/tmp/shadowtree-home",
+		"TMPDIR":        "/tmp",
+		"LOCAL_SETTING": "preserved",
+		"XLC_ALL":       "preserved",
+	} {
+		if got := environment[name]; got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if _, ok := environment["PATH"]; ok {
+		t.Fatalf("host PATH was preserved: %#v", environment)
+	}
+
+	resolved := recipe.Resolved{
+		GlobalEnv: map[string]string{"LANG": "de_DE.UTF-8", "LC_TIME": "fr_FR.UTF-8"},
+		Recipe:    recipe.Recipe{Env: map[string]string{"LANG": "ja_JP.UTF-8", "LC_NUMERIC": "ar_EG.UTF-8"}},
+	}
+	caches := []systemsandbox.CachePlan{{Environment: map[string]string{"GOCACHE": "/opt/shadowtree/cache/go-build"}}}
+	environment = systemLifecycleEnvironment(host, resolved, caches)
+	for name, want := range map[string]string{
+		"LANG":       "ja_JP.UTF-8",
+		"LC_TIME":    "fr_FR.UTF-8",
+		"LC_NUMERIC": "ar_EG.UTF-8",
+		"GOCACHE":    "/opt/shadowtree/cache/go-build",
+	} {
+		if got := environment[name]; got != want {
+			t.Errorf("explicit %s = %q, want %q", name, got, want)
+		}
+	}
+
+	runtime := []string{
+		"PATH=/opt/shadowtree/bin:/usr/bin",
+		"COREPACK_HOME=/opt/shadowtree/corepack",
+		"LANG=base-image-locale",
+		"LC_ALL=base-image-locale",
+		"LC_FUTURE=base-image-locale",
+	}
+	merged := envListMap(systemRuntimeEnvironment(runtime, environment))
+	for name, want := range map[string]string{
+		"PATH":          "/opt/shadowtree/bin:/usr/bin",
+		"COREPACK_HOME": "/opt/shadowtree/corepack",
+		"LANG":          "ja_JP.UTF-8",
+		"LC_TIME":       "fr_FR.UTF-8",
+		"LC_NUMERIC":    "ar_EG.UTF-8",
+		"GOCACHE":       "/opt/shadowtree/cache/go-build",
+	} {
+		if got := merged[name]; got != want {
+			t.Errorf("runtime %s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"LC_ALL", "LC_FUTURE"} {
+		if _, ok := merged[name]; ok {
+			t.Errorf("base image %s was preserved: %#v", name, merged)
+		}
+	}
+}
+
 func TestCopySystemWorkspaceTreePreservesConfigsAndReadableFiles(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can read mode-000 files")

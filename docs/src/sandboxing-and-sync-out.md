@@ -90,6 +90,11 @@ otherwise. Cancellation sends `TERM` so `post` can run, followed by a bounded
 forced kill only if cleanup does not finish. Sync-out runs only after complete
 success, while recipe logs are preserved after failures.
 
+System lifecycles do not inherit host locale selections that may be absent from
+the slim foundation. Shadowtree removes inherited `LANG`, `LANGUAGE`, and
+`LC_*`, then defaults to `LANG=C.UTF-8`. Explicit global or recipe `env` values
+are applied afterward and may intentionally select another installed locale.
+
 The system workspace excludes `.git` but retains `.shadowtree.toml` and
 included Shadowtree configuration so cross-config recipe references can resolve
 inside the container. Source paths that the invoking user cannot read are

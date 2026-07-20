@@ -245,6 +245,12 @@ failure, recipe-reference, aggregate, and sync-out behavior. `post` runs after
 pre/main failure or initial cancellation; the first pre/main failure is
 preserved unless only post fails; sync-out occurs only after complete success.
 
+The lifecycle environment removes inherited `LANG`, `LANGUAGE`, and every
+`LC_*` variable before defaulting to `LANG=C.UTF-8`. Resolved global and recipe
+environment values apply afterward, so an explicit locale remains
+authoritative. This keeps the managed slim foundation deterministic without
+assuming that a host-specific compiled locale exists in the image.
+
 Cache-backed paths such as Cargo `target` are nested volume mounts and may be
 invisible in the host copy. Before successful container exit, the helper exports
 only selected sync-out paths intersecting cache mounts into a private ordinary
@@ -261,10 +267,13 @@ do not.
 Aggregate execution treats each selected top-level recipe as its own container
 invocation while preserving existing aggregate failure and cancellation rules.
 
-Progress uses stderr and reports runtime detection, base resolution, each stage
-lookup/build/reuse, cache resolution/wait, container execution, export, sync,
-and cleanup. Redirected output is newline-delimited and never depends on
-transient terminal rendering.
+Default progress uses stderr and exposes only the semantic image, tooling,
+package, dependency, cache, and workspace phases. Interactive stderr uses one
+transient animated line; redirected stderr emits one newline-delimited line per
+phase. Successful runtime build output is discarded, while failed build output
+is replayed to stderr before the error. Detailed runtime detection, stage
+lookup/build/reuse, cache, container, export, sync, and cleanup diagnostics
+require `--verbose`.
 
 ## REQ-SBOX-010 — Inspect and reset project caches clearly
 

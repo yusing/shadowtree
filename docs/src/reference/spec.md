@@ -38,6 +38,9 @@ One ephemeral read-only-root container runs the complete resolved lifecycle
 against a private workspace mounted at the canonical checkout path. Nested
 references reuse that lifecycle, cancellation preserves `post`, and successful
 sync-out consumes the private workspace through the existing confinement rules.
+Inherited host locale variables are removed and system execution defaults to
+`LANG=C.UTF-8`; explicit global or recipe environment values still override the
+default.
 The system workspace excludes `.git`, retains Shadowtree configuration for
 cross-config references, and omits source paths unreadable by the invoking user;
 `--verbose` reports each omission. An omitted path that overlaps selected

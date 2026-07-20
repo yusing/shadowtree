@@ -112,8 +112,11 @@ instructions. The base stage already provides `ca-certificates`, `curl`,
 
 Execution runs the complete lifecycle in one ephemeral container against a
 private copied workspace. Nested references do not create nested images or
-containers. Expect `post` on initial cancellation and sync-out only after full
-success, with lifecycle and cleanup progress on stderr.
+containers. Inherited host locale variables are replaced by `LANG=C.UTF-8`;
+explicit global or recipe environment values still win. Expect `post` on
+initial cancellation and sync-out only after full success. Default stderr shows
+semantic setup phases; detailed lifecycle and cleanup diagnostics require
+`--verbose`.
 Runtime selection fails closed when rootless UID/GID mapping or applicable
 SELinux private relabelling cannot be established; do not retry with weakened
 user-namespace, labelling, or bind-mount flags.
