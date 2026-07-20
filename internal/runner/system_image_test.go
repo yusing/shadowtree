@@ -151,3 +151,183 @@ func TestResolvedSystemImageRecipeCollectsParameterizedReferenceVariants(t *test
 		}
 	}
 }
+
+func TestResolvedSystemImageRecipeReportsReferenceCycleEdges(t *testing.T) {
+	source := t.TempDir()
+	configPath := filepath.Join(source, ".shadowtree.toml")
+	prelude := "ensure_webui_dist() {\n  @build-webui\n}"
+	recipes := map[string]recipe.Recipe{
+		"tcp-echo-test": {
+			Sandboxed:    new(recipe.SandboxModeSystem),
+			ShellPrelude: prelude,
+			Cmd:          recipe.ScriptCommand("bun --bun scripts/tcp_echo_test.ts"),
+		},
+		"build-webui": {
+			ShellPrelude: prelude,
+			Cmd:          recipe.ScriptCommand("bun run build"),
+		},
+	}
+	resolved, err := recipe.ResolveWithOptions("tcp-echo-test", recipes["tcp-echo-test"], nil, nil, nil, configPath, "", recipe.ResolveOptions{Recipes: recipes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
+	if err == nil {
+		t.Fatal("resolvedSystemImageRecipe succeeded, want cycle")
+	}
+	want := `error: system image recipe reference cycle
+
+  --> ` + filepath.ToSlash(configPath) + `
+   |
+   | recipe "tcp-echo-test" · cmd inherits shell_prelude
+   | expanded shell_prelude:2:3
+   |   @build-webui
+   |   ^^^^^^^^^^^^ references recipe "build-webui"
+
+  ::: ` + filepath.ToSlash(configPath) + `
+   |
+   | recipe "build-webui" · cmd inherits shell_prelude
+   | expanded shell_prelude:2:3
+   |   @build-webui
+   |   ^^^^^^^^^^^^ references recipe "build-webui"
+   |                cycle closes here`
+	if err.Error() != want {
+		t.Fatalf("cycle error:\n%s\n\nwant:\n%s", err, want)
+	}
+}
+
+func TestResolvedSystemImageRecipeDoesNotConfuseSameRecipeNameAcrossConfigs(t *testing.T) {
+	source := t.TempDir()
+	childDir := filepath.Join(source, "child")
+	if err := os.Mkdir(childDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, ".shadowtree.toml"), []byte(`
+[recipes.build]
+cmd = "true"
+
+[recipes.build.requires]
+system_packages = ["ca-certificates"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := recipe.Recipe{Cmd: recipe.Command{"@child:build"}, Sandboxed: new(recipe.SandboxModeSystem)}
+	configPath := filepath.Join(source, ".shadowtree.toml")
+	resolved, err := recipe.Resolve("build", root, nil, nil, nil, configPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"build": root}, SourceDir: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Recipe.Requires.SystemPackages, "ca-certificates") {
+		t.Fatalf("system packages = %v, want cross-config requirement", got.Recipe.Requires.SystemPackages)
+	}
+}
+
+func TestResolvedSystemImageRecipeCollectsForEachShellPreludeRequirements(t *testing.T) {
+	source := t.TempDir()
+	configPath := filepath.Join(source, ".shadowtree.toml")
+	recipes := map[string]recipe.Recipe{
+		"root": {
+			Sandboxed:    new(recipe.SandboxModeSystem),
+			ShellPrelude: "@prepare-items",
+			ForEach:      recipe.ScriptCommand("printf '%s\\n' item"),
+			Cmd:          recipe.Command{"true"},
+		},
+		"prepare-items": {
+			Cmd:      recipe.Command{"true"},
+			Requires: recipe.Requirements{SystemPackages: []string{"for-each-package"}},
+		},
+	}
+	resolved, err := recipe.ResolveWithOptions("root", recipes["root"], nil, nil, nil, configPath, "", recipe.ResolveOptions{Recipes: recipes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Recipe.Requires.SystemPackages, "for-each-package") {
+		t.Fatalf("system packages = %v, want for_each prelude requirement", got.Recipe.Requires.SystemPackages)
+	}
+}
+
+func TestResolvedSystemImageRecipeReferenceDiagnosticsRetainOrigin(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		rec  recipe.Recipe
+		want []string
+	}{
+		{
+			name: "malformed script",
+			rec:  recipe.Recipe{Cmd: recipe.ScriptCommand("if then"), Sandboxed: new(recipe.SandboxModeSystem)},
+			want: []string{`recipe "root"`, "cmd system image references: script:"},
+		},
+		{
+			name: "unknown reference",
+			rec:  recipe.Recipe{Cmd: recipe.ScriptCommand("printf ready\\n\n  @future-recipe"), Sandboxed: new(recipe.SandboxModeSystem)},
+			want: []string{`recipe "root"`, "cmd script line 2:3 references unknown recipe @future-recipe"},
+		},
+		{
+			name: "future shell",
+			rec:  recipe.Recipe{Shell: "future-shell", Cmd: recipe.ScriptCommand("printf ready\n@child"), Sandboxed: new(recipe.SandboxModeSystem)},
+			want: []string{`recipe "root"`, `cmd system image references: script: script recipe references require shell sh or bash, got "future-shell"`},
+		},
+		{
+			name: "for_each prelude reference",
+			rec:  recipe.Recipe{ShellPrelude: "  @future-recipe", ForEach: recipe.ScriptCommand("printf item"), Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)},
+			want: []string{`recipe "root"`, "for_each shell_prelude line 1:3 references unknown recipe @future-recipe"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := t.TempDir()
+			configPath := filepath.Join(source, ".shadowtree.toml")
+			resolved, err := recipe.Resolve("root", test.rec, nil, nil, nil, configPath, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": test.rec}, SourceDir: source})
+			if err == nil {
+				t.Fatal("resolvedSystemImageRecipe succeeded, want diagnostic")
+			}
+			for _, want := range test.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error missing %q:\n%s", want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestImageRecipeReferencesDescribeInvocationOrigin(t *testing.T) {
+	prelude := "prepare() {\n  @prelude-ref\n}"
+	for _, test := range []struct {
+		name    string
+		command recipe.Command
+		prelude string
+		wantRef string
+		want    string
+	}{
+		{name: "direct", command: recipe.Command{"@direct-ref"}, wantRef: "direct-ref", want: "directly"},
+		{name: "retry", command: recipe.Command{"@retry[count=2]", "@retry-ref"}, wantRef: "retry-ref", want: "through @retry"},
+		{name: "script", command: recipe.ScriptCommand("printf ready\n  @script-ref"), wantRef: "script-ref", want: "script line 2:3"},
+		{name: "prelude", command: recipe.CommandWithRecipeReference(recipe.ScriptCommand("printf ready"), "sh", prelude), prelude: prelude, wantRef: "prelude-ref", want: "shell_prelude line 2:3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			refs, err := imageRecipeReferences(test.command, test.prelude)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(refs) != 1 || refs[0].target.Name != test.wantRef || refs[0].origin.description() != test.want {
+				t.Fatalf("references = %#v, want @%s from %q", refs, test.wantRef, test.want)
+			}
+		})
+	}
+
+	refs, err := imageRecipeReferences(recipe.Command{"printf", "unrelated"}, "")
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("unrelated command references = %#v, error = %v", refs, err)
+	}
+}

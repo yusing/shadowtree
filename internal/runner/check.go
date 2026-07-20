@@ -62,7 +62,7 @@ func validateSystemCheck(ctx context.Context, options Options) error {
 	}
 	resolved, err := resolvedSystemImageRecipe(ctx, options)
 	if err != nil {
-		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
 	if _, err := systemsandbox.PlanImages(resolved, options.SourceDir); err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", options.Resolved.Name, err)

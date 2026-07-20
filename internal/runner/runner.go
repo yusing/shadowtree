@@ -414,7 +414,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 func prepareSystemImages(ctx context.Context, options Options, progress io.Writer) error {
 	resolved, err := resolvedSystemImageRecipe(ctx, options)
 	if err != nil {
-		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
 	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
 	if err != nil {
@@ -483,7 +483,7 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 	}
 	resolved, err := resolvedSystemImageRecipe(ctx, options)
 	if err != nil {
-		return fmt.Errorf("recipe %q system image requirements: %w", options.Resolved.Name, err)
+		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
 	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
 	if err != nil {
