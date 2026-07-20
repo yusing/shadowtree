@@ -12,30 +12,32 @@ import (
 	"github.com/yusing/shadowtree/internal/configfile"
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/scriptref"
+	"github.com/yusing/shadowtree/internal/systemsandbox"
 )
 
-func resolvedSystemImageRecipe(ctx context.Context, options Options) (recipe.Resolved, error) {
+func resolvedSystemImageRequest(ctx context.Context, options Options) (systemsandbox.ImageRequest, error) {
 	collector := systemRequirementCollector{
 		ctx:      ctx,
 		root:     options.Resolved,
 		source:   options.SourceDir,
 		visiting: map[string]bool{},
 	}
-	if err := collector.collectResolved(options.Resolved, options.Recipes, options.EnumSets, options.ConfigEnv, nil); err != nil {
-		return recipe.Resolved{}, err
+	if err := collector.collectResolved(options.Resolved, options.Recipes, options.EnumSets, options.ConfigEnv, options.SourceDir, nil); err != nil {
+		return systemsandbox.ImageRequest{}, err
 	}
 	resolved := options.Resolved
 	resolved.Recipe.Requires = collector.requirements
-	return resolved, nil
+	return systemsandbox.ImageRequest{Root: resolved, Contributions: collector.contributions}, nil
 }
 
 type systemRequirementCollector struct {
-	ctx          context.Context
-	root         recipe.Resolved
-	source       string
-	visiting     map[string]bool
-	edges        []systemImageReferenceEdge
-	requirements recipe.Requirements
+	ctx           context.Context
+	root          recipe.Resolved
+	source        string
+	visiting      map[string]bool
+	edges         []systemImageReferenceEdge
+	requirements  recipe.Requirements
+	contributions []systemsandbox.ImageContribution
 }
 
 type imageRecipeReference struct {
@@ -77,7 +79,7 @@ func (err *systemImageCycleError) Error() string {
 	return err.message
 }
 
-func (collector *systemRequirementCollector) collectResolved(resolved recipe.Resolved, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command, configEnv map[string]string, incoming *systemImageReferenceEdge) error {
+func (collector *systemRequirementCollector) collectResolved(resolved recipe.Resolved, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command, configEnv map[string]string, sourceDir string, incoming *systemImageReferenceEdge) error {
 	key := recipeReferenceStackKey(resolved.ConfigPath, resolved.Name)
 	if collector.visiting[key] {
 		return collector.referenceCycle(*incoming)
@@ -100,6 +102,11 @@ func (collector *systemRequirementCollector) collectResolved(resolved recipe.Res
 	if err := mergeImageRequirements(&collector.requirements, resolved.Recipe.Requires); err != nil {
 		return fmt.Errorf("recipe %q system image requirements: %w", resolved.Name, err)
 	}
+	contribution, err := collector.contribution(resolved, sourceDir)
+	if err != nil {
+		return err
+	}
+	collector.contributions = append(collector.contributions, contribution)
 	commands := make([]systemImageCommand, 0, len(resolved.Recipe.Pre)+len(resolved.Recipe.Post)+2)
 	forEach := recipe.CommandWithRecipeReference(resolved.Recipe.ForEach, resolved.Recipe.Shell, resolved.Recipe.ShellPrelude)
 	commands = append(commands, systemImageCommand{stage: "for_each", command: forEach})
@@ -117,7 +124,7 @@ func (collector *systemRequirementCollector) collectResolved(resolved recipe.Res
 		}
 		for _, ref := range refs {
 			ref.stage = item.stage
-			if err := collector.collectReference(resolved, recipes, enumSets, configEnv, ref); err != nil {
+			if err := collector.collectReference(resolved, recipes, enumSets, configEnv, sourceDir, ref); err != nil {
 				return err
 			}
 		}
@@ -125,7 +132,7 @@ func (collector *systemRequirementCollector) collectResolved(resolved recipe.Res
 	return nil
 }
 
-func (collector *systemRequirementCollector) collectReference(parent recipe.Resolved, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command, configEnv map[string]string, reference imageRecipeReference) error {
+func (collector *systemRequirementCollector) collectReference(parent recipe.Resolved, recipes map[string]recipe.Recipe, enumSets map[string]recipe.Command, configEnv map[string]string, sourceDir string, reference imageRecipeReference) error {
 	ref := reference.target
 	if ref.Path == "" {
 		rec, ok := recipes[ref.Name]
@@ -137,7 +144,7 @@ func (collector *systemRequirementCollector) collectReference(parent recipe.Reso
 			return fmt.Errorf("%s %s references @%s: %w", systemImageRecipeLabel(parent.ConfigPath, parent.Name), reference.description(), ref.Target(), err)
 		}
 		edge := collector.referenceEdge(parent, resolved, reference)
-		return collector.collectResolved(resolved, recipes, enumSets, configEnv, &edge)
+		return collector.collectResolved(resolved, recipes, enumSets, configEnv, sourceDir, &edge)
 	}
 	target, err := configfile.ResolveCrossConfigReference(collector.ctx, ref.Path, parent.ConfigPath, collector.source, configfile.ResolveOptions{EvalDynamicVars: true})
 	if err != nil {
@@ -152,7 +159,63 @@ func (collector *systemRequirementCollector) collectReference(parent recipe.Reso
 		return fmt.Errorf("%s %s references @%s: %w", systemImageRecipeLabel(parent.ConfigPath, parent.Name), reference.description(), ref.Target(), err)
 	}
 	edge := collector.referenceEdge(parent, resolved, reference)
-	return collector.collectResolved(resolved, target.Recipes, target.Loaded.Config.EnumSets, target.Loaded.Config.Env, &edge)
+	return collector.collectResolved(resolved, target.Recipes, target.Loaded.Config.EnumSets, target.Loaded.Config.Env, target.Dir, &edge)
+}
+
+func (collector *systemRequirementCollector) contribution(resolved recipe.Resolved, sourceDir string) (systemsandbox.ImageContribution, error) {
+	configIdentity, err := canonicalContributionPath(collector.source, resolved.ConfigPath)
+	if err != nil {
+		return systemsandbox.ImageContribution{}, fmt.Errorf("%s system image config identity: %w", systemImageRecipeLabel(resolved.ConfigPath, resolved.Name), err)
+	}
+	workdir := sourceDir
+	if resolved.Recipe.Workdir != "" {
+		if !filepath.IsLocal(filepath.FromSlash(resolved.Recipe.Workdir)) {
+			return systemsandbox.ImageContribution{}, fmt.Errorf("%s system image workdir must stay inside the canonical project", systemImageRecipeLabel(resolved.ConfigPath, resolved.Name))
+		}
+		workdir = filepath.Join(sourceDir, filepath.FromSlash(resolved.Recipe.Workdir))
+	}
+	workdirIdentity, err := canonicalContributionPath(collector.source, workdir)
+	if err != nil {
+		return systemsandbox.ImageContribution{}, fmt.Errorf("%s system image workdir: %w", systemImageRecipeLabel(resolved.ConfigPath, resolved.Name), err)
+	}
+	route := make([]systemsandbox.ReferenceRouteStep, 0, len(collector.edges))
+	for _, edge := range collector.edges {
+		identity, err := canonicalContributionPath(collector.source, edge.source.configPath)
+		if err != nil {
+			return systemsandbox.ImageContribution{}, fmt.Errorf("system image reference route: %w", err)
+		}
+		route = append(route, systemsandbox.ReferenceRouteStep{
+			ConfigIdentity: identity,
+			Recipe:         edge.source.name,
+			Stage:          edge.ref.stage,
+			Reference:      edge.ref.target.Target(),
+		})
+	}
+	return systemsandbox.ImageContribution{
+		Resolved: resolved, ConfigIdentity: configIdentity, Workdir: workdirIdentity, ReferenceRoute: route,
+	}, nil
+}
+
+func canonicalContributionPath(root, candidate string) (string, error) {
+	if candidate == "" {
+		return "", nil
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("path %q is outside canonical project %q", candidate, root)
+	}
+	if rel == "." {
+		return "", nil
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 func (collector *systemRequirementCollector) referenceEdge(parent, target recipe.Resolved, ref imageRecipeReference) systemImageReferenceEdge {

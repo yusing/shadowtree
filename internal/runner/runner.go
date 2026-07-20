@@ -412,11 +412,12 @@ func Run(ctx context.Context, options Options) (runErr error) {
 }
 
 func prepareSystemImages(ctx context.Context, options Options, progress io.Writer) error {
-	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	request, err := resolvedSystemImageRequest(ctx, options)
 	if err != nil {
 		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
-	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
+	resolved := request.Root
+	plan, err := systemsandbox.PlanComposition(request, options.SourceDir)
 	if err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
 	}
@@ -481,11 +482,12 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 	if options.Resolved.SandboxMode != recipe.SandboxModeSystem {
 		return nil
 	}
-	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	request, err := resolvedSystemImageRequest(ctx, options)
 	if err != nil {
 		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
-	plan, err := systemsandbox.PlanImages(resolved, options.SourceDir)
+	resolved := request.Root
+	plan, err := systemsandbox.PlanComposition(request, options.SourceDir)
 	if err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
 	}

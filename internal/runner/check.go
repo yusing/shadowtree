@@ -60,11 +60,11 @@ func validateSystemCheck(ctx context.Context, options Options) error {
 	if _, err := systemsandbox.Detect(ctx, options.Stderr); err != nil {
 		return fmt.Errorf("recipe %q system runtime detection: %w", options.Resolved.Name, err)
 	}
-	resolved, err := resolvedSystemImageRecipe(ctx, options)
+	request, err := resolvedSystemImageRequest(ctx, options)
 	if err != nil {
 		return wrapSystemImageRequirements(options.Resolved.Name, err)
 	}
-	if _, err := systemsandbox.PlanImages(resolved, options.SourceDir); err != nil {
+	if _, err := systemsandbox.PlanComposition(request, options.SourceDir); err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", options.Resolved.Name, err)
 	}
 	return nil

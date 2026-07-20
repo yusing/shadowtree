@@ -135,7 +135,7 @@ func resolvedCachePlans(ctx context.Context, options SystemCacheOptions, source 
 			}
 			return nil, nil, err
 		}
-		resolved, err = resolvedSystemImageRecipe(ctx, Options{
+		request, err := resolvedSystemImageRequest(ctx, Options{
 			Resolved: resolved, Recipes: options.Recipes, EnumSets: options.EnumSets,
 			ConfigEnv: options.ConfigEnv, SourceDir: source,
 		})
@@ -145,7 +145,7 @@ func resolvedCachePlans(ctx context.Context, options SystemCacheOptions, source 
 			}
 			return nil, nil, err
 		}
-		image, err := systemsandbox.PlanImages(resolved, source)
+		image, err := systemsandbox.PlanComposition(request, source)
 		if err != nil {
 			if options.Recipe == "" || name != options.Recipe {
 				continue

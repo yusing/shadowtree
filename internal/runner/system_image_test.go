@@ -32,15 +32,22 @@ func TestResolvedSystemImageRecipeCollectsTransitiveRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := request.Root
 	if !slices.Equal(got.Recipe.Requires.SystemPackages, []string{"git", "ca-certificates"}) {
 		t.Fatalf("system packages = %#v", got.Recipe.Requires.SystemPackages)
 	}
 	if got.Recipe.Requires.GoCommands["stringer"] == "" || got.Recipe.Requires.NodeCommands["eslint"] == "" {
 		t.Fatalf("installable requirements = %#v / %#v", got.Recipe.Requires.GoCommands, got.Recipe.Requires.NodeCommands)
+	}
+	if len(request.Contributions) != 3 {
+		t.Fatalf("contributions = %#v, want root and two references", request.Contributions)
+	}
+	if route := request.Contributions[2].ReferenceRoute; len(route) != 2 || route[0].Recipe != "root" || route[1].Recipe != "child" {
+		t.Fatalf("grandchild reference route = %#v", route)
 	}
 }
 
@@ -64,12 +71,19 @@ system_packages = ["protobuf-compiler"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(got.Recipe.Requires.SystemPackages, "protobuf-compiler") {
-		t.Fatalf("system packages = %#v", got.Recipe.Requires.SystemPackages)
+	if !slices.Contains(request.Root.Recipe.Requires.SystemPackages, "protobuf-compiler") {
+		t.Fatalf("system packages = %#v", request.Root.Recipe.Requires.SystemPackages)
+	}
+	contribution := request.Contributions[1]
+	if contribution.ConfigIdentity != "tools/.shadowtree.toml" || contribution.Workdir != "tools" {
+		t.Fatalf("cross-config contribution = %#v", contribution)
+	}
+	if route := contribution.ReferenceRoute; len(route) != 1 || route[0].ConfigIdentity != ".shadowtree.toml" || route[0].Reference != "tools:generate" {
+		t.Fatalf("cross-config reference route = %#v", route)
 	}
 }
 
@@ -87,7 +101,7 @@ func TestResolvedSystemImageRecipeRejectsCrossConfigProfileMismatch(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
+	_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
 	if err == nil || !strings.Contains(err.Error(), "profile") {
 		t.Fatalf("resolvedSystemImageRecipe error = %v, want profile incompatibility", err)
 	}
@@ -104,7 +118,7 @@ func TestResolvedSystemImageRecipeRejectsIncompatibleNestedContract(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
+			_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
 			if err == nil || !strings.Contains(err.Error(), name) {
 				t.Fatalf("resolvedSystemImageRecipe error = %v, want %s incompatibility", err, name)
 			}
@@ -119,7 +133,7 @@ func TestResolvedSystemImageRecipeRejectsConflictingInstallableRequirements(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
+	_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("resolvedSystemImageRecipe error = %v, want conflicting requirement rejection", err)
 	}
@@ -141,10 +155,11 @@ func TestResolvedSystemImageRecipeCollectsParameterizedReferenceVariants(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: "/project"})
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: "/project"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := request.Root
 	for _, pkg := range []string{"first-package", "second-package"} {
 		if !slices.Contains(got.Recipe.Requires.SystemPackages, pkg) {
 			t.Fatalf("system packages = %#v, missing %q", got.Recipe.Requires.SystemPackages, pkg)
@@ -171,7 +186,7 @@ func TestResolvedSystemImageRecipeReportsReferenceCycleEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
+	_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
 	if err == nil {
 		t.Fatal("resolvedSystemImageRecipe succeeded, want cycle")
 	}
@@ -217,12 +232,12 @@ system_packages = ["ca-certificates"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"build": root}, SourceDir: source})
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"build": root}, SourceDir: source})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(got.Recipe.Requires.SystemPackages, "ca-certificates") {
-		t.Fatalf("system packages = %v, want cross-config requirement", got.Recipe.Requires.SystemPackages)
+	if !slices.Contains(request.Root.Recipe.Requires.SystemPackages, "ca-certificates") {
+		t.Fatalf("system packages = %v, want cross-config requirement", request.Root.Recipe.Requires.SystemPackages)
 	}
 }
 
@@ -245,12 +260,12 @@ func TestResolvedSystemImageRecipeCollectsForEachShellPreludeRequirements(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: recipes, SourceDir: source})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(got.Recipe.Requires.SystemPackages, "for-each-package") {
-		t.Fatalf("system packages = %v, want for_each prelude requirement", got.Recipe.Requires.SystemPackages)
+	if !slices.Contains(request.Root.Recipe.Requires.SystemPackages, "for-each-package") {
+		t.Fatalf("system packages = %v, want for_each prelude requirement", request.Root.Recipe.Requires.SystemPackages)
 	}
 }
 
@@ -288,7 +303,7 @@ func TestResolvedSystemImageRecipeReferenceDiagnosticsRetainOrigin(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = resolvedSystemImageRecipe(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": test.rec}, SourceDir: source})
+			_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": test.rec}, SourceDir: source})
 			if err == nil {
 				t.Fatal("resolvedSystemImageRecipe succeeded, want diagnostic")
 			}
