@@ -24,7 +24,7 @@ func TestPlanCachesSharesCompatibleGoRecipesButConfinesProjectRoots(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		image, err := PlanImages(resolved, root)
+		image, err := PlanComposition(testImageRequest(resolved), root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +69,7 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := PlanImages(resolved, root)
+	image, err := PlanComposition(testImageRequest(resolved), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buildImage, err := PlanImages(build, root)
+	buildImage, err := PlanComposition(testImageRequest(build), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetedImage, err := PlanImages(targeted, root)
+	targetedImage, err := PlanComposition(testImageRequest(targeted), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envImage, err := PlanImages(envResolved, root)
+	envImage, err := PlanComposition(testImageRequest(envResolved), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelatedImage, err := PlanImages(unrelated, root)
+	unrelatedImage, err := PlanComposition(testImageRequest(unrelated), root)
 	if err != nil {
 		t.Fatal(err)
 	}

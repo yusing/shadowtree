@@ -37,6 +37,75 @@ func TestPlanCompositionCombinesEverySupportedProfileOnTrixie(t *testing.T) {
 	}
 }
 
+func TestPlanCompositionSupportsEveryNonEmptyProfileCombination(t *testing.T) {
+	profiles := recipe.SupportedProfiles()
+	for mask := 1; mask < 1<<len(profiles); mask++ {
+		var selected []string
+		for index, profile := range profiles {
+			if mask&(1<<index) != 0 {
+				selected = append(selected, profile)
+			}
+		}
+		t.Run(strings.Join(selected, "+"), func(t *testing.T) {
+			root := compositionProject(t)
+			if _, err := PlanComposition(compositionRequest(t, root, selected), root); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPlanCompositionSupportsNodeVariantsInMixedSets(t *testing.T) {
+	for manager, declaration := range map[string]string{
+		"npm": "npm@11.4.2", "pnpm": "pnpm@10.12.1", "yarn": "yarn@4.9.2", "bun": "bun@1.2.17",
+	} {
+		t.Run(manager, func(t *testing.T) {
+			root := compositionProject(t)
+			if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"packageManager":"`+declaration+`"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := PlanComposition(compositionRequest(t, root, []string{recipe.GoProfile, recipe.NodeProfile, recipe.RustProfile}), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, toolchain := range plan.Toolchains {
+				found = found || toolchain.Variant == manager
+			}
+			if !found {
+				t.Fatalf("toolchains = %#v, missing %s variant", plan.Toolchains, manager)
+			}
+		})
+	}
+}
+
+func TestResolveToolchainsMergesExactAndDefaultButRejectsExactConflict(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"default", "exact", "other"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeImageTestFile(t, filepath.Join(root, "exact", "go.mod"), "module example.com/exact\n\ngo 1.25\ntoolchain go1.25.5\n")
+	writeImageTestFile(t, filepath.Join(root, "other", "go.mod"), "module example.com/other\n\ngo 1.24\ntoolchain go1.24.7\n")
+	contribution := func(name, workdir string) ImageContribution {
+		resolved := systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{})
+		resolved.Name = name
+		return ImageContribution{Resolved: resolved, Workdir: workdir, ConfigIdentity: ".shadowtree.toml"}
+	}
+	merged, _, err := resolveToolchains([]ImageContribution{contribution("default", "default"), contribution("exact", "exact")}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 1 || merged[0].Identity != "1.25.5" || len(merged[0].Origins) != 2 {
+		t.Fatalf("merged toolchain = %#v", merged)
+	}
+	_, _, err = resolveToolchains([]ImageContribution{contribution("exact", "exact"), contribution("other", "other")}, root)
+	if err == nil || !strings.Contains(err.Error(), "exact") || !strings.Contains(err.Error(), "other") {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
 func TestPlanCompositionToolchainKeyIgnoresOrderAndProject(t *testing.T) {
 	firstRoot := compositionProject(t)
 	firstRequest := compositionRequest(t, firstRoot, []string{recipe.GoProfile, recipe.NodeProfile, recipe.RustProfile})

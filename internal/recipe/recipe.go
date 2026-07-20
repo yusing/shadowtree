@@ -315,7 +315,17 @@ type Placeholder struct {
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var supportedProfiles = []string{GoProfile, NodeProfile, RustProfile}
+
+type ProfileDescriptor struct {
+	Name              string
+	ToolchainProvider string
+}
+
+var supportedProfiles = []ProfileDescriptor{
+	{Name: GoProfile, ToolchainProvider: "go"},
+	{Name: NodeProfile, ToolchainProvider: "node"},
+	{Name: RustProfile, ToolchainProvider: "rust"},
+}
 
 type BuiltinOptions struct {
 	Context       context.Context
@@ -324,7 +334,27 @@ type BuiltinOptions struct {
 }
 
 func SupportsProfile(profile string) bool {
-	return slices.Contains(supportedProfiles, profile)
+	_, ok := ToolchainProvider(profile)
+	return ok
+}
+
+// SupportedProfiles returns the registered public profile names.
+func SupportedProfiles() []string {
+	out := make([]string, len(supportedProfiles))
+	for index, descriptor := range supportedProfiles {
+		out[index] = descriptor.Name
+	}
+	return out
+}
+
+// ToolchainProvider returns the system-image provider owned by profile.
+func ToolchainProvider(profile string) (string, bool) {
+	for _, descriptor := range supportedProfiles {
+		if descriptor.Name == profile {
+			return descriptor.ToolchainProvider, true
+		}
+	}
+	return "", false
 }
 
 // IsCommandHelperName reports whether name identifies a built-in @ command helper.

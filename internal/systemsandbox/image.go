@@ -22,8 +22,6 @@ import (
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
-const imagePlanVersion = "system-image-v1"
-
 // ImagePlan is the complete inspectable immutable-image plan for one recipe.
 type ImagePlan struct {
 	BaseImage       string
@@ -186,105 +184,6 @@ func buildStage(ctx context.Context, runtime RuntimeName, stage ImageStage, prog
 	return nil
 }
 
-// PlanImages resolves pinned profile defaults and five ordered immutable stages.
-func PlanImages(resolved recipe.Resolved, sourceDir string) (ImagePlan, error) {
-	if resolved.SandboxMode != recipe.SandboxModeSystem {
-		return ImagePlan{}, fmt.Errorf("recipe %q image planning requires sandboxed = %q", resolved.Name, recipe.SandboxModeSystem)
-	}
-	source, err := filepath.Abs(sourceDir)
-	if err != nil {
-		return ImagePlan{}, err
-	}
-	source, err = filepath.EvalSymlinks(source)
-	if err != nil {
-		return ImagePlan{}, fmt.Errorf("canonical project root: %w", err)
-	}
-	workdir := source
-	if resolved.Recipe.Workdir != "" {
-		if !filepath.IsLocal(filepath.FromSlash(resolved.Recipe.Workdir)) {
-			return ImagePlan{}, fmt.Errorf("recipe %q system workdir must stay inside the canonical project", resolved.Name)
-		}
-		workdir = filepath.Join(source, filepath.FromSlash(resolved.Recipe.Workdir))
-	}
-	workdir, err = filepath.EvalSymlinks(workdir)
-	if err != nil {
-		return ImagePlan{}, fmt.Errorf("recipe %q system workdir: %w", resolved.Name, err)
-	}
-	if _, err := relativeImagePath(source, workdir); err != nil {
-		return ImagePlan{}, fmt.Errorf("recipe %q system workdir: %w", resolved.Name, err)
-	}
-	profile, err := profileImageInputs(resolved, source, workdir)
-	if err != nil {
-		return ImagePlan{}, err
-	}
-	base, tooling, dependency := profile.base, profile.tooling, profile.dependency
-	if resolved.Recipe.System != nil && resolved.Recipe.System.BaseImage != "" {
-		base = resolved.Recipe.System.BaseImage
-	}
-	if err := validateBaseImage(base); err != nil {
-		return ImagePlan{}, fmt.Errorf("recipe %q system.base_image: %w", resolved.Name, err)
-	}
-	if len(resolved.Recipe.Requires.SystemPackages) > 0 && !supportsAPTBase(base) {
-		return ImagePlan{}, fmt.Errorf("recipe %q system packages require a supported Debian/Ubuntu base, got %q", resolved.Name, base)
-	}
-	platform := profile.platform
-	projectKey := CanonicalProjectKey(source)
-	configIdentity := resolved.ConfigPath
-	if configIdentity != "" {
-		if absolute, err := filepath.Abs(configIdentity); err == nil {
-			if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
-				if rel, err := relativeImagePath(source, canonical); err == nil {
-					configIdentity = rel
-				}
-			}
-		}
-	}
-	recipeKey := digestKey(map[string]any{"config": configIdentity, "recipe": resolved.Name})
-	recipePackages, err := recipePackageCommands(resolved.Recipe.Requires)
-	if err != nil {
-		return ImagePlan{}, fmt.Errorf("recipe %q system recipe packages: %w", resolved.Name, err)
-	}
-	inputs := []stageInput{
-		{name: "base", commands: []string{"LABEL shadowtree.plan=" + shellQuote(imagePlanVersion)}},
-		{name: "tooling", commands: tooling},
-		{name: "system-packages", commands: systemPackageCommands(resolved.Recipe.Requires.SystemPackages)},
-		{name: "recipe-packages", commands: recipePackages},
-		{name: "dependencies", commands: dependency.commands, context: dependency.context, metadata: dependency.metadata},
-	}
-	stages := make([]ImageStage, 0, len(inputs))
-	parentTag := base
-	parentKey := digestKey(map[string]any{"external": base})
-	for _, input := range inputs {
-		contextHashes := digestContext(input.context)
-		key := digestKey(map[string]any{
-			"version": imagePlanVersion, "stage": input.name, "parent": parentKey, "platform": platform,
-			"commands": input.commands, "context": contextHashes, "metadata": input.metadata,
-		})
-		tag := "shadowtree.local/stage/" + input.name + ":" + key
-		labels := map[string]string{
-			"shadowtree.owner":      "github.com/yusing/shadowtree",
-			"shadowtree.stage":      input.name,
-			"shadowtree.key":        key,
-			"shadowtree.parent-key": parentKey,
-			"shadowtree.platform":   platform,
-		}
-		stages = append(stages, ImageStage{
-			Name: input.name, Platform: platform, Key: key, ParentKey: parentKey, Tag: tag, Labels: labels,
-			Containerfile: renderContainerfile(parentTag, labels, input.commands),
-			Context:       input.context,
-			ContextHashes: contextHashes,
-			Metadata:      maps.Clone(input.metadata),
-		})
-		parentTag, parentKey = tag, key
-	}
-	final := "shadowtree.local/" + projectKey + "/" + recipeKey + ":" + parentKey
-	plan := ImagePlan{BaseImage: base, Platform: platform, Stages: stages, FinalTag: final, Caches: planCaches(profile.caches, source, projectKey, platform, stages)}
-	if dependency.seed != nil {
-		plan.DependencySeeds = []DependencySeed{*dependency.seed}
-	}
-	return plan, nil
-}
-
 type stageInput struct {
 	name     string
 	commands []string
@@ -299,39 +198,31 @@ type dependencyInput struct {
 	seed     *DependencySeed
 }
 
-type profileImageInput struct {
-	base       string
-	platform   string
-	tooling    []string
+type contributionInput struct {
 	dependency dependencyInput
 	caches     []cacheDescriptor
 }
 
-func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileImageInput, error) {
+func contributionInputs(resolved recipe.Resolved, source, dir string) (contributionInput, error) {
 	workdir, err := relativeImagePath(source, dir)
 	if err != nil {
-		return profileImageInput{}, err
+		return contributionInput{}, err
 	}
-	platform := defaultImagePlatform()
 	switch resolved.Profile {
 	case recipe.GoProfile:
 		toolchain, err := recipe.ResolveGoToolchain(dir, source)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		files, err := manifestContext(source, goManifest)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := filterGoManifestContext(files, workdir); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		lockfile := nearestContextFile(files, workdir, "go.sum")
 		metadata := map[string]string{"toolchain": toolchain.Version, "toolchain_provenance": relativeProvenance(source, toolchain.Provenance), "workdir": workdir}
-		tooling := []string{"RUN test \"$(go version | awk '{print $3}')\" = go" + toolchain.Version, "RUN mkdir -p /opt/shadowtree/bin", "RUN install -d -m 0777 /opt/shadowtree/cache/go-build", "ENV PATH=/opt/shadowtree/bin:$PATH"}
-		if len(resolved.Recipe.Requires.NodeCommands) > 0 {
-			tooling = append(tooling, "COPY --from="+recipe.DefaultNodeImage+" /usr/local/ /usr/local/", "RUN test \"$(node --version)\" = v"+recipe.DefaultNodeRelease+" && npm --version")
-		}
 		workspace := nearestContextFile(files, workdir, "go.work")
 		if workspace == "" {
 			workspace = nearestContextFile(files, workdir, "go.mod")
@@ -345,44 +236,28 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 			mountPath: "/opt/shadowtree/cache/go-build", toolchain: toolchain.Version,
 			concurrency: "shared", environment: map[string]string{"GOCACHE": "/opt/shadowtree/cache/go-build"},
 		}
-		return profileImageInput{base: "golang:" + toolchain.Version + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "go mod download"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
+		return contributionInput{dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "go mod download"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
 	case recipe.NodeProfile:
 		manager, err := recipe.ResolveNodePackageManagerWithin(dir, source)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		managerDir, err := relativeImagePath(source, manager.ProjectDir)
 		if err != nil {
-			return profileImageInput{}, fmt.Errorf("package-manager project path: %w", err)
-		}
-		base := recipe.DefaultNodeImage
-		tooling := []string{"RUN test \"$(node --version)\" = v" + recipe.DefaultNodeRelease}
-		if manager.Name == "bun" {
-			base = "oven/bun:" + manager.Version + "-slim"
-			tooling = []string{"RUN test \"$(bun --version)\" = " + shellQuote(manager.Version)}
-		} else if manager.Name == "pnpm" || manager.Name == "yarn" {
-			tooling = append(tooling, "RUN mkdir -p /opt/shadowtree/bin && corepack enable --install-directory /opt/shadowtree/bin && corepack prepare "+shellQuote(manager.Identity)+" --activate", "ENV PATH=/opt/shadowtree/bin:$PATH", "RUN test \"$("+manager.Name+" --version)\" = "+shellQuote(manager.Version))
-		} else if manager.Declared {
-			tooling = append(tooling, "RUN npm install --global "+shellQuote("npm@"+manager.Version)+" --ignore-scripts && test \"$(npm --version)\" = "+shellQuote(manager.Version))
-		} else {
-			tooling = append(tooling, "RUN test \"$(npm --version)\" = "+shellQuote(manager.Version))
-		}
-		tooling = append(tooling, "RUN mkdir -p /opt/shadowtree/bin", "ENV PATH=/opt/shadowtree/bin:$PATH")
-		if len(resolved.Recipe.Requires.GoCommands) > 0 {
-			tooling = append(tooling, "COPY --from=golang:"+recipe.DefaultGoToolchain+"-bookworm /usr/local/go/ /usr/local/go/", "ENV PATH=/usr/local/go/bin:$PATH", "RUN test \"$(go version | awk '{print $3}')\" = go"+recipe.DefaultGoToolchain)
+			return contributionInput{}, fmt.Errorf("package-manager project path: %w", err)
 		}
 		files, err := manifestContext(source, nodeManifest)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := filterNodeManifestContext(files, managerDir, workdir); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := rejectSecretManifestInputs(files); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := rejectUnsafeNodeDependencies(files); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		metadata := map[string]string{"manager": manager.Name, "manager_version": manager.Version, "manager_identity": manager.Identity, "manager_provenance": relativeProvenance(source, manager.Provenance), "workdir": managerDir}
 		commands := nodeLockedCommand(manager.Name, managerDir, files)
@@ -390,39 +265,38 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 		if len(commands) > 0 {
 			seed = &DependencySeed{SourcePath: "/opt/shadowtree/dependencies", TargetPath: ".", Provider: manager.Name}
 		}
-		return profileImageInput{base: base, platform: platform, tooling: tooling, dependency: dependencyInput{commands: commands, context: files, metadata: metadata, seed: seed}}, nil
+		return contributionInput{dependency: dependencyInput{commands: commands, context: files, metadata: metadata, seed: seed}}, nil
 	case recipe.RustProfile:
 		toolchain, err := recipe.RustToolchainWithin(dir, source)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		release, host, _ := strings.Cut(toolchain, "-")
 		if host != "" {
-			platform, err = rustHostPlatform(host)
-			if err != nil {
-				return profileImageInput{}, err
+			if _, err := rustHostPlatform(host); err != nil {
+				return contributionInput{}, err
 			}
 		}
 		files, err := manifestContext(source, rustManifest)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := filterRustManifestContext(files, workdir); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := rejectSecretManifestInputs(files); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := rejectUnsafeCargoSources(files); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		if err := addRustTargetPlaceholders(files); err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		lockfile := nearestContextFile(files, workdir, "Cargo.lock")
 		manifests, err := recipe.RustDependencyManifestPaths(files, workdir)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		workspace := rustWorkspacePath(files, manifests, workdir)
 		environment := os.Getenv("CARGO_BUILD_TARGET")
@@ -434,19 +308,9 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 		}
 		target, err := rustCacheTarget(files, workdir, resolved.Main, resolved.VariadicArgs, environment, host)
 		if err != nil {
-			return profileImageInput{}, err
+			return contributionInput{}, err
 		}
 		metadata := map[string]string{"toolchain": toolchain, "toolchain_release": release, "toolchain_host": host, "workdir": workdir}
-		tooling := []string{"RUN rustc --version --verbose | grep -F " + shellQuote("release: "+release) + " && cargo --version", "RUN mkdir -p /opt/shadowtree/bin", "RUN install -d -m 0777 /opt/shadowtree/cache/cargo-target", "ENV PATH=/opt/shadowtree/bin:$PATH"}
-		if host != "" {
-			tooling[0] = "RUN rustc --version --verbose | grep -F " + shellQuote("release: "+release) + " && rustc --version --verbose | grep -F " + shellQuote("host: "+host) + " && cargo --version"
-		}
-		if len(resolved.Recipe.Requires.GoCommands) > 0 {
-			tooling = append(tooling, "COPY --from=golang:"+recipe.DefaultGoToolchain+"-bookworm /usr/local/go/ /usr/local/go/", "ENV PATH=/usr/local/go/bin:$PATH")
-		}
-		if len(resolved.Recipe.Requires.NodeCommands) > 0 {
-			tooling = append(tooling, "COPY --from="+recipe.DefaultNodeImage+" /usr/local/ /usr/local/")
-		}
 		outputPath := filepath.Join(source, filepath.FromSlash(workspace), "target")
 		cache := cacheDescriptor{
 			provider: "cargo-target", format: "cargo-target-v1", workspace: workspace,
@@ -455,16 +319,9 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 			environment: map[string]string{"CARGO_TARGET_DIR": "/opt/shadowtree/cache/cargo-target"},
 			inputs:      map[string]string{"host": host, "target": target},
 		}
-		return profileImageInput{base: "rust:" + release + "-bookworm", platform: platform, tooling: tooling, dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "cargo fetch --locked"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
+		return contributionInput{dependency: dependencyInput{commands: lockedCommand(lockfile, workdir, "cargo fetch --locked"), context: files, metadata: metadata}, caches: []cacheDescriptor{cache}}, nil
 	default:
-		tooling := []string{"RUN mkdir -p /opt/shadowtree/bin", "ENV PATH=/opt/shadowtree/bin:$PATH"}
-		if len(resolved.Recipe.Requires.GoCommands) > 0 {
-			tooling = append(tooling, "COPY --from=golang:"+recipe.DefaultGoToolchain+"-bookworm /usr/local/go/ /usr/local/go/", "ENV PATH=/usr/local/go/bin:$PATH")
-		}
-		if len(resolved.Recipe.Requires.NodeCommands) > 0 {
-			tooling = append(tooling, "COPY --from="+recipe.DefaultNodeImage+" /usr/local/ /usr/local/")
-		}
-		return profileImageInput{base: "ubuntu:24.04", platform: platform, tooling: tooling}, nil
+		return contributionInput{}, nil
 	}
 }
 
@@ -1076,32 +933,6 @@ func rustHostPlatform(host string) (string, error) {
 	default:
 		return "", fmt.Errorf("Rust toolchain host architecture %q is not supported by the system sandbox", parts[0])
 	}
-}
-
-func supportsAPTBase(image string) bool {
-	reference := strings.ToLower(image)
-	repository, _, hasDigest := strings.Cut(reference, "@")
-	lastSlash := strings.LastIndexByte(repository, '/')
-	lastColon := strings.LastIndexByte(repository, ':')
-	tag := ""
-	if lastColon > lastSlash {
-		tag = repository[lastColon+1:]
-		repository = repository[:lastColon]
-	}
-	for _, official := range []string{"ubuntu", "debian"} {
-		if repository == official || strings.HasSuffix(repository, "/library/"+official) {
-			return true
-		}
-	}
-	if hasDigest {
-		return false
-	}
-	for _, official := range []string{"golang", "node", "rust"} {
-		if repository == official || strings.HasSuffix(repository, "/library/"+official) {
-			return strings.Contains(tag, "bookworm") || strings.Contains(tag, "bullseye")
-		}
-	}
-	return (repository == "oven/bun" || strings.HasSuffix(repository, "/oven/bun")) && strings.HasSuffix(tag, "-slim")
 }
 
 func systemPackageCommands(packages []string) []string {

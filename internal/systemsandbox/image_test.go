@@ -15,7 +15,7 @@ import (
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
-func TestPlanImagesBuildsFiveOrderedImmutableStages(t *testing.T) {
+func TestPlanCompositionBuildsFiveOrderedImmutableStages(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "example.com/dependency v1.0.0 h1:sum\n")
@@ -23,11 +23,11 @@ func TestPlanImagesBuildsFiveOrderedImmutableStages(t *testing.T) {
 		SystemPackages: []string{"git", "ca-certificates"},
 		GoCommands:     map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@v0.34.0"},
 	})
-	plan, err := PlanImages(resolved, dir)
+	plan, err := PlanComposition(testImageRequest(resolved), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantNames := []string{"base", "tooling", "system-packages", "recipe-packages", "dependencies"}
+	wantNames := []string{"base", "toolchains", "system-packages", "recipe-packages", "dependencies"}
 	if len(plan.Stages) != len(wantNames) {
 		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantNames))
 	}
@@ -53,13 +53,13 @@ func TestPlanImagesBuildsFiveOrderedImmutableStages(t *testing.T) {
 	}
 }
 
-func TestPlanImagesExcludesUnrelatedGoModules(t *testing.T) {
+func TestPlanCompositionExcludesUnrelatedGoModules(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "root\n")
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", "go.mod"), "module example.com/unrelated\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", "go.sum"), "unrelated\n")
-	plan, err := PlanImages(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{}), dir)
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,17 +70,17 @@ func TestPlanImagesExcludesUnrelatedGoModules(t *testing.T) {
 	}
 }
 
-func TestPlanImagesChangesOnlyAffectedStageAndStagesAbove(t *testing.T) {
+func TestPlanCompositionChangesOnlyAffectedStageAndStagesAbove(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "first\n")
 	resolved := systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"git"}})
-	first, err := PlanImages(resolved, dir)
+	first, err := PlanComposition(testImageRequest(resolved), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "second\n")
-	second, err := PlanImages(resolved, dir)
+	second, err := PlanComposition(testImageRequest(resolved), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,15 +94,15 @@ func TestPlanImagesChangesOnlyAffectedStageAndStagesAbove(t *testing.T) {
 	}
 }
 
-func TestPlanImagesPreservesLowerStagesForPackageChanges(t *testing.T) {
+func TestPlanCompositionPreservesLowerStagesForPackageChanges(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "sum\n")
-	first, err := PlanImages(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"git"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.3"}}), dir)
+	first, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"git"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.3"}})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := PlanImages(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"curl"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.3"}}), dir)
+	second, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"curl"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.3"}})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestPlanImagesPreservesLowerStagesForPackageChanges(t *testing.T) {
 			t.Fatalf("stage %s did not change above system packages", first.Stages[i].Name)
 		}
 	}
-	third, err := PlanImages(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"curl"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.4"}}), dir)
+	third, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{SystemPackages: []string{"curl"}, GoCommands: map[string]string{"tool": "example.com/tool@v1.2.4"}})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,11 +128,11 @@ func TestPlanImagesPreservesLowerStagesForPackageChanges(t *testing.T) {
 	}
 }
 
-func TestPlanImagesSkipsUnlockedDependencyPreparation(t *testing.T) {
+func TestPlanCompositionSkipsUnlockedDependencyPreparation(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"pnpm@10.12.1"}`)
 	resolved := systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{})
-	plan, err := PlanImages(resolved, dir)
+	plan, err := PlanComposition(testImageRequest(resolved), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestPlanImagesSkipsUnlockedDependencyPreparation(t *testing.T) {
 	}
 }
 
-func TestPlanImagesKeepsCompleteNodeWorkspaceManifestContextAndSeedContract(t *testing.T) {
+func TestPlanCompositionKeepsCompleteNodeWorkspaceManifestContextAndSeedContract(t *testing.T) {
 	dir := t.TempDir()
 	member := filepath.Join(dir, "packages", "app")
 	writeImageTestFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"pnpm@10.12.1","workspaces":["packages/*"]}`)
@@ -154,7 +154,7 @@ func TestPlanImagesKeepsCompleteNodeWorkspaceManifestContextAndSeedContract(t *t
 	writeImageTestFile(t, filepath.Join(member, "main.js"), "ordinary source")
 	resolved := systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{})
 	resolved.Recipe.Workdir = "packages/app"
-	plan, err := PlanImages(resolved, dir)
+	plan, err := PlanComposition(testImageRequest(resolved), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,13 +172,13 @@ func TestPlanImagesKeepsCompleteNodeWorkspaceManifestContextAndSeedContract(t *t
 	}
 }
 
-func TestPlanImagesExcludesUnrelatedNodeProjects(t *testing.T) {
+func TestPlanCompositionExcludesUnrelatedNodeProjects(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"npm@11.4.2"}`)
 	writeImageTestFile(t, filepath.Join(dir, "package-lock.json"), `{}`)
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", "package.json"), `{"dependencies":{"local":"file:../private"}}`)
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", ".npmrc"), "//registry.example/:_authToken=secret\n")
-	plan, err := PlanImages(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{}), dir)
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,21 +190,21 @@ func TestPlanImagesExcludesUnrelatedNodeProjects(t *testing.T) {
 	}
 }
 
-func TestPlanImagesRejectsUnsafeLocalNodeDependencies(t *testing.T) {
+func TestPlanCompositionRejectsUnsafeLocalNodeDependencies(t *testing.T) {
 	for _, source := range []string{"file:../local", "link:../local", "portal:../local"} {
 		t.Run(source, func(t *testing.T) {
 			dir := t.TempDir()
 			writeImageTestFile(t, filepath.Join(dir, "package.json"), `{"dependencies":{"local":"`+source+`"}}`)
 			writeImageTestFile(t, filepath.Join(dir, "package-lock.json"), `{}`)
-			_, err := PlanImages(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{}), dir)
+			_, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{})), dir)
 			if err == nil || !strings.Contains(err.Error(), "local source") {
-				t.Fatalf("PlanImages error = %v, want local-source rejection", err)
+				t.Fatalf("PlanComposition error = %v, want local-source rejection", err)
 			}
 		})
 	}
 }
 
-func TestPlanImagesFailsClosedForCredentialOrExecutableManagerConfig(t *testing.T) {
+func TestPlanCompositionFailsClosedForCredentialOrExecutableManagerConfig(t *testing.T) {
 	for name, tc := range map[string]struct{ path, content, want string }{
 		"credential":          {path: ".npmrc", content: "//registry.example/:_authToken=secret\n", want: "credential"},
 		"embedded credential": {path: "package-lock.json", content: `{"packages":{},"resolved":"https://token@registry.example/package.tgz"}`, want: "embedded url credentials"},
@@ -215,15 +215,15 @@ func TestPlanImagesFailsClosedForCredentialOrExecutableManagerConfig(t *testing.
 			writeImageTestFile(t, filepath.Join(dir, "package.json"), `{"packageManager":"pnpm@10.12.1"}`)
 			writeImageTestFile(t, filepath.Join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
 			writeImageTestFile(t, filepath.Join(dir, tc.path), tc.content)
-			_, err := PlanImages(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{}), dir)
+			_, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.NodeProfile, recipe.Requirements{})), dir)
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.want) {
-				t.Fatalf("PlanImages error = %v, want %s rejection", err, name)
+				t.Fatalf("PlanComposition error = %v, want %s rejection", err, name)
 			}
 		})
 	}
 }
 
-func TestPlanImagesFailsClosedForUnsafeCargoConfiguration(t *testing.T) {
+func TestPlanCompositionFailsClosedForUnsafeCargoConfiguration(t *testing.T) {
 	for name, content := range map[string]string{
 		"credential": `[registries.private]
 credential-provider = "cargo:token"
@@ -244,15 +244,15 @@ local-registry = "registry"
 			writeImageTestFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n")
 			writeImageTestFile(t, filepath.Join(dir, "Cargo.lock"), "# lock\n")
 			writeImageTestFile(t, filepath.Join(dir, ".cargo", "config.toml"), content)
-			_, err := PlanImages(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{}), dir)
+			_, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{})), dir)
 			if err == nil || (!strings.Contains(strings.ToLower(err.Error()), "credential") && !strings.Contains(err.Error(), "cannot safely pre-key")) {
-				t.Fatalf("PlanImages error = %v, want unsafe Cargo configuration rejection", err)
+				t.Fatalf("PlanComposition error = %v, want unsafe Cargo configuration rejection", err)
 			}
 		})
 	}
 }
 
-func TestPlanImagesCreatesSafeRustTargetsWithoutPersistingOrdinaryDiffs(t *testing.T) {
+func TestPlanCompositionCreatesSafeRustTargetsWithoutPersistingOrdinaryDiffs(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n")
 	writeImageTestFile(t, filepath.Join(dir, "Cargo.lock"), "version = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n")
@@ -260,7 +260,7 @@ func TestPlanImagesCreatesSafeRustTargetsWithoutPersistingOrdinaryDiffs(t *testi
 	writeImageTestFile(t, filepath.Join(dir, "private.diff"), "private source fragment\n")
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", "Cargo.toml"), "[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\n")
 	writeImageTestFile(t, filepath.Join(dir, "unrelated", ".cargo", "config.toml"), "[registry]\ntoken = \"secret\"\n")
-	plan, err := PlanImages(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{}), dir)
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestRustDependencyContextSupportsLockedCargoFetch(t *testing.T) {
 	dir := t.TempDir()
 	writeImageTestFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n")
 	writeImageTestFile(t, filepath.Join(dir, "Cargo.lock"), "version = 4\n\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n")
-	plan, err := PlanImages(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{}), dir)
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.RustProfile, recipe.Requirements{})), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,23 +307,22 @@ func TestRustDependencyContextSupportsLockedCargoFetch(t *testing.T) {
 	}
 }
 
-func TestPlanImagesSelectsExactProfileBasesAndTooling(t *testing.T) {
+func TestPlanCompositionSelectsExactProfileBasesAndTooling(t *testing.T) {
 	tests := []struct {
 		name         string
 		profile      string
 		files        map[string]string
-		wantBase     string
 		wantTool     string
 		wantPlatform string
 	}{
-		{name: "none", wantBase: "ubuntu:24.04"},
-		{name: "go", profile: recipe.GoProfile, files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.26\n"}, wantBase: "golang:1.26.4-bookworm", wantTool: "go1.26.4"},
-		{name: "npm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{}`}, wantBase: "node:24.4.1-bookworm-slim", wantTool: "npm --version"},
-		{name: "pnpm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"pnpm@10.12.1"}`}, wantBase: "node:24.4.1-bookworm-slim", wantTool: "pnpm@10.12.1"},
-		{name: "yarn", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"yarn@4.9.2"}`}, wantBase: "node:24.4.1-bookworm-slim", wantTool: "yarn@4.9.2"},
-		{name: "bun", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"bun@1.2.17"}`}, wantBase: "oven/bun:1.2.17-slim", wantTool: "bun --version"},
-		{name: "rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"}, wantBase: "rust:1.96.0-bookworm", wantTool: "release: 1.96.0"},
-		{name: "host-qualified rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n", "rust-toolchain": "1.96.0-x86_64-unknown-linux-gnu\n"}, wantBase: "rust:1.96.0-bookworm", wantTool: "host: x86_64-unknown-linux-gnu", wantPlatform: "linux/amd64"},
+		{name: "none"},
+		{name: "go", profile: recipe.GoProfile, files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.26\n"}, wantTool: "go1.26.4"},
+		{name: "npm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{}`}, wantTool: "npm --version"},
+		{name: "pnpm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"pnpm@10.12.1"}`}, wantTool: "pnpm@10.12.1"},
+		{name: "yarn", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"yarn@4.9.2"}`}, wantTool: "yarn@4.9.2"},
+		{name: "bun", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"bun@1.2.17"}`}, wantTool: "bun --version"},
+		{name: "rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"}, wantTool: "release: 1.96.0"},
+		{name: "host-qualified rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n", "rust-toolchain": "1.96.0-x86_64-unknown-linux-gnu\n"}, wantTool: "host: x86_64-unknown-linux-gnu", wantPlatform: "linux/amd64"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -331,15 +330,15 @@ func TestPlanImagesSelectsExactProfileBasesAndTooling(t *testing.T) {
 			for path, content := range tc.files {
 				writeImageTestFile(t, filepath.Join(dir, path), content)
 			}
-			plan, err := PlanImages(systemImageRecipe(t, tc.profile, recipe.Requirements{}), dir)
+			plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, tc.profile, recipe.Requirements{})), dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.BaseImage != tc.wantBase {
-				t.Fatalf("base = %q, want %q", plan.BaseImage, tc.wantBase)
+			if plan.BaseImage != managedFoundation {
+				t.Fatalf("base = %q, want %q", plan.BaseImage, managedFoundation)
 			}
 			if tc.wantTool != "" && !strings.Contains(plan.Stages[1].Containerfile, tc.wantTool) {
-				t.Fatalf("tooling stage does not contain %q:\n%s", tc.wantTool, plan.Stages[1].Containerfile)
+				t.Fatalf("toolchains stage does not contain %q:\n%s", tc.wantTool, plan.Stages[1].Containerfile)
 			}
 			wantPlatform := tc.wantPlatform
 			if wantPlatform == "" {
@@ -352,21 +351,21 @@ func TestPlanImagesSelectsExactProfileBasesAndTooling(t *testing.T) {
 	}
 }
 
-func TestPlanImagesRejectsNonExactInstallablePackages(t *testing.T) {
+func TestPlanCompositionRejectsNonExactInstallablePackages(t *testing.T) {
 	for name, requirements := range map[string]recipe.Requirements{
 		"go":   {GoCommands: map[string]string{"tool": "example.com/tool@latest"}},
 		"node": {NodeCommands: map[string]string{"tool": "tool@^1.2.3"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := PlanImages(systemImageRecipe(t, "", requirements), t.TempDir())
+			_, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", requirements)), t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), "exact") {
-				t.Fatalf("PlanImages error = %v, want exact version rejection", err)
+				t.Fatalf("PlanComposition error = %v, want exact version rejection", err)
 			}
 		})
 	}
 }
 
-func TestPlanImagesRejectsSystemPackagesForUnsupportedDistribution(t *testing.T) {
+func TestPlanCompositionRejectsSystemPackagesForUnsupportedDistribution(t *testing.T) {
 	for _, image := range []string{
 		"alpine:3.22.0",
 		"example.com/alpine-bookworm:1.0.0",
@@ -379,29 +378,29 @@ func TestPlanImagesRejectsSystemPackagesForUnsupportedDistribution(t *testing.T)
 		t.Run(image, func(t *testing.T) {
 			resolved := systemImageRecipe(t, "", recipe.Requirements{SystemPackages: []string{"git"}})
 			resolved.Recipe.System = &recipe.SystemConfig{BaseImage: image}
-			_, err := PlanImages(resolved, t.TempDir())
-			if err == nil || !strings.Contains(err.Error(), "Debian/Ubuntu") {
-				t.Fatalf("PlanImages error = %v, want provider rejection", err)
+			_, err := PlanComposition(testImageRequest(resolved), t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), "Debian or Ubuntu") {
+				t.Fatalf("PlanComposition error = %v, want provider rejection", err)
 			}
 		})
 	}
 }
 
-func TestPlanImagesRejectsMutableOrDynamicBaseOverride(t *testing.T) {
+func TestPlanCompositionRejectsMutableOrDynamicBaseOverride(t *testing.T) {
 	for _, image := range []string{"ubuntu:latest", "{IMAGE}", "ubuntu"} {
 		t.Run(image, func(t *testing.T) {
 			resolved := systemImageRecipe(t, "", recipe.Requirements{})
 			resolved.Recipe.System = &recipe.SystemConfig{BaseImage: image}
-			_, err := PlanImages(resolved, t.TempDir())
+			_, err := PlanComposition(testImageRequest(resolved), t.TempDir())
 			if err == nil {
-				t.Fatalf("PlanImages accepted %q", image)
+				t.Fatalf("PlanComposition accepted %q", image)
 			}
 		})
 	}
 }
 
-func TestPlanImagesInstallsNodeCommandsOnManagedPath(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{NodeCommands: map[string]string{"tool": "example-tool@1.2.3"}}), t.TempDir())
+func TestPlanCompositionInstallsNodeCommandsOnManagedPath(t *testing.T) {
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{NodeCommands: map[string]string{"tool": "example-tool@1.2.3"}})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +411,7 @@ func TestPlanImagesInstallsNodeCommandsOnManagedPath(t *testing.T) {
 }
 
 func TestBuildImagesBuildsMissingStagesAndPublishesFinalAlias(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +462,7 @@ func TestBuildImagesBuildsMissingStagesAndPublishesFinalAlias(t *testing.T) {
 }
 
 func TestBuildImagesRejectsExistingTagLabelCollision(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +476,7 @@ func TestBuildImagesRejectsExistingTagLabelCollision(t *testing.T) {
 }
 
 func TestBuildImagesReusesValidLowerStages(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +495,7 @@ func TestBuildImagesReusesValidLowerStages(t *testing.T) {
 }
 
 func TestBuildImagesFailureDoesNotPublishFinalAlias(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +511,7 @@ func TestBuildImagesFailureDoesNotPublishFinalAlias(t *testing.T) {
 }
 
 func TestBuildImagesPropagatesStreamingBuildCancellation(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +529,7 @@ func TestBuildImagesPropagatesStreamingBuildCancellation(t *testing.T) {
 }
 
 func TestBuildImagesRejectsUnverifiedFinalAlias(t *testing.T) {
-	plan, err := PlanImages(systemImageRecipe(t, "", recipe.Requirements{}), t.TempDir())
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,6 +612,16 @@ func systemImageRecipe(t *testing.T, profile string, requirements recipe.Require
 		t.Fatal(err)
 	}
 	return resolved
+}
+
+func testImageRequest(resolved recipe.Resolved) ImageRequest {
+	return ImageRequest{
+		Root: resolved,
+		Contributions: []ImageContribution{{
+			Resolved: resolved,
+			Workdir:  filepath.ToSlash(resolved.Recipe.Workdir),
+		}},
+	}
 }
 
 func writeImageTestFile(t *testing.T, path, content string) {
