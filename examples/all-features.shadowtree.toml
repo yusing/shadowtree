@@ -253,4 +253,4 @@ cmd = "printf 'system sandbox demo only\\n'"
 base_image = "ubuntu:24.04"
 
 [recipes.system-mode-demo.requires]
-system_packages = ["ca-certificates"]
+system_packages = ["git"]

@@ -233,7 +233,7 @@
               { "pattern": "@sha256:[0-9a-fA-F]{64}$" }
             ] }
           ],
-          "description": "Literal non-latest base image tag or digest. Composed toolchains or system packages require a pinned Debian or Ubuntu foundation. Runtime arguments and variables cannot select it."
+          "description": "Literal non-latest pinned Debian or Ubuntu base image tag or digest. Shadowtree preinstalls ca-certificates, curl, tzdata, and wget. Runtime arguments and variables cannot select it."
         }
       },
       "x-taplo": { "initKeys": ["base_image"] }

@@ -20,7 +20,7 @@ func TestPlanCompositionBuildsFiveOrderedImmutableStages(t *testing.T) {
 	writeImageTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeImageTestFile(t, filepath.Join(dir, "go.sum"), "example.com/dependency v1.0.0 h1:sum\n")
 	resolved := systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{
-		SystemPackages: []string{"git", "ca-certificates"},
+		SystemPackages: []string{"wget", "tzdata", "git", "curl", "ca-certificates"},
 		GoCommands:     map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@v0.34.0"},
 	})
 	plan, err := PlanComposition(testImageRequest(resolved), dir)
@@ -45,7 +45,7 @@ func TestPlanCompositionBuildsFiveOrderedImmutableStages(t *testing.T) {
 			t.Fatalf("stage[%d] parent = %q, want %q", i, stage.Labels["shadowtree.parent-key"], plan.Stages[i-1].Key)
 		}
 	}
-	if !strings.Contains(plan.Stages[2].Containerfile, "'ca-certificates' 'git'") {
+	if !strings.Contains(plan.Stages[2].Containerfile, "'ca-certificates' 'curl' 'git' 'tzdata' 'wget'") {
 		t.Fatalf("system package order is not canonical:\n%s", plan.Stages[2].Containerfile)
 	}
 	if !strings.Contains(plan.Stages[4].Containerfile, "go mod download") || len(plan.Stages[4].Context) != 2 {
@@ -169,6 +169,9 @@ func TestPlanCompositionKeepsCompleteNodeWorkspaceManifestContextAndSeedContract
 	}
 	if len(plan.DependencySeeds) != 1 || plan.DependencySeeds[0].Provider != "pnpm" || !strings.Contains(plan.Stages[4].Containerfile, "--store-dir .shadowtree-pnpm-store") {
 		t.Fatalf("dependency seed contract = %#v\n%s", plan.DependencySeeds, plan.Stages[4].Containerfile)
+	}
+	if !strings.Contains(plan.Stages[4].Containerfile, "RUN chmod a+rx '/opt/shadowtree/dependencies' '/opt/shadowtree/dependencies/node_modules'") {
+		t.Fatalf("dependency seed is not readable by the confined lifecycle user:\n%s", plan.Stages[4].Containerfile)
 	}
 }
 

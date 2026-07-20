@@ -22,16 +22,26 @@ progress on stderr, continue after an unusable installed candidate, and aggregat
 candidate failures when none is usable.
 
 System images form five deterministic immutable stages above a pinned external
-profile base: base metadata, exact tooling, normalized system packages, exact
-recipe packages, and locked project dependencies. Tags and full ownership/key
-labels are validated before reuse, and collisions fail without overwrite.
-`system.base_image` is a literal non-`latest` override valid only in system
-mode. Locked preparation uses manifest-only contexts and disables Node/Bun
+profile base: verified Debian/Ubuntu foundation plus preinstalled
+`ca-certificates`, `curl`, `tzdata`, and `wget`, exact tooling, normalized
+additional system packages, exact recipe packages, and locked project
+dependencies. Tags and full
+ownership/key labels are validated before reuse, and collisions fail without
+overwrite. `system.base_image` is a literal non-`latest` Debian or Ubuntu
+override valid only in system mode. Locked preparation uses manifest-only
+contexts and disables Node/Bun
 lifecycle scripts; unlocked projects skip automatic dependency preparation.
+Exact `requires.node_commands` packages use a managed Node/npm provider; a Bun
+project composes that provider alongside Bun rather than treating Bun as an npm
+binary provider.
 One ephemeral read-only-root container runs the complete resolved lifecycle
 against a private workspace mounted at the canonical checkout path. Nested
 references reuse that lifecycle, cancellation preserves `post`, and successful
 sync-out consumes the private workspace through the existing confinement rules.
+The system workspace excludes `.git`, retains Shadowtree configuration for
+cross-config references, and warns while omitting source paths unreadable by the
+invoking user. An omitted path that overlaps selected sync-out, or any omission
+combined with whole-workspace sync-out, fails before lifecycle execution.
 Go `GOCACHE` and Rust workspace `target` use canonical-project-owned named
 volumes with complete compatibility labels; compatible recipes share within
 one checkout only. Inspection never mounts caches, and reset validates exact
@@ -102,8 +112,10 @@ checkout. `--sync-out`, `sync_out`, and `--sync-out-all` only apply to sandboxed
 execution.
 
 Shadowtree intentionally skips `.git`, `.shadowtree`, and `.shadowtree.*` while
-preparing sandboxed workspaces. Because `.git` is skipped, Go build recipes that
-require VCS stamping should use `-buildvcs=false`.
+preparing namespace or copied-fallback workspaces. System workspaces also skip
+`.git`, but retain Shadowtree configuration because cross-config references are
+resolved inside the mounted private copy. Because `.git` is skipped, Go build
+recipes that require VCS stamping should use `-buildvcs=false`.
 
 ## CLI
 

@@ -3,6 +3,7 @@ package systemsandbox
 import (
 	"fmt"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +14,10 @@ import (
 const (
 	managedFoundation        = "debian:trixie-slim"
 	toolchainContractVersion = "toolchain-provider-v1"
+	caCertificatesPackage    = "ca-certificates"
+	curlPackage              = "curl"
+	timezoneDataPackage      = "tzdata"
+	wgetPackage              = "wget"
 )
 
 // ImageRequest preserves every recipe contribution used to plan one system
@@ -97,8 +102,7 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	if err != nil {
 		return ImagePlan{}, err
 	}
-	composed := len(toolchains) > 0 || len(request.Root.Recipe.Requires.SystemPackages) > 0
-	foundation, err := compositionFoundation(request.Contributions, composed)
+	foundation, err := compositionFoundation(request.Contributions)
 	if err != nil {
 		return ImagePlan{}, err
 	}
@@ -116,10 +120,12 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	}
 	projectKey := CanonicalProjectKey(source)
 	recipeKey := digestKey(map[string]any{"config": rootConfigIdentity(request), "recipe": request.Root.Name})
-	baseCommands := []string{"LABEL shadowtree.plan=" + shellQuote("system-image-v2")}
-	if composed {
-		baseCommands = append(baseCommands, "RUN test -r /etc/os-release && . /etc/os-release && case \"$ID\" in debian|ubuntu) ;; *) echo unsupported foundation: \"$ID\" >&2; exit 1;; esac")
+	baseCommands := []string{
+		"LABEL shadowtree.plan=" + shellQuote("system-image-v2"),
+		"RUN test -r /etc/os-release && . /etc/os-release && case \"$ID\" in debian|ubuntu) ;; *) echo unsupported foundation: \"$ID\" >&2; exit 1;; esac",
+		"ARG DEBIAN_FRONTEND=noninteractive",
 	}
+	baseCommands = append(baseCommands, systemPackageCommands([]string{caCertificatesPackage, curlPackage, timezoneDataPackage, wgetPackage})...)
 	inputs := []stageInput{
 		{name: "base", commands: baseCommands},
 		{name: "toolchains", commands: tooling, metadata: map[string]string{"contract": toolchainContractVersion}},
@@ -300,8 +306,35 @@ func contributionPlans(contributions []ImageContribution, source string) (depend
 	if len(combined.commands) == 0 {
 		combined.context = nil
 		combined.metadata = nil
+	} else if command := dependencySeedReadabilityCommand(seeds); command != "" {
+		combined.commands = append(combined.commands, command)
 	}
 	return combined, plans, seeds, descriptors, nil
+}
+
+func dependencySeedReadabilityCommand(seeds []DependencySeed) string {
+	const root = "/opt/shadowtree/dependencies"
+	paths := map[string]struct{}{}
+	for _, seed := range seeds {
+		current := path.Clean(seed.SourcePath)
+		if current != root && !strings.HasPrefix(current, root+"/") {
+			continue
+		}
+		for ; ; current = path.Dir(current) {
+			paths[current] = struct{}{}
+			if current == root {
+				break
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(paths))
+	for _, name := range slices.Sorted(maps.Keys(paths)) {
+		quoted = append(quoted, shellQuote(name))
+	}
+	return "RUN chmod a+rx " + strings.Join(quoted, " ")
 }
 
 func dependencyProvider(profile string, metadata map[string]string) (string, string) {
@@ -398,6 +431,17 @@ func resolveToolchains(request ImageRequest, source string) ([]ResolvedToolchain
 		resolved := request.Root
 		resolved.Profile = requirement.profile
 		contribution := ImageContribution{Resolved: resolved, ConfigIdentity: rootConfigIdentity(request)}
+		if requirement.kind == "node" {
+			manager := recipe.DefaultNodePackageManager()
+			origin := ToolchainOrigin{
+				ConfigIdentity: contribution.ConfigIdentity,
+				Recipe:         contribution.Resolved.Name,
+				Provenance:     manager.Provenance,
+			}
+			toolchain := nodeToolchain(manager, origin, platform)
+			selected[toolchain.Kind] = toolchain
+			continue
+		}
 		toolchain, ok, err := resolveContributionToolchain(contribution, source)
 		if err != nil {
 			return nil, "", fmt.Errorf("installable %s command provider: %w", requirement.kind, err)
@@ -449,29 +493,7 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 			return ResolvedToolchain{}, false, err
 		}
 		origin.Provenance = relativeProvenance(source, manager.Provenance)
-		if manager.Name == "bun" {
-			prefix := "/opt/shadowtree/toolchains/bun/" + manager.Version
-			return provider("bun", manager.Identity, "bun", platform, origin,
-				[]string{"COPY --from=oven/bun:" + manager.Version + "-slim /usr/local/bin/bun " + prefix + "/bin/bun", "RUN ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bun && ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bunx"},
-				[]string{"RUN test \"$(/opt/shadowtree/bin/bun --version)\" = " + shellQuote(manager.Version)}, nil), true, nil
-		}
-		identity := recipe.DefaultNodeRelease + "+" + manager.Identity
-		prefix := "/opt/shadowtree/toolchains/node/" + identity
-		setup := []string{"COPY --from=" + recipe.DefaultNodeImage + " /usr/local/ " + prefix + "/", "RUN ln -s " + prefix + "/bin/node /opt/shadowtree/bin/node && ln -s " + prefix + "/bin/npm /opt/shadowtree/bin/npm && ln -s " + prefix + "/bin/npx /opt/shadowtree/bin/npx && ln -s " + prefix + "/bin/corepack /opt/shadowtree/bin/corepack"}
-		verify := []string{"RUN test \"$(/opt/shadowtree/bin/node --version)\" = v" + recipe.DefaultNodeRelease}
-		environment := map[string]string{}
-		if manager.Name == "pnpm" || manager.Name == "yarn" {
-			corepackHome := prefix + "/corepack"
-			environment["COREPACK_HOME"] = corepackHome
-			setup = append(setup, "RUN COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack enable --install-directory /opt/shadowtree/bin && COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack prepare "+shellQuote(manager.Identity)+" --activate")
-			verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/"+manager.Name+" --version)\" = "+shellQuote(manager.Version))
-		} else {
-			if manager.Declared {
-				setup = append(setup, "RUN "+prefix+"/bin/npm install --global --prefix "+prefix+" --ignore-scripts "+shellQuote(manager.Identity))
-			}
-			verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/npm --version)\" = "+shellQuote(manager.Version))
-		}
-		return provider("node", identity, manager.Name, platform, origin, setup, verify, environment), true, nil
+		return nodeToolchain(manager, origin, platform), true, nil
 	case "rust":
 		identity, err := recipe.RustToolchainWithin(dir, source)
 		if err != nil {
@@ -498,11 +520,37 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 	return ResolvedToolchain{}, false, fmt.Errorf("supported profile %q has unknown provider %q", contribution.Resolved.Profile, providerKind)
 }
 
+func nodeToolchain(manager recipe.NodePackageManagerInfo, origin ToolchainOrigin, platform string) ResolvedToolchain {
+	if manager.Name == "bun" {
+		prefix := "/opt/shadowtree/toolchains/bun/" + manager.Version
+		return provider("bun", manager.Identity, "bun", platform, origin,
+			[]string{"COPY --from=oven/bun:" + manager.Version + "-slim /usr/local/bin/bun " + prefix + "/bin/bun", "RUN ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bun && ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bunx"},
+			[]string{"RUN test \"$(/opt/shadowtree/bin/bun --version)\" = " + shellQuote(manager.Version)}, nil)
+	}
+	identity := recipe.DefaultNodeRelease + "+" + manager.Identity
+	prefix := "/opt/shadowtree/toolchains/node/" + identity
+	setup := []string{"COPY --from=" + recipe.DefaultNodeImage + " /usr/local/ " + prefix + "/", "RUN ln -s " + prefix + "/bin/node /opt/shadowtree/bin/node && ln -s " + prefix + "/bin/npm /opt/shadowtree/bin/npm && ln -s " + prefix + "/bin/npx /opt/shadowtree/bin/npx && ln -s " + prefix + "/bin/corepack /opt/shadowtree/bin/corepack"}
+	verify := []string{"RUN test \"$(/opt/shadowtree/bin/node --version)\" = v" + recipe.DefaultNodeRelease}
+	environment := map[string]string{}
+	if manager.Name == "pnpm" || manager.Name == "yarn" {
+		corepackHome := prefix + "/corepack"
+		environment["COREPACK_HOME"] = corepackHome
+		setup = append(setup, "RUN COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack enable --install-directory /opt/shadowtree/bin && COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack prepare "+shellQuote(manager.Identity)+" --activate")
+		verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/"+manager.Name+" --version)\" = "+shellQuote(manager.Version))
+	} else {
+		if manager.Declared {
+			setup = append(setup, "RUN "+prefix+"/bin/npm install --global --prefix "+prefix+" --ignore-scripts "+shellQuote(manager.Identity))
+		}
+		verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/npm --version)\" = "+shellQuote(manager.Version))
+	}
+	return provider("node", identity, manager.Name, platform, origin, setup, verify, environment)
+}
+
 func provider(kind, identity, variant, platform string, origin ToolchainOrigin, setup, verification []string, environment map[string]string) ResolvedToolchain {
 	return ResolvedToolchain{Kind: kind, Identity: identity, Variant: variant, Platform: platform, ContractVersion: toolchainContractVersion, Setup: setup, Verification: verification, Environment: environment, Origins: []ToolchainOrigin{origin}}
 }
 
-func compositionFoundation(contributions []ImageContribution, composed bool) (string, error) {
+func compositionFoundation(contributions []ImageContribution) (string, error) {
 	base := ""
 	for _, contribution := range contributions {
 		if contribution.Resolved.Recipe.System == nil || contribution.Resolved.Recipe.System.BaseImage == "" {
@@ -520,8 +568,8 @@ func compositionFoundation(contributions []ImageContribution, composed bool) (st
 	if err := validateBaseImage(base); err != nil {
 		return "", fmt.Errorf("system.base_image: %w", err)
 	}
-	if composed && !supportedCompositionFoundation(base) {
-		return "", fmt.Errorf("system.base_image %q cannot host composed toolchains or system packages; use pinned Debian or Ubuntu", base)
+	if !supportedCompositionFoundation(base) {
+		return "", fmt.Errorf("system.base_image %q cannot host the managed base packages; use pinned Debian or Ubuntu", base)
 	}
 	return base, nil
 }

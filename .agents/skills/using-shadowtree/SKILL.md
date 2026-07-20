@@ -107,7 +107,8 @@ provider setup and verification, five immutable stages, plural dependencies
 and seeds, context hashes, mutable cache identities and mounts, and sync-out
 intersections without building. Treat
 `requires.system_packages` as image inputs, not host package installation
-instructions.
+instructions. The base stage already provides `ca-certificates`, `curl`,
+`tzdata`, and `wget`.
 
 Execution runs the complete lifecycle in one ephemeral container against a
 private copied workspace. Nested references do not create nested images or

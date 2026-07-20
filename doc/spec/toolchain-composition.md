@@ -50,12 +50,11 @@ toolchain. Providers install into disjoint managed prefixes and publish only
 declared commands and environment, so no provider depends on being the base,
 first, or last toolchain.
 
-An explicit `system.base_image` used with any toolchain or system package must
-be a supported pinned Debian or Ubuntu foundation. Shadowtree still performs
-complete provider setup and validates the actual distribution; it never assumes
-the custom base already contains the root profile's toolchain. Other explicit
-bases fail during planning. A recipe without toolchains and system packages may
-retain the general pinned-base behavior defined by the system sandbox.
+An explicit `system.base_image` must be a supported pinned Debian or Ubuntu
+foundation. Shadowtree still performs complete base-package and provider setup
+and validates the actual distribution; it never assumes the custom base already
+contains the trust store, download clients, timezone database, or root profile's
+toolchain. Other explicit bases fail during planning.
 
 Provider setup guarantees coexistence of the language tools, not arbitrary
 native project dependencies. Go cgo builds, Node/Bun native addons, Rust native

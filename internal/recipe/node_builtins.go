@@ -222,8 +222,16 @@ func resolveNodePackageManager(dir, boundary string) (NodePackageManagerInfo, er
 			break
 		}
 	}
+	manager := DefaultNodePackageManager()
+	manager.ProjectDir = projectDir
+	return manager, nil
+}
+
+// DefaultNodePackageManager returns the release-pinned npm provider used when
+// a system composition needs Node tooling independently of a project's manager.
+func DefaultNodePackageManager() NodePackageManagerInfo {
 	version := nodePackageManagerReleaseVersions["npm"]
-	return NodePackageManagerInfo{Name: "npm", Version: version, Identity: "npm@" + version, Provenance: "shadowtree-default", ProjectDir: projectDir}, nil
+	return NodePackageManagerInfo{Name: "npm", Version: version, Identity: "npm@" + version, Provenance: "shadowtree-default"}
 }
 
 func parseNodePackageManager(value string) (name, version string, ok bool, err error) {

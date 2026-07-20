@@ -1479,18 +1479,46 @@ func requirementMapText(values map[string]string) string {
 }
 
 func CopyTree(srcRoot, dstRoot string) error {
-	return filepath.WalkDir(srcRoot, func(src string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	_, err := copyTree(srcRoot, dstRoot, shouldSkip, false)
+	return err
+}
+
+func copySystemWorkspaceTree(srcRoot, dstRoot string) ([]string, error) {
+	return copyTree(srcRoot, dstRoot, func(_ string, entry fs.DirEntry) bool {
+		return entry.Name() == ".git"
+	}, true)
+}
+
+func copyTree(srcRoot, dstRoot string, skip func(string, fs.DirEntry) bool, skipUnreadable bool) ([]string, error) {
+	var skipped []string
+	directoryModes := map[string]os.FileMode{}
+	omitUnreadable := func(rel string, entry fs.DirEntry, err error) error {
+		if !skipUnreadable || rel == "." || !errors.Is(err, fs.ErrPermission) {
+			return err
 		}
+		skipped = append(skipped, filepath.ToSlash(rel))
+		if entry != nil && entry.IsDir() {
+			dst := filepath.Join(dstRoot, rel)
+			delete(directoryModes, dst)
+			if removeErr := os.RemoveAll(dst); removeErr != nil {
+				return fmt.Errorf("remove incomplete destination for unreadable directory %q: %w", rel, removeErr)
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	err := filepath.WalkDir(srcRoot, func(src string, entry fs.DirEntry, walkErr error) error {
 		rel, err := filepath.Rel(srcRoot, src)
 		if err != nil {
 			return err
 		}
+		if walkErr != nil {
+			return omitUnreadable(rel, entry, walkErr)
+		}
 		if rel == "." {
 			return os.MkdirAll(dstRoot, 0o755)
 		}
-		if shouldSkip(rel, entry) {
+		if skip(rel, entry) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -1499,24 +1527,57 @@ func CopyTree(srcRoot, dstRoot string) error {
 		dst := filepath.Join(dstRoot, rel)
 		info, err := entry.Info()
 		if err != nil {
-			return err
+			return omitUnreadable(rel, entry, err)
 		}
 		mode := info.Mode()
 		switch {
 		case mode.IsDir():
-			return os.MkdirAll(dst, mode.Perm())
+			directoryModes[dst] = mode.Perm()
+			return os.MkdirAll(dst, mode.Perm()|0o700)
 		case mode.Type() == 0:
-			return copyRegularFile(src, dst, mode.Perm())
+			err := copyRegularFile(src, dst, mode.Perm())
+			if !errors.Is(err, fs.ErrPermission) {
+				return err
+			}
+			in, sourceErr := os.Open(src)
+			if sourceErr != nil {
+				return omitUnreadable(rel, entry, sourceErr)
+			}
+			if closeErr := in.Close(); closeErr != nil {
+				return closeErr
+			}
+			return err
 		case mode.Type() == os.ModeSymlink:
 			target, err := os.Readlink(src)
 			if err != nil {
-				return err
+				return omitUnreadable(rel, entry, err)
 			}
 			return os.Symlink(target, dst)
 		default:
 			return nil
 		}
 	})
+	slices.Sort(skipped)
+	if err != nil {
+		return skipped, err
+	}
+	directories := slices.Sorted(maps.Keys(directoryModes))
+	slices.SortStableFunc(directories, func(a, b string) int {
+		switch {
+		case len(a) > len(b):
+			return -1
+		case len(a) < len(b):
+			return 1
+		default:
+			return 0
+		}
+	})
+	for _, directory := range directories {
+		if err := os.Chmod(directory, directoryModes[directory]); err != nil {
+			return skipped, err
+		}
+	}
+	return skipped, err
 }
 
 func cleanSyncOutPath(requested string) (string, error) {

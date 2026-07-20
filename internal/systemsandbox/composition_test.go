@@ -79,6 +79,79 @@ func TestPlanCompositionSupportsNodeVariantsInMixedSets(t *testing.T) {
 	}
 }
 
+func TestPlanCompositionAddsNodeProviderForNodeCommandsInBunProject(t *testing.T) {
+	root := compositionProject(t)
+	writeImageTestFile(t, filepath.Join(root, "package.json"), `{"packageManager":"bun@1.2.17"}`)
+	request := compositionRequest(t, root, []string{recipe.NodeProfile})
+	request.Root.Recipe.Requires.NodeCommands = map[string]string{"tool": "example-tool@1.2.3"}
+
+	plan, err := PlanComposition(request, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, toolchain := range plan.Toolchains {
+		kinds = append(kinds, toolchain.Kind)
+	}
+	if !slices.Equal(kinds, []string{"bun", "node"}) {
+		t.Fatalf("toolchain kinds = %v, want bun and node", kinds)
+	}
+	if containerfile := plan.Stages[3].Containerfile; !strings.Contains(containerfile, "npm install --global --prefix /opt/shadowtree") {
+		t.Fatalf("node command is not installed with the composed npm provider:\n%s", containerfile)
+	}
+}
+
+func TestPlanCompositionPreservesCorepackProviderForNodeCommands(t *testing.T) {
+	for manager, test := range map[string]struct {
+		declaration       string
+		lockfile          string
+		config            map[string]string
+		dependencyCommand string
+	}{
+		"pnpm": {
+			declaration:       "pnpm@10.12.1",
+			lockfile:          "pnpm-lock.yaml",
+			dependencyCommand: "pnpm install --frozen-lockfile",
+		},
+		"yarn": {
+			declaration: "yarn@4.9.2",
+			lockfile:    "yarn.lock",
+			config: map[string]string{
+				".yarnrc.yml": "nodeLinker: node-modules\n",
+			},
+			dependencyCommand: "yarn install --immutable",
+		},
+	} {
+		t.Run(manager, func(t *testing.T) {
+			root := compositionProject(t)
+			writeImageTestFile(t, filepath.Join(root, "package.json"), `{"packageManager":"`+test.declaration+`"}`)
+			writeImageTestFile(t, filepath.Join(root, test.lockfile), "lock\n")
+			for name, content := range test.config {
+				writeImageTestFile(t, filepath.Join(root, name), content)
+			}
+			request := compositionRequest(t, root, []string{recipe.NodeProfile})
+			request.Root.Recipe.Requires.NodeCommands = map[string]string{"tool": "example-tool@1.2.3"}
+
+			plan, err := PlanComposition(request, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.Toolchains) != 1 || plan.Toolchains[0].Kind != "node" || plan.Toolchains[0].Variant != manager {
+				t.Fatalf("toolchains = %#v, want the project %s provider only", plan.Toolchains, manager)
+			}
+			if tooling := plan.Stages[1].Containerfile; !strings.Contains(tooling, "corepack prepare '"+test.declaration+"'") || !strings.Contains(tooling, "COREPACK_HOME=") {
+				t.Fatalf("tooling stage lost the %s Corepack provider:\n%s", manager, tooling)
+			}
+			if recipePackages := plan.Stages[3].Containerfile; !strings.Contains(recipePackages, "npm install --global --prefix /opt/shadowtree") {
+				t.Fatalf("recipe-package stage does not install the Node command with npm:\n%s", recipePackages)
+			}
+			if dependencies := plan.Stages[4].Containerfile; !strings.Contains(dependencies, test.dependencyCommand) {
+				t.Fatalf("dependency stage lost the %s project manager:\n%s", manager, dependencies)
+			}
+		})
+	}
+}
+
 func TestResolveToolchainsMergesExactAndDefaultButRejectsExactConflict(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{"default", "exact", "other"} {
@@ -169,6 +242,21 @@ func TestPlanCompositionVerifiesFoundationBeforeProviders(t *testing.T) {
 	if !strings.Contains(plan.Stages[0].Containerfile, "/etc/os-release") || !strings.Contains(plan.Stages[0].Containerfile, "debian|ubuntu") {
 		t.Fatalf("base stage lacks distribution verification:\n%s", plan.Stages[0].Containerfile)
 	}
+	if !strings.Contains(plan.Stages[0].Containerfile, "'ca-certificates' 'curl' 'tzdata' 'wget'") {
+		t.Fatalf("base stage lacks managed network and timezone packages:\n%s", plan.Stages[0].Containerfile)
+	}
+}
+
+func TestPlanCompositionRequiresSupportedFoundationWithoutToolchains(t *testing.T) {
+	root := compositionProject(t)
+	request := testImageRequest(systemImageRecipe(t, "", recipe.Requirements{}))
+	request.Contributions[0].Resolved.Recipe.System = &recipe.SystemConfig{BaseImage: "alpine:3.22"}
+	request.Root.Recipe.System = request.Contributions[0].Resolved.Recipe.System
+
+	_, err := PlanComposition(request, root)
+	if err == nil || !strings.Contains(err.Error(), "managed base packages") {
+		t.Fatalf("PlanComposition error = %v", err)
+	}
 }
 
 func TestPlanCompositionAddsInstallableCommandProviders(t *testing.T) {
@@ -254,6 +342,31 @@ func TestToolchainStageCommandsAllowsUnrelatedEnvironmentNames(t *testing.T) {
 		if !strings.Contains(containerfile, environment) {
 			t.Fatalf("toolchain commands omit %q:\n%s", environment, containerfile)
 		}
+	}
+}
+
+func TestDependencySeedReadabilityCommandConfinesPaths(t *testing.T) {
+	command := dependencySeedReadabilityCommand([]DependencySeed{
+		{SourcePath: "/opt/shadowtree/dependencies/webui/node_modules"},
+		{SourcePath: "/opt/shadowtree/dependencies-other/collision"},
+		{SourcePath: "/opt/shadowtree/dependencies/../../future"},
+	})
+	for _, expected := range []string{
+		"'/opt/shadowtree/dependencies'",
+		"'/opt/shadowtree/dependencies/webui'",
+		"'/opt/shadowtree/dependencies/webui/node_modules'",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("dependency readability command omits %s: %s", expected, command)
+		}
+	}
+	for _, unrelated := range []string{"dependencies-other", "future"} {
+		if strings.Contains(command, unrelated) {
+			t.Fatalf("dependency readability command includes unrelated path %q: %s", unrelated, command)
+		}
+	}
+	if got := dependencySeedReadabilityCommand(nil); got != "" {
+		t.Fatalf("empty dependency readability command = %q", got)
 	}
 }
 

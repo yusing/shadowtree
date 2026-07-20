@@ -42,6 +42,12 @@ the image-plan contract version. Provider setup may use verified archives or
 official donor stages, but the final filesystem is always rooted in the common
 foundation rather than a primary profile image.
 
+The base stage verifies Debian/Ubuntu and installs `ca-certificates`, `curl`,
+`tzdata`, and `wget` before any provider runs. Those packages are part of the
+reusable base identity. The higher system-packages stage remains a literal
+rendering of `requires.system_packages` and does not special-case matching
+requests.
+
 Providers install under disjoint versioned paths:
 
 ```text
@@ -60,9 +66,9 @@ provider may depend on precedence to overwrite another.
 Every provider verifies its exact version and relevant host/platform identity
 after installation. Donor image, archive checksum, layout, setup operations,
 verification, and environment form provider-versioned immutable inputs. An
-explicit composed base is accepted only by the Debian/Ubuntu foundation owner,
-is included in identity, and receives the same complete provider setup and an
-early distribution check.
+explicit base is accepted only by the Debian/Ubuntu foundation owner, is
+included in identity, and receives the same base-package setup, complete
+provider setup, and early distribution check.
 
 ## CTR-TOOL-004 — Separate reusable tooling from project identity
 
@@ -70,7 +76,7 @@ The immutable chain remains:
 
 ```text
 external managed or explicit foundation
--> base metadata
+-> verified foundation packages
 -> composed toolchains
 -> normalized system packages
 -> exact typed provider commands

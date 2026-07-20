@@ -21,8 +21,10 @@ container, and system mode never falls back.
 
 System images use a deterministic lower-to-higher chain: the managed
 `debian:trixie-slim` foundation (or supported explicit foundation), base
-metadata, composed profile toolchains, normalized `requires.system_packages`,
-exact recipe tool packages, and plural locked project dependencies. Every immutable stage
+distribution verification plus `ca-certificates`, `curl`, `tzdata`, and `wget`,
+composed profile toolchains, normalized additional `requires.system_packages`,
+exact recipe tool packages, and plural locked project dependencies. Every
+immutable stage
 has a content key, canonical local tag, complete ownership labels, and its
 lower-stage key as an input. Existing tags are reused only when all expected
 labels match; collisions fail without overwriting the image.
@@ -31,15 +33,18 @@ Every profile referenced by the top-level lifecycle contributes a toolchain.
 Providers install into disjoint versioned paths below
 `/opt/shadowtree/toolchains` and publish declared commands through
 `/opt/shadowtree/bin`; root profile and reference order never choose a base.
-A recipe may set a literal non-`latest` override only in system mode. When a
-toolchain or system package is present, that override must be pinned Debian or
-Ubuntu:
+A recipe may set a literal non-`latest` override only in system mode. The
+override must be pinned Debian or Ubuntu so Shadowtree can guarantee the base
+packages:
 
 - Go uses an exact `toolchain` directive, the documented `1.26.4` release for
   the supported `go 1.26` directive, or fails with `system.base_image` guidance
   for an unsupported unpinned minor.
 - Node uses exact Node `24.4.1` tooling; exact npm, pnpm, and Yarn declarations
   select verified manager variants, while Bun selects its exact provider.
+- Exact `requires.node_commands` packages are installed by a managed Node/npm
+  provider. A Bun project therefore composes Bun with Node/npm when such a
+  command is required instead of assuming Bun provides `npm`.
 - Rust uses the exact resolved Rust release and verifies any declared host
   qualifier against the selected Linux platform.
 - A recipe without a profile still uses the managed Trixie foundation.
@@ -53,7 +58,7 @@ cmd = "go build ./..."
 base_image = "debian:trixie-slim"
 
 [recipes.build.requires]
-system_packages = ["ca-certificates", "git"]
+system_packages = ["git"]
 ```
 
 Locked dependency preparation runs for every contributed ecosystem whose
@@ -84,6 +89,14 @@ host binary matching the selected image architecture and fails before building
 otherwise. Cancellation sends `TERM` so `post` can run, followed by a bounded
 forced kill only if cleanup does not finish. Sync-out runs only after complete
 success, while recipe logs are preserved after failures.
+
+The system workspace excludes `.git` but retains `.shadowtree.toml` and
+included Shadowtree configuration so cross-config recipe references can resolve
+inside the container. Source paths that the invoking user cannot read are
+omitted with a quoted warning. If an omitted path overlaps a selected sync-out
+path, execution fails before the lifecycle starts; `--sync-out-all` likewise
+fails when any source path was omitted. This prevents a partial private copy
+from being mirrored back as an accidental deletion.
 
 Runtime detection reads the engine's current security state in addition to
 checking exact CLI capabilities. Rootless engines use mapped container root;

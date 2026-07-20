@@ -151,7 +151,8 @@ back to workspace or host execution.
 
 System mode composes every profile contributed by the resolved recipe-reference
 graph on the managed `debian:trixie-slim` foundation. Five immutable
-content-keyed stages own base metadata, exact provider toolchains, system
+content-keyed stages own the verified base packages (`ca-certificates`, `curl`,
+`tzdata`, and `wget`), exact provider toolchains, system
 packages, recipe tools, and plural locked project dependencies. A composed
 `system.base_image` override must be a pinned Debian or Ubuntu reference;
 `requires.system_packages` selects normalized distribution packages.

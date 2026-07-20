@@ -60,11 +60,11 @@ contract defined by REQ-TOOL-001 through REQ-TOOL-003. Toolchain setup never
 depends on one dominant profile image, root-profile precedence, or reference
 traversal order.
 
-An override combined with any toolchain or system package must select a
-supported pinned Debian or Ubuntu foundation. Other explicit bases fail during
-planning. Shadowtree performs complete provider setup on an accepted override
-and never assumes it already contains the root profile toolchain. A recipe with
-no toolchains or system packages may use another valid pinned base.
+An override must select a supported pinned Debian or Ubuntu foundation. Other
+explicit bases fail during planning. Shadowtree performs complete base-package
+and provider setup on an accepted override and never assumes it already
+contains the trust store, download clients, timezone database, or root profile
+toolchain.
 
 Explicit profile selection wins over detection. Commands are never inspected to
 guess a profile or distribution. A locally present mutable base tag is not
@@ -122,15 +122,16 @@ executed nor overwritten silently.
 
 Stage responsibilities are:
 
-1. Base derives from the resolved external image and adds only versioned
-   base-plan metadata. The invocation helper is not image content.
+1. Base verifies the resolved Debian/Ubuntu external image, installs
+   `ca-certificates`, `curl`, `tzdata`, and `wget`, and adds versioned base-plan
+   metadata. The invocation helper is not image content.
 2. Tooling installs every canonical profile/package-manager provider under
    disjoint managed prefixes and publishes declared commands and environment.
    Its key omits project/recipe/provenance identity so projects with the same
    exact combination share the layer under REQ-TOOL-003 and REQ-TOOL-004.
-3. System packages installs normalized `requires.system_packages` using one
-   supported distribution provider and owns ordinary OS/package-database
-   changes.
+3. System packages installs normalized additional
+   `requires.system_packages` using one supported distribution provider and
+   owns their ordinary OS/package-database changes.
 4. Recipe packages installs exact `requires.go_commands` and
    `requires.node_commands` collected from the transitive recipe-reference
    closure. Direct/optional command requirements are checked, not guessed.

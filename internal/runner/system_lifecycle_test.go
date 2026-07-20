@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yusing/shadowtree/internal/recipe"
@@ -48,6 +50,11 @@ esac`)
 	if err := os.WriteFile(filepath.Join(source, "output.txt"), []byte("host"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if os.Geteuid() != 0 {
+		if err := os.WriteFile(filepath.Join(source, "unreadable\nname"), []byte("secret"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+	}
 	resolved, err := recipe.Resolve("root", recipe.Recipe{
 		Cmd: recipe.Command{"false"}, Sandboxed: new(recipe.SandboxModeSystem),
 		SyncOut: []string{"output.txt"}, Log: "run.log",
@@ -63,6 +70,132 @@ esac`)
 	}
 	assertFileContent(t, filepath.Join(source, "output.txt"), "host")
 	assertFileContent(t, filepath.Join(source, "run.log"), "lifecycle-log")
+	if os.Geteuid() != 0 && !strings.Contains(stderr.String(), `skipped unreadable path "unreadable\nname"`) {
+		t.Fatalf("stderr does not quote unreadable path:\n%s", stderr.String())
+	}
+}
+
+func TestCopySystemWorkspaceTreePreservesConfigsAndReadableFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode-000 files")
+	}
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "readable.txt"), []byte("readable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".shadowtree.toml"), []byte("profile = \"go\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, ".shadowtree"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".shadowtree", "included.toml"), []byte("[recipes.check]\ncmd = \"true\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".git", "HEAD"), []byte("ref: main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "runtime-data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "private-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "private-dir", "secret.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(source, "private-dir"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(source, "private-dir"), 0o755)
+	})
+	if err := os.Mkdir(filepath.Join(source, "read-only"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "read-only", "input.txt"), []byte("input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(source, "read-only"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(source, "read-only"), 0o755)
+	})
+	unreadable := filepath.Join(source, "runtime-data", "secret.zip")
+	if err := os.WriteFile(unreadable, []byte("secret"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "workspace")
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(destination, "read-only"), 0o755)
+	})
+	skipped, err := copySystemWorkspaceTree(source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(skipped, []string{"private-dir", "runtime-data/secret.zip"}) {
+		t.Fatalf("skipped = %v", skipped)
+	}
+	assertFileContent(t, filepath.Join(destination, "readable.txt"), "readable")
+	assertFileContent(t, filepath.Join(destination, "read-only", "input.txt"), "input")
+	info, err := os.Stat(filepath.Join(destination, "read-only"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o555 {
+		t.Fatalf("read-only directory mode = %v, want 0555", got)
+	}
+	assertFileContent(t, filepath.Join(destination, ".shadowtree.toml"), "profile = \"go\"\n")
+	assertFileContent(t, filepath.Join(destination, ".shadowtree", "included.toml"), "[recipes.check]\ncmd = \"true\"\n")
+	if _, err := os.Stat(filepath.Join(destination, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".git copied into system workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "runtime-data", "secret.zip")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreadable file copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "private-dir")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreadable directory left in destination: %v", err)
+	}
+}
+
+func TestValidateSkippedSystemPathsProtectsSyncBoundaries(t *testing.T) {
+	for name, test := range map[string]struct {
+		skipped    []string
+		syncOut    []string
+		syncOutAll bool
+		wantErr    bool
+	}{
+		"no skipped paths": {
+			syncOut: []string{"generated/output"},
+		},
+		"unrelated future output": {
+			skipped: []string{"runtime-data/secret.zip"}, syncOut: []string{"future/output"},
+		},
+		"selected ancestor collision": {
+			skipped: []string{"runtime-data/secret.zip"}, syncOut: []string{"runtime-data"}, wantErr: true,
+		},
+		"selected descendant collision": {
+			skipped: []string{"runtime-data"}, syncOut: []string{"runtime-data/generated"}, wantErr: true,
+		},
+		"malformed selection": {
+			skipped: []string{"runtime-data/secret.zip"}, syncOut: []string{"../escape"}, wantErr: true,
+		},
+		"whole workspace sync": {
+			skipped: []string{"runtime-data/secret.zip"}, syncOutAll: true, wantErr: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := validateSkippedSystemPaths(test.skipped, test.syncOut, test.syncOutAll)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateSkippedSystemPaths() error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
+	}
 }
 
 func TestSystemHelperRunsOneLifecycleAndNestedReferences(t *testing.T) {

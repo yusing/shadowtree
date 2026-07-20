@@ -62,6 +62,11 @@ yarn global add eslint@^9
 bun add --global eslint@^9
 ```
 
+In system mode, Node command package versions must be exact. Shadowtree installs
+them with its managed Node/npm provider. If the project package manager is Bun,
+the system image composes both providers so project dependency preparation
+continues to use Bun while the required CLI has Node and npm available.
+
 ## Validation Rules
 
 Requirement command names must be non-empty executable basenames without path

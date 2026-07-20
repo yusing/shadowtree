@@ -25,10 +25,10 @@ sync_out = ["internal/generated"]
   backend without fallback.
 - `sync_out`: sandboxed paths copied back to the host checkout after success.
 - `system.base_image`: optional literal pinned image override, valid only for
-  `sandboxed = "system"`; composed toolchains or system packages require a
-  pinned Debian or Ubuntu foundation.
-- `requires.system_packages`: exact distribution packages owned by the system
-  image's system-packages stage.
+  `sandboxed = "system"`; it must be a pinned Debian or Ubuntu foundation.
+- `requires.system_packages`: exact additional distribution packages owned by
+  the system image's system-packages stage. `ca-certificates`, `curl`, `tzdata`,
+  and `wget` are already installed in the base stage.
 - `for_each`: value provider that runs the main command once per candidate.
 - `workdir`: relative working directory for the main command.
 - `log`, `log_stages`, `log_tee`: recipe log output.

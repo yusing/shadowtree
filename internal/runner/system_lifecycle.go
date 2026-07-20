@@ -38,12 +38,16 @@ type systemLifecyclePlan struct {
 
 type systemInvocation struct {
 	dir, workspace, export, helper, plan string
+	skipped                              []string
 }
 
 func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr io.Writer) error {
 	invocation, err := createSystemInvocation(image, options)
 	if err != nil {
 		return err
+	}
+	for _, path := range invocation.skipped {
+		fmt.Fprintf(stderr, "shadowtree: system workspace skipped unreadable path %q\n", path)
 	}
 	defer func() {
 		fmt.Fprintln(stderr, "shadowtree: cleaning system invocation")
@@ -92,8 +96,12 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 		return systemInvocation{}, err
 	}
 	workspace := filepath.Join(dir, "workspace")
-	if err := CopyTree(options.SourceDir, workspace); err != nil {
+	skipped, err := copySystemWorkspaceTree(options.SourceDir, workspace)
+	if err != nil {
 		return fail(fmt.Errorf("copy system workspace: %w", err))
+	}
+	if err := validateSkippedSystemPaths(skipped, options.Resolved.SyncOut, options.SyncOutAll); err != nil {
+		return fail(err)
 	}
 	export := filepath.Join(dir, "export")
 	if err := os.Mkdir(export, 0o700); err != nil {
@@ -132,7 +140,28 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	if err := os.WriteFile(planPath, planData, 0o600); err != nil {
 		return fail(fmt.Errorf("write lifecycle plan: %w", err))
 	}
-	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath}, nil
+	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath, skipped: skipped}, nil
+}
+
+func validateSkippedSystemPaths(skipped, syncOut []string, syncOutAll bool) error {
+	if len(skipped) == 0 {
+		return nil
+	}
+	if syncOutAll {
+		return errors.New("system workspace cannot use sync-out-all after skipping unreadable paths")
+	}
+	cleaned, err := cleanSyncOutPaths(syncOut)
+	if err != nil {
+		return err
+	}
+	for _, skippedPath := range skipped {
+		for _, selected := range cleaned {
+			if sameOrDescendant(skippedPath, selected) || sameOrDescendant(selected, skippedPath) {
+				return fmt.Errorf("system workspace unreadable path %q overlaps sync_out path %q", skippedPath, selected)
+			}
+		}
+	}
+	return nil
 }
 
 func systemContainerExitError(err error) error {

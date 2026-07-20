@@ -107,7 +107,7 @@ var requirementKeys = []completion{
 }
 
 var systemKeys = []completion{
-	{Label: "base_image", InsertText: `base_image = ""`, Kind: completionKindKeyword, Detail: "Literal pinned base image override"},
+	{Label: "base_image", InsertText: `base_image = ""`, Kind: completionKindKeyword, Detail: "Pinned Debian or Ubuntu base image override"},
 }
 
 var argumentKeys = []completion{
