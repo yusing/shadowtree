@@ -1,5 +1,41 @@
 version: 1
 items:
+  - id: CTR-TOOL-001
+    title: CTR-TOOL-001 — Keep profiles and providers closed under composition
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
+  - id: CTR-TOOL-002
+    title: CTR-TOOL-002 — Preserve contributions until canonical resolution
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
+  - id: CTR-TOOL-003
+    title: CTR-TOOL-003 — Install providers on a scoped Trixie filesystem
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
+  - id: CTR-TOOL-004
+    title: CTR-TOOL-004 — Separate reusable tooling from project identity
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
+  - id: CTR-TOOL-005
+    title: "CTR-TOOL-005 — Plan plural dependencies, seeds, and caches"
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
+  - id: CTR-TOOL-006
+    title: CTR-TOOL-006 — Validate the registry and observable lifecycle
+    kind: contract
+    scope: root
+    path: doc/architecture/toolchain-composition.md
+    status: implemented
   - id: REQ-RUST-001
     title: REQ-RUST-001 — Select the Rust profile
     kind: requirement
@@ -43,7 +79,7 @@ items:
     path: doc/spec/system-sandbox.md
     status: implemented
   - id: REQ-SBOX-003
-    title: REQ-SBOX-003 — Select profile-owned default images and tooling
+    title: REQ-SBOX-003 — Select a managed foundation and composed tooling
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
@@ -95,4 +131,40 @@ items:
     kind: requirement
     scope: root
     path: doc/spec/system-sandbox.md
+    status: implemented
+  - id: REQ-TOOL-001
+    title: REQ-TOOL-001 — Compose every supported profile
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
+    status: implemented
+  - id: REQ-TOOL-002
+    title: REQ-TOOL-002 — Resolve one canonical toolchain contract
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
+    status: implemented
+  - id: REQ-TOOL-003
+    title: REQ-TOOL-003 — Use one managed Trixie foundation
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
+    status: implemented
+  - id: REQ-TOOL-004
+    title: REQ-TOOL-004 — Share exact toolchain combinations
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
+    status: implemented
+  - id: REQ-TOOL-005
+    title: REQ-TOOL-005 — Prepare every contributed ecosystem
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
+    status: implemented
+  - id: REQ-TOOL-006
+    title: REQ-TOOL-006 — Keep composition inspectable and fail closed
+    kind: requirement
+    scope: root
+    path: doc/spec/toolchain-composition.md
     status: implemented
