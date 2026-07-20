@@ -52,7 +52,6 @@ type ToolchainOrigin struct {
 type ResolvedToolchain struct {
 	Kind            string
 	Identity        string
-	Version         string
 	Variant         string
 	Platform        string
 	ContractVersion string
@@ -94,11 +93,12 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	if err != nil {
 		return ImagePlan{}, fmt.Errorf("canonical project root: %w", err)
 	}
-	toolchains, platform, err := resolveToolchains(request.Contributions, source)
+	toolchains, platform, err := resolveToolchains(request, source)
 	if err != nil {
 		return ImagePlan{}, err
 	}
-	foundation, err := compositionFoundation(request.Contributions, len(toolchains) > 0 || len(request.Root.Recipe.Requires.SystemPackages) > 0)
+	composed := len(toolchains) > 0 || len(request.Root.Recipe.Requires.SystemPackages) > 0
+	foundation, err := compositionFoundation(request.Contributions, composed)
 	if err != nil {
 		return ImagePlan{}, err
 	}
@@ -126,8 +126,12 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	}
 	projectKey := CanonicalProjectKey(source)
 	recipeKey := digestKey(map[string]any{"config": rootConfigIdentity(request), "recipe": request.Root.Name})
+	baseCommands := []string{"LABEL shadowtree.plan=" + shellQuote("system-image-v2")}
+	if composed {
+		baseCommands = append(baseCommands, "RUN test -r /etc/os-release && . /etc/os-release && case \"$ID\" in debian|ubuntu) ;; *) echo unsupported foundation: \"$ID\" >&2; exit 1;; esac")
+	}
 	inputs := []stageInput{
-		{name: "base", commands: []string{"LABEL shadowtree.plan=" + shellQuote("system-image-v2")}},
+		{name: "base", commands: baseCommands},
 		{name: "toolchains", commands: tooling, metadata: map[string]string{"contract": toolchainContractVersion}},
 		{name: "system-packages", commands: systemPackageCommands(request.Root.Recipe.Requires.SystemPackages)},
 		{name: "recipe-packages", commands: recipePackages},
@@ -315,10 +319,10 @@ func compatibleCacheDescriptors(left, right cacheDescriptor) bool {
 		maps.Equal(left.environment, right.environment) && maps.Equal(left.inputs, right.inputs)
 }
 
-func resolveToolchains(contributions []ImageContribution, source string) ([]ResolvedToolchain, string, error) {
+func resolveToolchains(request ImageRequest, source string) ([]ResolvedToolchain, string, error) {
 	selected := map[string]ResolvedToolchain{}
 	platform := defaultImagePlatform()
-	for _, contribution := range contributions {
+	for _, contribution := range request.Contributions {
 		toolchain, ok, err := resolveContributionToolchain(contribution, source)
 		if err != nil {
 			return nil, "", fmt.Errorf("%s %q toolchain: %w", contribution.ConfigIdentity, contribution.Resolved.Name, err)
@@ -346,6 +350,33 @@ func resolveToolchains(contributions []ImageContribution, source string) ([]Reso
 			existing.Origins = append(existing.Origins, toolchain.Origins...)
 			selected[toolchain.Kind] = existing
 			continue
+		}
+		selected[toolchain.Kind] = toolchain
+	}
+	implicit := []struct {
+		kind     string
+		required bool
+		profile  string
+	}{
+		{kind: "go", required: len(request.Root.Recipe.Requires.GoCommands) > 0, profile: recipe.GoProfile},
+		{kind: "node", required: len(request.Root.Recipe.Requires.NodeCommands) > 0, profile: recipe.NodeProfile},
+	}
+	for _, requirement := range implicit {
+		if !requirement.required {
+			continue
+		}
+		if _, ok := selected[requirement.kind]; ok {
+			continue
+		}
+		resolved := request.Root
+		resolved.Profile = requirement.profile
+		contribution := ImageContribution{Resolved: resolved, ConfigIdentity: rootConfigIdentity(request)}
+		toolchain, ok, err := resolveContributionToolchain(contribution, source)
+		if err != nil {
+			return nil, "", fmt.Errorf("installable %s command provider: %w", requirement.kind, err)
+		}
+		if !ok {
+			return nil, "", fmt.Errorf("installable %s commands have no toolchain provider", requirement.kind)
 		}
 		selected[toolchain.Kind] = toolchain
 	}
@@ -382,7 +413,7 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 		}
 		origin.Provenance = relativeProvenance(source, info.Provenance)
 		prefix := "/opt/shadowtree/toolchains/go/" + info.Version
-		return provider("go", info.Version, info.Version, "", platform, origin,
+		return provider("go", info.Version, "", platform, origin,
 			[]string{"COPY --from=golang:" + info.Version + "-trixie /usr/local/go/ " + prefix + "/", "RUN ln -s " + prefix + "/bin/go /opt/shadowtree/bin/go && ln -s " + prefix + "/bin/gofmt /opt/shadowtree/bin/gofmt"},
 			[]string{"RUN test \"$(/opt/shadowtree/bin/go version | awk '{print $3}')\" = go" + info.Version}, nil), true, nil
 	case "node":
@@ -393,7 +424,7 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 		origin.Provenance = relativeProvenance(source, manager.Provenance)
 		if manager.Name == "bun" {
 			prefix := "/opt/shadowtree/toolchains/bun/" + manager.Version
-			return provider("bun", manager.Identity, manager.Version, "bun", platform, origin,
+			return provider("bun", manager.Identity, "bun", platform, origin,
 				[]string{"COPY --from=oven/bun:" + manager.Version + "-slim /usr/local/bin/bun " + prefix + "/bin/bun", "RUN ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bun && ln -s " + prefix + "/bin/bun /opt/shadowtree/bin/bunx"},
 				[]string{"RUN test \"$(/opt/shadowtree/bin/bun --version)\" = " + shellQuote(manager.Version)}, nil), true, nil
 		}
@@ -401,8 +432,11 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 		prefix := "/opt/shadowtree/toolchains/node/" + identity
 		setup := []string{"COPY --from=" + recipe.DefaultNodeImage + " /usr/local/ " + prefix + "/", "RUN ln -s " + prefix + "/bin/node /opt/shadowtree/bin/node && ln -s " + prefix + "/bin/npm /opt/shadowtree/bin/npm && ln -s " + prefix + "/bin/npx /opt/shadowtree/bin/npx && ln -s " + prefix + "/bin/corepack /opt/shadowtree/bin/corepack"}
 		verify := []string{"RUN test \"$(/opt/shadowtree/bin/node --version)\" = v" + recipe.DefaultNodeRelease}
+		environment := map[string]string{}
 		if manager.Name == "pnpm" || manager.Name == "yarn" {
-			setup = append(setup, "RUN /opt/shadowtree/bin/corepack enable --install-directory /opt/shadowtree/bin && /opt/shadowtree/bin/corepack prepare "+shellQuote(manager.Identity)+" --activate")
+			corepackHome := prefix + "/corepack"
+			environment["COREPACK_HOME"] = corepackHome
+			setup = append(setup, "RUN COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack enable --install-directory /opt/shadowtree/bin && COREPACK_HOME="+corepackHome+" /opt/shadowtree/bin/corepack prepare "+shellQuote(manager.Identity)+" --activate")
 			verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/"+manager.Name+" --version)\" = "+shellQuote(manager.Version))
 		} else {
 			if manager.Declared {
@@ -410,7 +444,7 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 			}
 			verify = append(verify, "RUN test \"$(/opt/shadowtree/bin/npm --version)\" = "+shellQuote(manager.Version))
 		}
-		return provider("node", identity, recipe.DefaultNodeRelease, manager.Name, platform, origin, setup, verify, nil), true, nil
+		return provider("node", identity, manager.Name, platform, origin, setup, verify, environment), true, nil
 	case "rust":
 		identity, err := recipe.RustToolchainWithin(dir, source)
 		if err != nil {
@@ -430,15 +464,15 @@ func resolveContributionToolchain(contribution ImageContribution, source string)
 		if host != "" {
 			verification = append(verification, "RUN /opt/shadowtree/bin/rustc --version --verbose | grep -F "+shellQuote("host: "+host))
 		}
-		return provider("rust", identity, release, "", platform, origin,
+		return provider("rust", identity, "", platform, origin,
 			[]string{"COPY --from=rust:" + release + "-trixie /usr/local/cargo/ " + prefix + "/cargo/", "COPY --from=rust:" + release + "-trixie /usr/local/rustup/ " + prefix + "/rustup/", "RUN ln -s " + prefix + "/cargo/bin/cargo /opt/shadowtree/bin/cargo && ln -s " + prefix + "/cargo/bin/rustc /opt/shadowtree/bin/rustc && ln -s " + prefix + "/cargo/bin/rustup /opt/shadowtree/bin/rustup"},
 			verification, env), true, nil
 	}
 	return ResolvedToolchain{}, false, fmt.Errorf("supported profile %q has unknown provider %q", contribution.Resolved.Profile, providerKind)
 }
 
-func provider(kind, identity, version, variant, platform string, origin ToolchainOrigin, setup, verification []string, environment map[string]string) ResolvedToolchain {
-	return ResolvedToolchain{Kind: kind, Identity: identity, Version: version, Variant: variant, Platform: platform, ContractVersion: toolchainContractVersion, Setup: setup, Verification: verification, Environment: environment, Origins: []ToolchainOrigin{origin}}
+func provider(kind, identity, variant, platform string, origin ToolchainOrigin, setup, verification []string, environment map[string]string) ResolvedToolchain {
+	return ResolvedToolchain{Kind: kind, Identity: identity, Variant: variant, Platform: platform, ContractVersion: toolchainContractVersion, Setup: setup, Verification: verification, Environment: environment, Origins: []ToolchainOrigin{origin}}
 }
 
 func compositionFoundation(contributions []ImageContribution, composed bool) (string, error) {

@@ -260,7 +260,10 @@ func contributionInputs(resolved recipe.Resolved, source, dir string) (contribut
 			return contributionInput{}, err
 		}
 		metadata := map[string]string{"manager": manager.Name, "manager_version": manager.Version, "manager_identity": manager.Identity, "manager_provenance": relativeProvenance(source, manager.Provenance), "workdir": managerDir}
-		commands := nodeLockedCommand(manager.Name, managerDir, files)
+		commands, err := nodeLockedCommand(manager.Name, managerDir, files)
+		if err != nil {
+			return contributionInput{}, err
+		}
 		var seed *DependencySeed
 		if len(commands) > 0 {
 			seed = &DependencySeed{SourcePath: "/opt/shadowtree/dependencies", TargetPath: ".", Provider: manager.Name}
@@ -332,13 +335,16 @@ func lockedCommand(lockfile, workdir, command string) []string {
 	return []string{"COPY . /opt/shadowtree/dependencies", "WORKDIR " + containerDependencyPath(workdir), "RUN " + command}
 }
 
-func nodeLockedCommand(manager, workdir string, files map[string][]byte) []string {
+func nodeLockedCommand(manager, workdir string, files map[string][]byte) ([]string, error) {
 	lockfile, command := "", ""
 	switch manager {
 	case "pnpm":
 		lockfile, command = nearestContextFile(files, workdir, "pnpm-lock.yaml"), "pnpm install --frozen-lockfile --ignore-scripts --store-dir .shadowtree-pnpm-store"
 	case "yarn":
 		lockfile, command = nearestContextFile(files, workdir, "yarn.lock"), "YARN_CACHE_FOLDER=.shadowtree-yarn-cache yarn install --immutable --mode=skip-builds"
+		if lockfile != "" && !yarnNodeModules(files, workdir) {
+			return nil, fmt.Errorf("Yarn dependency preparation requires nodeLinker: node-modules in .yarnrc.yml; Plug'n'Play seeding is not supported")
+		}
 	case "bun":
 		lockfile = nearestContextFile(files, workdir, "bun.lock")
 		if lockfile == "" {
@@ -352,7 +358,21 @@ func nodeLockedCommand(manager, workdir string, files map[string][]byte) []strin
 		}
 		command = "npm_config_cache=.shadowtree-npm-cache npm ci --ignore-scripts"
 	}
-	return lockedCommand(lockfile, workdir, command)
+	return lockedCommand(lockfile, workdir, command), nil
+}
+
+func yarnNodeModules(files map[string][]byte, workdir string) bool {
+	config := nearestContextFile(files, workdir, ".yarnrc.yml")
+	if config == "" {
+		return false
+	}
+	for line := range strings.Lines(string(files[config])) {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(key) == "nodeLinker" {
+			return strings.Trim(strings.TrimSpace(value), "'\"") == "node-modules"
+		}
+	}
+	return false
 }
 
 type manifestSelector func(path, name string) bool

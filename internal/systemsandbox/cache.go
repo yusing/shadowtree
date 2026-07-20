@@ -18,7 +18,7 @@ import (
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
-const cachePlanVersion = "system-cache-v1"
+const cachePlanVersion = "system-cache-v2"
 
 // CachePlan describes one project-owned mutable build cache.
 type CachePlan struct {
@@ -64,8 +64,8 @@ func planCaches(descriptors []cacheDescriptor, projectRoot, projectKey, platform
 	if len(descriptors) == 0 {
 		return nil
 	}
-	abiInputs := make([]string, 0, min(4, len(stages)))
-	for _, stage := range stages[:min(4, len(stages))] {
+	abiInputs := make([]string, 0, min(3, len(stages)))
+	for _, stage := range stages[:min(3, len(stages))] {
 		abiInputs = append(abiInputs, stage.Key)
 	}
 	abiKey := digestKey(abiInputs)
@@ -183,8 +183,8 @@ func validateCachePlan(plan CachePlan) error {
 
 // PrepareCaches creates missing exact-key volumes and rejects ownership or
 // compatibility collisions before user code starts.
-func PrepareCaches(ctx context.Context, runtime RuntimeName, plans []CachePlan, progress io.Writer) error {
-	return prepareCachesWith(ctx, runtime, plans, progress, directCommand)
+func PrepareCaches(ctx context.Context, runtime RuntimeName, plans []CachePlan, image string, progress io.Writer) error {
+	return prepareCachesWith(ctx, runtime, plans, image, progress, directCommand)
 }
 
 // WaitForCacheAvailability waits until exclusive volumes are not in active use
@@ -217,7 +217,7 @@ func WaitForCacheAvailability(ctx context.Context, runtime RuntimeName, plans []
 	return nil
 }
 
-func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePlan, progress io.Writer, run commandRunner) error {
+func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePlan, image string, progress io.Writer, run commandRunner) error {
 	if progress == nil {
 		progress = io.Discard
 	}
@@ -251,6 +251,11 @@ func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePl
 		labels, exists, err = inspectVolumeLabels(ctx, runtime, plan.Name, run)
 		if err != nil || !exists || !labelsMatch(labels, plan.Labels) {
 			return fmt.Errorf("runtime %s cache %s create did not publish the requested labelled volume", runtime, plan.Provider)
+		}
+		fmt.Fprintf(progress, "shadowtree: cache %s initialize ownership\n", plan.Provider)
+		output, err = run(ctx, string(runtime), "run", "--rm", "--network", "none", "--read-only", "--user", "0:0", "--entrypoint", "/bin/sh", "--volume", plan.Name+":/opt/shadowtree/cache-init", image, "-c", fmt.Sprintf("chown -R %d:%d /opt/shadowtree/cache-init && chmod u+rwx /opt/shadowtree/cache-init", plan.UID, plan.GID))
+		if err != nil {
+			return fmt.Errorf("runtime %s cache %s initialize ownership: %s", runtime, plan.Provider, commandFailure(err, output))
 		}
 	}
 	return nil

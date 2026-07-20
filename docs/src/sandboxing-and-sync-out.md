@@ -61,7 +61,9 @@ recognized lockfile exists:
 `go mod download`, `cargo fetch --locked`, npm/pnpm/Yarn/Bun frozen installs
 with package lifecycle scripts disabled. Generated Containerfiles use
 manifest-only contexts; ordinary project source and private credentials are
-never image inputs. All dependency seeds are validated for confinement and
+never image inputs. Locked Yarn preparation currently requires
+`nodeLinker: node-modules` in `.yarnrc.yml`; Plug'n'Play layouts fail during
+planning rather than producing an unusable seed. All dependency seeds are validated for confinement and
 overlap before any prepared state is copied into the private workspace.
 
 Expanded static inspection reports the foundation, platform, canonical exact

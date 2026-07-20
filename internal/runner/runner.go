@@ -441,7 +441,7 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 		return fmt.Errorf("recipe %q system cache lock: %w", resolved.Name, err)
 	}
 	defer releaseCaches()
-	if err := systemsandbox.PrepareCaches(ctx, runtimeName, plan.Caches, progress); err != nil {
+	if err := systemsandbox.PrepareCaches(ctx, runtimeName, plan.Caches, plan.FinalTag, progress); err != nil {
 		return fmt.Errorf("recipe %q system caches: %w", resolved.Name, err)
 	}
 	if err := systemsandbox.WaitForCacheAvailability(ctx, runtimeName, plan.Caches, progress); err != nil {
@@ -507,6 +507,9 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 			fmt.Fprintf(w, "%s.required_by: %s:%s\n", originPrefix, origin.ConfigIdentity, origin.Recipe)
 			fmt.Fprintf(w, "%s.workdir: %s\n", originPrefix, origin.Workdir)
 			fmt.Fprintf(w, "%s.provenance: %s\n", originPrefix, origin.Provenance)
+			for routeIndex, step := range origin.ReferenceRoute {
+				fmt.Fprintf(w, "%s.route[%d]: %s:%s %s @%s\n", originPrefix, routeIndex, step.ConfigIdentity, step.Recipe, step.Stage, step.Reference)
+			}
 		}
 		if expanded {
 			fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)

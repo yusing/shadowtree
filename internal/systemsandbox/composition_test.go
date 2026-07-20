@@ -93,14 +93,14 @@ func TestResolveToolchainsMergesExactAndDefaultButRejectsExactConflict(t *testin
 		resolved.Name = name
 		return ImageContribution{Resolved: resolved, Workdir: workdir, ConfigIdentity: ".shadowtree.toml"}
 	}
-	merged, _, err := resolveToolchains([]ImageContribution{contribution("default", "default"), contribution("exact", "exact")}, root)
+	merged, _, err := resolveToolchains(ImageRequest{Contributions: []ImageContribution{contribution("default", "default"), contribution("exact", "exact")}}, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(merged) != 1 || merged[0].Identity != "1.25.5" || len(merged[0].Origins) != 2 {
 		t.Fatalf("merged toolchain = %#v", merged)
 	}
-	_, _, err = resolveToolchains([]ImageContribution{contribution("exact", "exact"), contribution("other", "other")}, root)
+	_, _, err = resolveToolchains(ImageRequest{Contributions: []ImageContribution{contribution("exact", "exact"), contribution("other", "other")}}, root)
 	if err == nil || !strings.Contains(err.Error(), "exact") || !strings.Contains(err.Error(), "other") {
 		t.Fatalf("conflict error = %v", err)
 	}
@@ -123,6 +123,11 @@ func TestPlanCompositionToolchainKeyIgnoresOrderAndProject(t *testing.T) {
 	if first.ToolchainKey != second.ToolchainKey {
 		t.Fatalf("toolchain keys differ by order/project: %s != %s", first.ToolchainKey, second.ToolchainKey)
 	}
+	for index := range first.Stages {
+		if first.Stages[index].Key != second.Stages[index].Key {
+			t.Fatalf("stage %s differs by order/project: %s != %s", first.Stages[index].Name, first.Stages[index].Key, second.Stages[index].Key)
+		}
+	}
 	if first.FinalTag == second.FinalTag {
 		t.Fatal("project-owned final tags unexpectedly match")
 	}
@@ -136,6 +141,62 @@ func TestPlanCompositionRejectsUnsupportedExplicitFoundation(t *testing.T) {
 
 	_, err := PlanComposition(request, root)
 	if err == nil || !strings.Contains(err.Error(), "Debian or Ubuntu") {
+		t.Fatalf("PlanComposition error = %v", err)
+	}
+}
+
+func TestPlanCompositionVerifiesFoundationBeforeProviders(t *testing.T) {
+	root := compositionProject(t)
+	plan, err := PlanComposition(compositionRequest(t, root, []string{recipe.GoProfile}), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Stages[0].Containerfile, "/etc/os-release") || !strings.Contains(plan.Stages[0].Containerfile, "debian|ubuntu") {
+		t.Fatalf("base stage lacks distribution verification:\n%s", plan.Stages[0].Containerfile)
+	}
+}
+
+func TestPlanCompositionAddsInstallableCommandProviders(t *testing.T) {
+	root := compositionProject(t)
+	resolved := systemImageRecipe(t, "", recipe.Requirements{
+		GoCommands:   map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@v0.34.0"},
+		NodeCommands: map[string]string{"eslint": "eslint@9.30.0"},
+	})
+	request := testImageRequest(resolved)
+	plan, err := PlanComposition(request, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, toolchain := range plan.Toolchains {
+		kinds = append(kinds, toolchain.Kind)
+	}
+	if !slices.Equal(kinds, []string{"go", "node"}) {
+		t.Fatalf("implicit toolchains = %#v", plan.Toolchains)
+	}
+}
+
+func TestPlanCompositionKeepsCorepackPayloadInManagedEnvironment(t *testing.T) {
+	root := compositionProject(t)
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"packageManager":"pnpm@10.12.1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanComposition(compositionRequest(t, root, []string{recipe.NodeProfile}), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchain := plan.Toolchains[0]
+	if !strings.HasPrefix(toolchain.Environment["COREPACK_HOME"], "/opt/shadowtree/toolchains/node/") || !strings.Contains(strings.Join(toolchain.Setup, "\n"), "COREPACK_HOME=") {
+		t.Fatalf("Corepack provider = %#v", toolchain)
+	}
+}
+
+func TestPlanCompositionRejectsYarnPnPSeed(t *testing.T) {
+	root := compositionProject(t)
+	writeImageTestFile(t, filepath.Join(root, "package.json"), `{"packageManager":"yarn@4.9.2"}`)
+	writeImageTestFile(t, filepath.Join(root, "yarn.lock"), "# lock\n")
+	_, err := PlanComposition(compositionRequest(t, root, []string{recipe.NodeProfile}), root)
+	if err == nil || !strings.Contains(err.Error(), "Plug'n'Play") {
 		t.Fatalf("PlanComposition error = %v", err)
 	}
 }

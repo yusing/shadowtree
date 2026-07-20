@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,10 +134,27 @@ func TestPlanCachesMountsExclusiveCargoTargetAtWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestPlanCachesIgnoresUnrelatedRecipePackages(t *testing.T) {
+	root := t.TempDir()
+	writeImageTestFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26\n")
+	plain, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{})), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withTool, err := PlanComposition(testImageRequest(systemImageRecipe(t, recipe.GoProfile, recipe.Requirements{GoCommands: map[string]string{"stringer": "golang.org/x/tools/cmd/stringer@v0.34.0"}})), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Caches[0].Key != withTool.Caches[0].Key {
+		t.Fatalf("recipe package split compiler cache: %s != %s", plain.Caches[0].Key, withTool.Caches[0].Key)
+	}
+}
+
 func TestPrepareCachesCreatesAndThenReusesExactLabelledVolume(t *testing.T) {
 	plan := testCachePlan(t)
 	var labels map[string]string
 	var creates int
+	var initializes int
 	run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		switch strings.Join(args[:2], " ") {
 		case "volume inspect":
@@ -155,20 +173,27 @@ func TestPrepareCachesCreatesAndThenReusesExactLabelledVolume(t *testing.T) {
 				}
 			}
 			return []byte(plan.Name), nil
+		case "run --rm":
+			initializes++
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, fmt.Sprintf("chown -R %d:%d", plan.UID, plan.GID)) || !strings.Contains(joined, plan.Name+":/opt/shadowtree/cache-init") || !strings.Contains(joined, "image:test") {
+				t.Fatalf("cache initializer command = %v", args)
+			}
+			return nil, nil
 		default:
 			t.Fatalf("unexpected runtime command: %v", args)
 			return nil, nil
 		}
 	}
 	var progress bytes.Buffer
-	if err := prepareCachesWith(t.Context(), Docker, []CachePlan{plan}, &progress, run); err != nil {
+	if err := prepareCachesWith(t.Context(), Docker, []CachePlan{plan}, "image:test", &progress, run); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareCachesWith(t.Context(), Docker, []CachePlan{plan}, &progress, run); err != nil {
+	if err := prepareCachesWith(t.Context(), Docker, []CachePlan{plan}, "image:test", &progress, run); err != nil {
 		t.Fatal(err)
 	}
-	if creates != 1 || !strings.Contains(progress.String(), "cache go-build reused") {
-		t.Fatalf("creates = %d progress = %q", creates, progress.String())
+	if creates != 1 || initializes != 1 || !strings.Contains(progress.String(), "cache go-build reused") {
+		t.Fatalf("creates = %d initializes = %d progress = %q", creates, initializes, progress.String())
 	}
 }
 
