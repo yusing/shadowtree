@@ -149,12 +149,15 @@ identity, signalling, and cleanup operations. Detection is bounded, reports
 progress on stderr, and creates no runtime or workspace state. It never falls
 back to workspace or host execution.
 
-System mode resolves a pinned profile image and five immutable content-keyed
-stages for base metadata, tooling, system packages, recipe tools, and locked
-project dependencies. `system.base_image` accepts a literal non-`latest`
-override; `requires.system_packages` selects normalized distribution packages.
+System mode composes every profile contributed by the resolved recipe-reference
+graph on the managed `debian:trixie-slim` foundation. Five immutable
+content-keyed stages own base metadata, exact provider toolchains, system
+packages, recipe tools, and plural locked project dependencies. A composed
+`system.base_image` override must be a pinned Debian or Ubuntu reference;
+`requires.system_packages` selects normalized distribution packages.
 Expanded static plans expose every generated Containerfile and mutable cache
-plan without contacting the runtime. Go `GOCACHE` and Rust workspace `target`
+plan, exact toolchain identity and origin, provider setup and verification,
+dependency plans, and seeds without contacting the runtime. Go `GOCACHE` and Rust workspace `target`
 use project-owned named volumes keyed by the canonical checkout, workspace,
 toolchain, platform, ABI, and UID/GID; compatible recipes in one checkout share
 them, but different worktrees never do. Execution then runs the complete

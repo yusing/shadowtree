@@ -101,9 +101,11 @@ interpreted as proof that execution capability exists. Execution and `--check`
 probe Docker, Podman, then nerdctl; read stderr for candidate diagnostics and
 the selected runtime.
 
-For a system recipe, expanded plans expose the pinned `system.base_image`, five
-immutable stages, context hashes, mutable cache identities and mounts, sync-out
-intersections, and any dependency-seed contract without building. Treat
+For a system recipe, expanded plans expose the managed or explicit foundation,
+platform, canonical exact toolchains and origins, shared toolchain key,
+provider setup and verification, five immutable stages, plural dependencies
+and seeds, context hashes, mutable cache identities and mounts, and sync-out
+intersections without building. Treat
 `requires.system_packages` as image inputs, not host package installation
 instructions.
 

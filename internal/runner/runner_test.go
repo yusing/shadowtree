@@ -3156,7 +3156,7 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), PrintOnly: true, PrintExpanded: expanded, Stdout: &stdout}); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: debian:trixie-slim\n", "image_stage.base.key:", "image_stage.toolchains.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
+			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: debian:trixie-slim\n", "platform: linux/", "toolchain_key:", "toolchain[0].kind: go\n", "toolchain[0].identity: 1.26.4\n", "toolchain[0].origin[0].required_by:", "native_builds:", "image_stage.base.key:", "image_stage.toolchains.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Fatalf("plan missing %q:\n%s", want, stdout.String())
 				}

@@ -1195,7 +1195,11 @@ The plan includes these fields when present or applicable:
 `--print --expanded` also prints normalized defaults for absent fields,
 expanded script bodies for `pre`, `cmd`, `post`, and `for_each`, the selected
 preset, resolved typed arguments, leftover variadic args, computed vars,
-recipe-local env, expanded log settings, and expanded sync-out paths.
+recipe-local env, expanded log settings, and expanded sync-out paths. For
+system mode it statically reports the foundation, platform, canonical exact
+toolchains and variants, provenance and required-by origins, reusable
+toolchain key, provider setup and verification, plural dependencies and seeds,
+caches, and native-build qualification without probing a runtime.
 
 `--check` validates the selected resolved recipe without running commands. It
 checks the same command forms that resolution would run, validates nested

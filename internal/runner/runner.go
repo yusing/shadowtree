@@ -492,7 +492,48 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
 	}
 	fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
+	fmt.Fprintf(w, "platform: %s\n", plan.Platform)
+	fmt.Fprintf(w, "toolchain_key: %s\n", plan.ToolchainKey)
 	fmt.Fprintf(w, "final_image: %s\n", plan.FinalTag)
+	for index, toolchain := range plan.Toolchains {
+		prefix := fmt.Sprintf("toolchain[%d]", index)
+		fmt.Fprintf(w, "%s.kind: %s\n", prefix, toolchain.Kind)
+		fmt.Fprintf(w, "%s.identity: %s\n", prefix, toolchain.Identity)
+		if toolchain.Variant != "" {
+			fmt.Fprintf(w, "%s.variant: %s\n", prefix, toolchain.Variant)
+		}
+		for originIndex, origin := range toolchain.Origins {
+			originPrefix := fmt.Sprintf("%s.origin[%d]", prefix, originIndex)
+			fmt.Fprintf(w, "%s.required_by: %s:%s\n", originPrefix, origin.ConfigIdentity, origin.Recipe)
+			fmt.Fprintf(w, "%s.workdir: %s\n", originPrefix, origin.Workdir)
+			fmt.Fprintf(w, "%s.provenance: %s\n", originPrefix, origin.Provenance)
+		}
+		if expanded {
+			fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)
+			for setupIndex, setup := range toolchain.Setup {
+				fmt.Fprintf(w, "%s.setup[%d]: %s\n", prefix, setupIndex, setup)
+			}
+			for verifyIndex, verify := range toolchain.Verification {
+				fmt.Fprintf(w, "%s.verify[%d]: %s\n", prefix, verifyIndex, verify)
+			}
+			for _, name := range slices.Sorted(maps.Keys(toolchain.Environment)) {
+				fmt.Fprintf(w, "%s.env.%s: %s\n", prefix, name, toolchain.Environment[name])
+			}
+		}
+	}
+	for index, dependency := range plan.Dependencies {
+		prefix := fmt.Sprintf("dependency[%d]", index)
+		fmt.Fprintf(w, "%s.provider: %s\n", prefix, dependency.Provider)
+		fmt.Fprintf(w, "%s.identity: %s\n", prefix, dependency.Identity)
+		fmt.Fprintf(w, "%s.required_by: %s:%s\n", prefix, dependency.ConfigIdentity, dependency.Recipe)
+		fmt.Fprintf(w, "%s.workdir: %s\n", prefix, dependency.Workdir)
+		if expanded {
+			for commandIndex, command := range dependency.Commands {
+				fmt.Fprintf(w, "%s.command[%d]: %s\n", prefix, commandIndex, command)
+			}
+		}
+	}
+	fmt.Fprintln(w, "native_builds: compiler, headers, linker, and project libraries require explicit system_packages")
 	for _, stage := range plan.Stages {
 		fmt.Fprintf(w, "image_stage.%s.key: %s\n", stage.Name, stage.Key)
 		fmt.Fprintf(w, "image_stage.%s.tag: %s\n", stage.Name, stage.Tag)

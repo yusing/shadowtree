@@ -142,8 +142,10 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   host location directly.
 - Set `sandboxed = "system"` only for the explicit system-container contract;
   do not use runtime names or truthy string aliases.
-- Use `system.base_image` only for a literal pinned non-`latest` override, and
-  declare distribution packages through `requires.system_packages`.
+- Use `system.base_image` only for a literal pinned non-`latest` override. A
+  recipe-reference graph with profile toolchains or system packages requires a
+  pinned Debian or Ubuntu foundation. Declare distribution packages through
+  `requires.system_packages`.
 - System-mode `pre`, `cmd`, nested references, and `post` share one ephemeral
   container; nested references do not perform nested sync-out.
 - Go and Rust system recipes receive provider-owned project caches

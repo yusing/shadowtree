@@ -25,7 +25,8 @@ sync_out = ["internal/generated"]
   backend without fallback.
 - `sync_out`: sandboxed paths copied back to the host checkout after success.
 - `system.base_image`: optional literal pinned image override, valid only for
-  `sandboxed = "system"`.
+  `sandboxed = "system"`; composed toolchains or system packages require a
+  pinned Debian or Ubuntu foundation.
 - `requires.system_packages`: exact distribution packages owned by the system
   image's system-packages stage.
 - `for_each`: value provider that runs the main command once per candidate.

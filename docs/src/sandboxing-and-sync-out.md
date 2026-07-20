@@ -19,24 +19,30 @@ and reports progress on stderr. Unusable candidates are diagnosed before the
 next candidate is tried. Detection creates no image, volume, workspace, or
 container, and system mode never falls back.
 
-System images use a deterministic lower-to-higher chain: pinned external base,
-base metadata, profile tooling, normalized `requires.system_packages`, exact
-recipe tool packages, and locked project dependencies. Every immutable stage
+System images use a deterministic lower-to-higher chain: the managed
+`debian:trixie-slim` foundation (or supported explicit foundation), base
+metadata, composed profile toolchains, normalized `requires.system_packages`,
+exact recipe tool packages, and plural locked project dependencies. Every immutable stage
 has a content key, canonical local tag, complete ownership labels, and its
 lower-stage key as an input. Existing tags are reused only when all expected
 labels match; collisions fail without overwriting the image.
 
-Profiles select pinned Debian/Ubuntu slim defaults. A recipe may set a literal
-non-`latest` override only in system mode:
+Every profile referenced by the top-level lifecycle contributes a toolchain.
+Providers install into disjoint versioned paths below
+`/opt/shadowtree/toolchains` and publish declared commands through
+`/opt/shadowtree/bin`; root profile and reference order never choose a base.
+A recipe may set a literal non-`latest` override only in system mode. When a
+toolchain or system package is present, that override must be pinned Debian or
+Ubuntu:
 
 - Go uses an exact `toolchain` directive, the documented `1.26.4` release for
   the supported `go 1.26` directive, or fails with `system.base_image` guidance
   for an unsupported unpinned minor.
-- Node uses `node:24.4.1-bookworm-slim`; exact npm, pnpm, and Yarn declarations
-  select verified tooling, while Bun selects its exact slim release image.
+- Node uses exact Node `24.4.1` tooling; exact npm, pnpm, and Yarn declarations
+  select verified manager variants, while Bun selects its exact provider.
 - Rust uses the exact resolved Rust release and verifies any declared host
   qualifier against the selected Linux platform.
-- A recipe without a profile uses `ubuntu:24.04`.
+- A recipe without a profile still uses the managed Trixie foundation.
 
 ```toml
 [recipes.build]
@@ -44,17 +50,27 @@ sandboxed = "system"
 cmd = "go build ./..."
 
 [recipes.build.system]
-base_image = "golang:1.26.4-bookworm"
+base_image = "debian:trixie-slim"
 
 [recipes.build.requires]
 system_packages = ["ca-certificates", "git"]
 ```
 
-Locked dependency preparation runs only when the recognized lockfile exists:
+Locked dependency preparation runs for every contributed ecosystem whose
+recognized lockfile exists:
 `go mod download`, `cargo fetch --locked`, npm/pnpm/Yarn/Bun frozen installs
 with package lifecycle scripts disabled. Generated Containerfiles use
 manifest-only contexts; ordinary project source and private credentials are
-never image inputs.
+never image inputs. All dependency seeds are validated for confinement and
+overlap before any prepared state is copied into the private workspace.
+
+Expanded static inspection reports the foundation, platform, canonical exact
+toolchains and manager variants, provenance and required-by origins, reusable
+toolchain key, provider setup and verification, dependency plans, seeds, and
+caches without probing a runtime. Provider setup guarantees language tooling
+coexistence, not native compiler or library availability; cgo, native addons,
+Cargo build scripts, and similar builds must declare their compiler, headers,
+linker, and project libraries through `requires.system_packages`.
 
 Execution uses one named, explicitly removed container per top-level
 lifecycle. The host checkout is copied first; only that private copy is mounted
