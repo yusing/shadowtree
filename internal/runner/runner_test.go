@@ -3156,7 +3156,7 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), PrintOnly: true, PrintExpanded: expanded, Stdout: &stdout}); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: golang:1.26.4-bookworm\n", "image_stage.base.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
+			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: debian:trixie-slim\n", "image_stage.base.key:", "image_stage.toolchains.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Fatalf("plan missing %q:\n%s", want, stdout.String())
 				}
@@ -3188,8 +3188,8 @@ func TestSystemSandboxExpandedPlanPrintsDependencyInputsWithoutRuntime(t *testin
 	for _, want := range []string{
 		"image_stage.dependencies.context.package.json.sha256:",
 		"image_stage.dependencies.context.pnpm-lock.yaml.sha256:",
-		"image_stage.dependencies.metadata.manager: pnpm",
-		"image_stage.dependencies.metadata.manager_identity: pnpm@10.12.1",
+		"image_stage.dependencies.metadata.contribution.0.manager: pnpm",
+		"image_stage.dependencies.metadata.contribution.0.manager_identity: pnpm@10.12.1",
 		"dependency_seed.manager: pnpm",
 		"dependency_seed.source: /opt/shadowtree/dependencies",
 	} {
@@ -3400,7 +3400,7 @@ fi`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stage := range []string{"base", "tooling", "system-packages", "recipe-packages", "dependencies"} {
+	for _, stage := range []string{"base", "toolchains", "system-packages", "recipe-packages", "dependencies"} {
 		if !strings.Contains(stderr.String(), "built "+stage+"\n") {
 			t.Fatalf("stderr missing build for %s:\n%s", stage, stderr.String())
 		}

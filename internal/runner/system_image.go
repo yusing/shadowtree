@@ -317,20 +317,6 @@ func (collector *systemRequirementCollector) validateNestedContract(resolved rec
 	if mode == recipe.SandboxModeHost {
 		return fmt.Errorf("recipe %q system image references host-mode recipe %q", collector.root.Name, resolved.Name)
 	}
-	if resolved.Profile != collector.root.Profile {
-		return fmt.Errorf("recipe %q system image profile %q is incompatible with referenced recipe %q profile %q", collector.root.Name, collector.root.Profile, resolved.Name, resolved.Profile)
-	}
-	rootBase := ""
-	if collector.root.Recipe.System != nil {
-		rootBase = collector.root.Recipe.System.BaseImage
-	}
-	nestedBase := ""
-	if resolved.Recipe.System != nil {
-		nestedBase = resolved.Recipe.System.BaseImage
-	}
-	if nestedBase != "" && nestedBase != rootBase {
-		return fmt.Errorf("recipe %q system image base %q is incompatible with referenced recipe %q base %q", collector.root.Name, rootBase, resolved.Name, nestedBase)
-	}
 	return nil
 }
 

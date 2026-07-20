@@ -32,6 +32,8 @@ type ImagePlan struct {
 	FinalTag       string
 	DependencySeed *DependencySeed
 	Caches         []CachePlan
+	Toolchains     []ResolvedToolchain
+	ToolchainKey   string
 }
 
 // DependencySeed describes image-owned Node/Bun dependency state copied into

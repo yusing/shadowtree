@@ -87,7 +87,7 @@ system_packages = ["protobuf-compiler"]
 	}
 }
 
-func TestResolvedSystemImageRecipeRejectsCrossConfigProfileMismatch(t *testing.T) {
+func TestResolvedSystemImageRequestPreservesCrossConfigProfiles(t *testing.T) {
 	source := t.TempDir()
 	target := filepath.Join(source, "web")
 	if err := os.Mkdir(target, 0o755); err != nil {
@@ -101,28 +101,25 @@ func TestResolvedSystemImageRecipeRejectsCrossConfigProfileMismatch(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
-	if err == nil || !strings.Contains(err.Error(), "profile") {
-		t.Fatalf("resolvedSystemImageRecipe error = %v, want profile incompatibility", err)
+	request, err := resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root}, SourceDir: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Contributions) != 2 || request.Contributions[0].Resolved.Profile != recipe.GoProfile || request.Contributions[1].Resolved.Profile != recipe.NodeProfile {
+		t.Fatalf("contribution profiles = %#v", request.Contributions)
 	}
 }
 
-func TestResolvedSystemImageRecipeRejectsIncompatibleNestedContract(t *testing.T) {
+func TestResolvedSystemImageRecipeRejectsHostModeReference(t *testing.T) {
 	root := recipe.Recipe{Cmd: recipe.Command{"@child"}, Sandboxed: new(recipe.SandboxModeSystem)}
-	for name, child := range map[string]recipe.Recipe{
-		"host": {Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeHost)},
-		"base": {Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem), System: &recipe.SystemConfig{BaseImage: "debian:12.11-slim"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			resolved, err := recipe.ResolveWithOptions("root", root, nil, nil, nil, "/project/.shadowtree.toml", "", recipe.ResolveOptions{Recipes: map[string]recipe.Recipe{"root": root, "child": child}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
-			if err == nil || !strings.Contains(err.Error(), name) {
-				t.Fatalf("resolvedSystemImageRecipe error = %v, want %s incompatibility", err, name)
-			}
-		})
+	child := recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeHost)}
+	resolved, err := recipe.ResolveWithOptions("root", root, nil, nil, nil, "/project/.shadowtree.toml", "", recipe.ResolveOptions{Recipes: map[string]recipe.Recipe{"root": root, "child": child}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolvedSystemImageRequest(t.Context(), Options{Resolved: resolved, Recipes: map[string]recipe.Recipe{"root": root, "child": child}, SourceDir: "/project"})
+	if err == nil || !strings.Contains(err.Error(), "host-mode") {
+		t.Fatalf("resolvedSystemImageRequest error = %v, want host-mode incompatibility", err)
 	}
 }
 
