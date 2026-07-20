@@ -204,6 +204,57 @@ func TestPlanCompositionKeepsCorepackPayloadInManagedEnvironment(t *testing.T) {
 	if !strings.HasPrefix(toolchain.Environment["COREPACK_HOME"], "/opt/shadowtree/toolchains/node/") || !strings.Contains(strings.Join(toolchain.Setup, "\n"), "COREPACK_HOME=") {
 		t.Fatalf("Corepack provider = %#v", toolchain)
 	}
+	containerfile := plan.Stages[1].Containerfile
+	pathIndex := strings.Index(containerfile, "ENV PATH=/opt/shadowtree/bin:$PATH")
+	corepackIndex := strings.Index(containerfile, "/opt/shadowtree/bin/corepack enable")
+	if pathIndex < 0 || corepackIndex < 0 || pathIndex > corepackIndex {
+		t.Fatalf("managed PATH is not published before Corepack setup:\n%s", containerfile)
+	}
+	if strings.Count(containerfile, "ENV PATH=") != 1 {
+		t.Fatalf("managed PATH publication is ambiguous:\n%s", containerfile)
+	}
+}
+
+func TestToolchainStageCommandsRejectsInvalidProviderContracts(t *testing.T) {
+	for name, toolchain := range map[string]ResolvedToolchain{
+		"missing contract": {
+			Kind: "future",
+		},
+		"managed PATH collision": {
+			Kind: "future", ContractVersion: toolchainContractVersion,
+			Environment: map[string]string{"PATH": "/future/bin"},
+		},
+		"malformed environment": {
+			Kind: "future", ContractVersion: toolchainContractVersion,
+			Environment: map[string]string{"BAD NAME": "value"},
+		},
+		"unknown contract": {
+			Kind: "future", ContractVersion: "toolchain-provider-v2",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := toolchainStageCommands([]ResolvedToolchain{toolchain}); err == nil {
+				t.Fatalf("toolchainStageCommands accepted %#v", toolchain)
+			}
+		})
+	}
+}
+
+func TestToolchainStageCommandsAllowsUnrelatedEnvironmentNames(t *testing.T) {
+	commands, _, err := toolchainStageCommands([]ResolvedToolchain{{
+		Kind:            "future",
+		ContractVersion: toolchainContractVersion,
+		Environment:     map[string]string{"PATH_SUFFIX": "/future/bin", "PYTHONPATH": "/future/lib"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerfile := strings.Join(commands, "\n")
+	for _, environment := range []string{"ENV PATH_SUFFIX=/future/bin", "ENV PYTHONPATH=/future/lib"} {
+		if !strings.Contains(containerfile, environment) {
+			t.Fatalf("toolchain commands omit %q:\n%s", environment, containerfile)
+		}
+	}
 }
 
 func TestPlanCompositionRejectsYarnPnPSeed(t *testing.T) {

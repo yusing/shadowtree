@@ -102,20 +102,10 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	if err != nil {
 		return ImagePlan{}, err
 	}
-	tooling := []string{"RUN install -d -m 0755 /opt/shadowtree/bin /opt/shadowtree/toolchains"}
-	toolchainIdentity := make([]map[string]any, 0, len(toolchains))
-	for _, toolchain := range toolchains {
-		tooling = append(tooling, toolchain.Setup...)
-		for _, key := range slices.Sorted(maps.Keys(toolchain.Environment)) {
-			tooling = append(tooling, "ENV "+key+"="+toolchain.Environment[key])
-		}
-		tooling = append(tooling, toolchain.Verification...)
-		toolchainIdentity = append(toolchainIdentity, map[string]any{
-			"kind": toolchain.Kind, "identity": toolchain.Identity, "contract": toolchain.ContractVersion,
-			"setup": toolchain.Setup, "verification": toolchain.Verification, "environment": toolchain.Environment,
-		})
+	tooling, toolchainIdentity, err := toolchainStageCommands(toolchains)
+	if err != nil {
+		return ImagePlan{}, err
 	}
-	tooling = append(tooling, "ENV PATH=/opt/shadowtree/bin:$PATH")
 	dependency, dependencies, seeds, cacheDescriptors, err := contributionPlans(request.Contributions, source)
 	if err != nil {
 		return ImagePlan{}, err
@@ -169,6 +159,46 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 		Caches: planCaches(cacheDescriptors, source, projectKey, platform, stages),
 	}
 	return plan, nil
+}
+
+func toolchainStageCommands(toolchains []ResolvedToolchain) ([]string, []map[string]any, error) {
+	commands := []string{
+		"RUN install -d -m 0755 /opt/shadowtree/bin /opt/shadowtree/toolchains",
+		"ENV PATH=/opt/shadowtree/bin:$PATH",
+	}
+	identity := make([]map[string]any, 0, len(toolchains))
+	for _, toolchain := range toolchains {
+		if toolchain.ContractVersion != toolchainContractVersion {
+			return nil, nil, fmt.Errorf("toolchain provider %q uses unsupported contract %q", toolchain.Kind, toolchain.ContractVersion)
+		}
+		commands = append(commands, toolchain.Setup...)
+		for _, key := range slices.Sorted(maps.Keys(toolchain.Environment)) {
+			if key == "PATH" {
+				return nil, nil, fmt.Errorf("toolchain provider %q cannot override managed PATH", toolchain.Kind)
+			}
+			if !validEnvironmentName(key) {
+				return nil, nil, fmt.Errorf("toolchain provider %q has invalid environment name %q", toolchain.Kind, key)
+			}
+			commands = append(commands, "ENV "+key+"="+toolchain.Environment[key])
+		}
+		commands = append(commands, toolchain.Verification...)
+		identity = append(identity, map[string]any{
+			"kind": toolchain.Kind, "identity": toolchain.Identity, "contract": toolchain.ContractVersion,
+			"setup": toolchain.Setup, "verification": toolchain.Verification, "environment": toolchain.Environment,
+		})
+	}
+	return commands, identity, nil
+}
+
+func validEnvironmentName(name string) bool {
+	for index := range len(name) {
+		character := name[index]
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_' || index > 0 && character >= '0' && character <= '9' {
+			continue
+		}
+		return false
+	}
+	return name != ""
 }
 
 func validateToolchainRegistry() error {
