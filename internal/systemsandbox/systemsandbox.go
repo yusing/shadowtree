@@ -26,6 +26,15 @@ const (
 	Nerdctl RuntimeName = "nerdctl"
 )
 
+// WorkspaceStrategy identifies how a runtime can expose a private writable
+// project view without making the source checkout writable.
+type WorkspaceStrategy string
+
+const (
+	WorkspaceCopied  WorkspaceStrategy = "copied"
+	WorkspaceOverlay WorkspaceStrategy = "overlay"
+)
+
 // RuntimeCandidates returns system runtime candidates in probe order.
 func RuntimeCandidates() []RuntimeName {
 	return []RuntimeName{Docker, Podman, Nerdctl}
@@ -69,8 +78,9 @@ var capabilityProbes = []capabilityProbe{
 // RuntimeSelection captures one usable runtime and the confinement policy
 // derived from the same observed engine security state.
 type RuntimeSelection struct {
-	Name        RuntimeName
-	Confinement ConfinementPolicy
+	Name              RuntimeName
+	Confinement       ConfinementPolicy
+	WorkspaceStrategy WorkspaceStrategy
 }
 
 // Detect probes supported runtimes in stable order and returns the first usable
@@ -106,8 +116,9 @@ func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, u
 			fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
 			continue
 		}
-		fmt.Fprintf(progress, "shadowtree: selected system runtime %s\n", candidate)
-		return RuntimeSelection{Name: candidate, Confinement: policy}, nil
+		strategy := workspaceStrategy(candidate, policy, security.overlayWorkspace)
+		fmt.Fprintf(progress, "shadowtree: selected system runtime %s with %s workspace\n", candidate, strategy)
+		return RuntimeSelection{Name: candidate, Confinement: policy, WorkspaceStrategy: strategy}, nil
 	}
 	return RuntimeSelection{}, fmt.Errorf("no usable system runtime: %s", strings.Join(failures, "; "))
 }
@@ -132,9 +143,18 @@ func probe(ctx context.Context, name RuntimeName, run commandRunner) (runtimeSec
 		}
 		options := helpOptions(output)
 		required := slices.Clone(probe.requiredOptions)
+		if len(probe.args) == 3 && probe.args[0] == "volume" && probe.args[1] == "create" && name == Docker {
+			_, hasDriver := options["--driver"]
+			_, hasOptions := options["--opt"]
+			security.overlayWorkspace = hasDriver && hasOptions
+		}
 		if len(probe.args) == 2 && probe.args[0] == "create" {
 			if security.rootless && name == Podman {
 				required = append(required, "--userns")
+			}
+			if name == Podman {
+				required = append(required, "--volume")
+				security.overlayWorkspace = true
 			}
 			if security.selinux {
 				required = append(required, "--volume")
@@ -149,9 +169,20 @@ func probe(ctx context.Context, name RuntimeName, run commandRunner) (runtimeSec
 	return security, nil
 }
 
+func workspaceStrategy(runtime RuntimeName, confinement ConfinementPolicy, overlayCapable bool) WorkspaceStrategy {
+	if confinement.SELinux {
+		return WorkspaceCopied
+	}
+	if overlayCapable && (runtime == Docker || runtime == Podman) {
+		return WorkspaceOverlay
+	}
+	return WorkspaceCopied
+}
+
 type runtimeSecurity struct {
 	rootless                 bool
 	selinux                  bool
+	overlayWorkspace         bool
 	rootHostUID, rootHostGID int
 	hasRootMapping           bool
 }

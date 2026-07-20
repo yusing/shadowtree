@@ -3251,7 +3251,7 @@ func TestSystemSandboxSelectsUsableRuntimeBeforeImageExecution(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, bin, "docker", `
 case "$*" in
-  "volume create --help") printf '%s' '--label' ;;
+  "volume create --help") printf '%s' '--label --driver --opt' ;;
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;
@@ -3314,7 +3314,7 @@ tag_file() {
 }
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg'; exit 0 ;;
-  "volume create --help") printf '%s' '--label'; exit 0 ;;
+  "volume create --help") printf '%s' '--label --driver --opt'; exit 0 ;;
   "volume inspect --help") printf '%s' '--format'; exit 0 ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format'; exit 0 ;;
   "volume rm --help") printf '%s' ok; exit 0 ;;
@@ -3353,6 +3353,11 @@ elif [ "$1 $2" = "image tag" ]; then
   source_file=$(tag_file "$3")
   target_file=$(tag_file "$4")
   /bin/cp "$source_file" "$target_file"
+elif [ "$1 $2" = "volume create" ]; then
+  printf '%s' 'overlay volume unavailable' >&2
+  exit 1
+elif [ "$1 $2" = "volume rm" ]; then
+  exit 0
 elif [ "$1" = "create" ]; then
   printf 'create args: %s\n' "$*" >&2
   while [ "$#" -gt 0 ]; do
@@ -3494,7 +3499,7 @@ func TestSystemSandboxCheckValidatesImagePlanWithoutBuilding(t *testing.T) {
 	writeExecutable(t, bin, "docker", `
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
-  "volume create --help") printf '%s' '--label' ;;
+  "volume create --help") printf '%s' '--label --driver --opt' ;;
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;

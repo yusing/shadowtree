@@ -57,7 +57,7 @@ esac
 	go func() {
 		done <- RunLifecycle(ctx, Docker, LifecycleOptions{
 			Image: "image:test", Platform: "linux/amd64", Confinement: ConfinementPolicy{User: "1000:1000"},
-			WorkspaceHost: workspace, WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan,
+			Workspace: WorkspaceMount{Strategy: WorkspaceCopied, Source: workspace}, WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan,
 			ExportHost: t.TempDir(),
 			Progress:   &progress,
 		})
@@ -202,6 +202,201 @@ esac
 	}
 }
 
+func TestRunLifecycleCreatesAndCleansDockerOverlayVolume(t *testing.T) {
+	bin := t.TempDir()
+	writeLifecycleRuntime(t, bin, Docker)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{
+		Strategy: WorkspaceOverlay,
+		Source:   t.TempDir(),
+		Upper:    t.TempDir(),
+		Work:     t.TempDir(),
+	}
+	var calls [][]string
+	err := runLifecycle(t.Context(), Docker, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 4 {
+		t.Fatalf("runtime control calls = %v, want volume create, container create, container rm, volume rm", calls)
+	}
+	volumeName := calls[0][len(calls[0])-1]
+	wantVolumeOptions := "o=lowerdir=" + options.Workspace.Source + ",upperdir=" + options.Workspace.Upper + ",workdir=" + options.Workspace.Work + ",userxattr"
+	for _, want := range []string{
+		"volume create --driver local --label shadowtree.owner=github.com/yusing/shadowtree --label shadowtree.kind=system-workspace --label shadowtree.invocation=" + volumeName + " --opt type=overlay --opt device=overlay --opt " + wantVolumeOptions + " " + volumeName,
+		"--mount type=volume,src=" + volumeName + ",dst=" + options.WorkspacePath + ",volume-nocopy",
+	} {
+		joined := strings.Join(calls[0], " ") + "\n" + strings.Join(calls[1], " ")
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Docker overlay calls missing %q:\n%s", want, joined)
+		}
+	}
+	if calls[2][0] != "rm" || strings.Join(calls[3][:2], " ") != "volume rm" || calls[3][2] != volumeName {
+		t.Fatalf("cleanup order = %v, want container before workspace volume", calls[2:])
+	}
+}
+
+func TestRunLifecycleUsesPodmanNativeOverlayVolume(t *testing.T) {
+	bin := t.TempDir()
+	writeLifecycleRuntime(t, bin, Podman)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	options := lifecycleTestOptions(t)
+	options.Confinement = ConfinementPolicy{User: "0:0", UserNamespace: "host"}
+	options.Workspace = WorkspaceMount{
+		Strategy: WorkspaceOverlay,
+		Source:   t.TempDir(),
+		Upper:    t.TempDir(),
+		Work:     t.TempDir(),
+	}
+	var create []string
+	err := runLifecycle(t.Context(), Podman, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			create = append([]string(nil), args...)
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := options.Workspace.Source + ":" + options.WorkspacePath + ":O,upperdir=" + options.Workspace.Upper + ",workdir=" + options.Workspace.Work
+	joined := strings.Join(create, " ")
+	for _, part := range []string{"--userns host", "--volume " + want} {
+		if !strings.Contains(joined, part) {
+			t.Fatalf("Podman overlay create missing %q: %s", part, joined)
+		}
+	}
+	if strings.Contains(joined, options.Workspace.Source+":"+options.WorkspacePath+":Z") {
+		t.Fatalf("Podman overlay relabelled the source lower: %s", joined)
+	}
+}
+
+func TestRunLifecycleMarksOverlayCreateFailureSafeForCopyFallback(t *testing.T) {
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{Strategy: WorkspaceOverlay, Source: t.TempDir(), Upper: t.TempDir(), Work: t.TempDir()}
+	wantErr := errors.New("overlay mount rejected")
+	started := false
+	err := runLifecycle(t.Context(), Podman, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			return []byte("overlay mount rejected"), wantErr
+		}
+		if args[0] == "start" {
+			started = true
+		}
+		return nil, nil
+	})
+	if _, ok := errors.AsType[WorkspaceSetupError](err); !ok || !errors.Is(err, wantErr) {
+		t.Fatalf("runLifecycle error = %v, want WorkspaceSetupError wrapping create failure", err)
+	}
+	if started {
+		t.Fatal("container user code started after overlay create failure")
+	}
+}
+
+func TestRunLifecycleDoesNotMarkOverlayCreateFailureRetryableWhenContainerCleanupFails(t *testing.T) {
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{Strategy: WorkspaceOverlay, Source: t.TempDir(), Upper: t.TempDir(), Work: t.TempDir()}
+	createErr := errors.New("overlay create failed")
+	cleanupErr := errors.New("container cleanup failed")
+	err := runLifecycle(t.Context(), Podman, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			return nil, createErr
+		}
+		if args[0] == "rm" {
+			return []byte("cleanup failed"), cleanupErr
+		}
+		return nil, nil
+	})
+	if _, ok := errors.AsType[WorkspaceSetupError](err); ok {
+		t.Fatalf("runLifecycle error remained retryable after uncertain cleanup: %v", err)
+	}
+	for _, want := range []error{createErr, cleanupErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("runLifecycle error = %v, want %v", err, want)
+		}
+	}
+}
+
+func TestRunLifecycleCleansPossiblyCreatedDockerVolumeAfterCreateFailure(t *testing.T) {
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{Strategy: WorkspaceOverlay, Source: t.TempDir(), Upper: t.TempDir(), Work: t.TempDir()}
+	wantErr := errors.New("volume create connection lost")
+	removed := ""
+	err := runLifecycle(t.Context(), Docker, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "volume" && args[1] == "create" {
+			return nil, wantErr
+		}
+		if len(args) == 3 && args[0] == "volume" && args[1] == "rm" {
+			removed = args[2]
+		}
+		return nil, nil
+	})
+	if _, ok := errors.AsType[WorkspaceSetupError](err); !ok || !errors.Is(err, wantErr) {
+		t.Fatalf("runLifecycle error = %v, want cleanup-preserving WorkspaceSetupError", err)
+	}
+	if removed == "" || !strings.HasSuffix(removed, "-workspace") {
+		t.Fatalf("possibly created workspace volume was not removed: %q", removed)
+	}
+}
+
+func TestRunLifecycleDoesNotMarkDockerVolumeFailureRetryableWhenCleanupFails(t *testing.T) {
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{Strategy: WorkspaceOverlay, Source: t.TempDir(), Upper: t.TempDir(), Work: t.TempDir()}
+	createErr := errors.New("volume create connection lost")
+	cleanupErr := errors.New("volume cleanup failed")
+	err := runLifecycle(t.Context(), Docker, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "volume" && args[1] == "create" {
+			return nil, createErr
+		}
+		if len(args) >= 2 && args[0] == "volume" && args[1] == "rm" {
+			return []byte("cleanup failed"), cleanupErr
+		}
+		return nil, nil
+	})
+	if _, ok := errors.AsType[WorkspaceSetupError](err); ok {
+		t.Fatalf("runLifecycle error remained retryable after uncertain volume cleanup: %v", err)
+	}
+	for _, want := range []error{createErr, cleanupErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("runLifecycle error = %v, want %v", err, want)
+		}
+	}
+}
+
+func TestRunLifecycleJoinsContainerAndVolumeCleanupErrorsWithExit(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\n  start) exit 23 ;;\n  *) exit 0 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, string(Docker)), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	options := lifecycleTestOptions(t)
+	options.Workspace = WorkspaceMount{Strategy: WorkspaceOverlay, Source: t.TempDir(), Upper: t.TempDir(), Work: t.TempDir()}
+	containerCleanupErr := errors.New("container cleanup failed")
+	volumeCleanupErr := errors.New("volume cleanup failed")
+	err := runLifecycle(t.Context(), Docker, options, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "rm" {
+			return nil, containerCleanupErr
+		}
+		if len(args) >= 2 && args[0] == "volume" && args[1] == "rm" {
+			return nil, volumeCleanupErr
+		}
+		return nil, nil
+	})
+	exit, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exit.ExitCode() != 23 {
+		t.Fatalf("runLifecycle error = %v, want attached exit 23", err)
+	}
+	for _, want := range []error{containerCleanupErr, volumeCleanupErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("runLifecycle error = %v, want joined cleanup error %v", err, want)
+		}
+	}
+}
+
 func TestRunLifecyclePreservesCreateDiagnosticAndRecovery(t *testing.T) {
 	options := lifecycleTestOptions(t)
 	wantErr := errors.New("exit status 1")
@@ -219,7 +414,7 @@ func TestRunLifecyclePreservesCreateDiagnosticAndRecovery(t *testing.T) {
 			t.Fatalf("runLifecycle error = %v, want %q", err, want)
 		}
 	}
-	for _, sensitive := range []string{options.Image, options.Platform, options.WorkspaceHost, options.WorkspacePath, options.HelperHost, options.PlanHost, options.ExportHost, options.Confinement.User} {
+	for _, sensitive := range []string{options.Image, options.Platform, options.Workspace.Source, options.WorkspacePath, options.HelperHost, options.PlanHost, options.ExportHost, options.Confinement.User} {
 		if strings.Contains(err.Error(), sensitive) {
 			t.Fatalf("runLifecycle error exposed %q: %v", sensitive, err)
 		}
@@ -252,7 +447,7 @@ esac
 	arguments := string(data)
 	for _, want := range []string{
 		"--user 0:0 --mount type=tmpfs,dst=/tmp --userns host",
-		"--volume " + options.WorkspaceHost + ":" + options.WorkspacePath + ":Z",
+		"--volume " + options.Workspace.Source + ":" + options.WorkspacePath + ":Z",
 		"--volume " + options.HelperHost + ":/opt/shadowtree/helper:ro,Z",
 	} {
 		if !strings.Contains(arguments, want) {
@@ -284,6 +479,14 @@ func lifecycleTestOptions(t *testing.T) LifecycleOptions {
 	}
 	return LifecycleOptions{
 		Image: "image:test", Platform: "linux/amd64", Confinement: ConfinementPolicy{User: "1000:1000"},
-		WorkspaceHost: t.TempDir(), WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan, ExportHost: t.TempDir(),
+		Workspace: WorkspaceMount{Strategy: WorkspaceCopied, Source: t.TempDir()}, WorkspacePath: "/workspace", HelperHost: helper, PlanHost: plan, ExportHost: t.TempDir(),
+	}
+}
+
+func writeLifecycleRuntime(t *testing.T, bin string, runtime RuntimeName) {
+	t.Helper()
+	script := "#!/bin/sh\ncase \"$1\" in\n  start) exit 0 ;;\n  *) exit 0 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, string(runtime)), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }

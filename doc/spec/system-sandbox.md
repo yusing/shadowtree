@@ -171,6 +171,15 @@ source is excluded. Go module and Rust registry/Git sources live outside the
 project mount. Node/Bun adapters must prove that seeded stores, links, workspace
 paths, and ownership remain valid after the temporary workspace mount.
 
+Before mounting an overlay workspace, every existing Node/Bun seed target is
+hidden by an intentional upper-layer whiteout after its confined path and
+non-overlap have been validated. Dependency seeding creates a fresh target in
+the upper layer rather than recursively deleting the lower target. Stale,
+non-writable, or differently owned lower dependency contents must neither block
+the lifecycle nor be changed. These seed whiteouts are lifecycle replacements,
+not protected workspace exclusions, so successfully seeded content follows the
+ordinary selected or whole-workspace sync-out contract.
+
 Private credentials are invocation authority, never image inputs. A runtime
 adapter must prove non-persistent secret mounts before enabling private fetch.
 Secrets never enter Containerfiles, args, image environment/history, labels,
@@ -220,10 +229,30 @@ recipe references, and `post` in one ephemeral container. Stage-per-container
 execution is invalid because it loses process, writable-layer, and cleanup
 continuity.
 
-The host creates a copied temporary workspace and mounts it read-write at the
-same canonical project path inside every container invocation. The source
-checkout is never the writable bind. Stable in-container paths preserve
-compiler fingerprints and debug/build-script behavior.
+The host prepares one private system-workspace representation and mounts its
+writable view at the same canonical project path inside every container
+invocation. On a capable local Linux runtime, the canonical source checkout is
+the read-only lower layer of an overlay and a Shadowtree-owned ephemeral upper
+layer records every write, replacement, and deletion. The source checkout is
+never the writable mount. Stable in-container paths preserve compiler
+fingerprints and debug/build-script behavior.
+
+The private view excludes `.git`, unsupported special files, and source paths
+that the invoking identity cannot read, while retaining Shadowtree
+configuration required by cross-config references. Preparing those exclusions
+may inspect source metadata but must not copy readable lower-file contents.
+Any selected sync-out path overlapping a protected exclusion fails before user
+code rather than treating the hidden entry as a requested host deletion.
+When the selected runtime, filesystem, mount namespace, identity mapping, or
+security labelling cannot provide that overlay safely, Shadowtree reports the
+reason and falls back to a copied private system workspace. This is an internal
+workspace strategy fallback, not fallback from `"system"` to another sandbox
+mode.
+
+An overlay lower layer is a live read-only view rather than a filesystem
+snapshot. Concurrent host changes may become visible to the running lifecycle,
+as with the existing namespace-overlay workspace, but container writes and
+deletions remain confined to the upper layer until successful sync-out.
 
 Shadowtree copies its static lifecycle helper into the private invocation
 directory and mounts it read-only with a restrictive resolved-plan/secret file.
@@ -252,11 +281,19 @@ authoritative. This keeps the managed slim foundation deterministic without
 assuming that a host-specific compiled locale exists in the image.
 
 Cache-backed paths such as Cargo `target` are nested volume mounts and may be
-invisible in the host copy. Before successful container exit, the helper exports
-only selected sync-out paths intersecting cache mounts into a private ordinary
-workspace tree. Host sync-out consumes that snapshot with existing file,
-symlink, mode, confinement, and missing-path-as-deletion rules. Failure and
-cancellation keep compatible cache data but export nothing.
+invisible in the private workspace representation. Before successful container
+exit, the helper exports only selected sync-out paths intersecting cache mounts
+into a private ordinary export tree. After exit, Shadowtree materializes each
+selected result from the lower layer plus overlay upper changes, merges the
+cache export at its owned path, and applies existing file, symlink, mode,
+confinement, and missing-path-as-deletion rules. A copied fallback produces the
+same materialized result. Failure and cancellation keep compatible cache data
+but export no ordinary outputs.
+
+Whole-workspace sync applies the complete private result, including overlay
+whiteouts and cache-backed exports, without copying the unchanged lower tree
+unless full materialization is required to preserve that merged result. Recipe
+logs remain the sole workspace output preserved after lifecycle failure.
 
 Nested references execute inside the top-level container, build no nested
 image, and perform no nested sync-out. Their image requirements, toolchains,
@@ -318,6 +355,20 @@ Slim images are tested defaults, not universal ABI claims: musl/glibc, linkers,
 headers, OpenSSL, CMake, `pkg-config`, and native dependencies remain explicit
 base/system-package choices.
 
+Overlay-only capabilities do not gate a runtime that satisfies the copied
+workspace contract. In particular, Docker without exact local-volume
+`--driver` and `--opt` support selects the copied strategy rather than being
+rejected as unusable.
+
+An overlay workspace is used only when the selected runtime owns a supported
+mount strategy, the upper/work filesystem satisfies OverlayFS requirements,
+the merged workspace has the container's required security label without
+relabeling the source checkout, and Shadowtree can inspect and remove the upper,
+work, and runtime-owned mount state. A failed or unsupported overlay setup may
+fall back to the copied private workspace only before user code starts. After a
+container may have started, Shadowtree never retries the lifecycle through a
+different workspace strategy.
+
 Mutable project cache content is untrusted project-writable state. It is never
 mounted into another project/worktree, searched for Shadowtree/runtime
 executables, or authoritative for images/dependencies. Local tags and labels
@@ -343,6 +394,11 @@ sync-out, and cache inspection/reset. A Rust workspace must run `test` followed
 by `build` without recompiling unchanged crates, expose the same project-scoped
 Cargo volume in inspection, and give an exact reset operation. Capable-host
 validation must cover Docker, Podman, and nerdctl rather than mocks alone.
+Overlay-capable Docker and Podman hosts must additionally prove that setup does
+not copy readable lower-file contents, that created/replaced/deleted paths are
+recoverable from the upper layer, and that cleanup leaves no container, volume,
+mount, or privileged temporary residue. The nerdctl copied fallback must retain
+the same observable lifecycle and sync result.
 
 Explicit non-goals for this increment are an in-process OCI/runtime/registry
 stack, Shadowtree filesystem cache store, global persistent database/journal,

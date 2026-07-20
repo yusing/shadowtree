@@ -21,15 +21,20 @@ writes already target the host checkout.
 `sandboxed = "system"` is a distinct sandboxed lifecycle. It retains sync-out
 semantics and never falls back to the ordinary disposable workspace or direct
 host execution. Static inspection does not probe a runtime. After preparing the
-immutable image chain, Shadowtree copies the checkout to a private workspace and
-mounts that copy read-write at the checkout's canonical path in one ephemeral
-container. A private read-only helper and resolved-plan file run `pre`, main or
-`for_each`, nested references, and `post` without mounting the host checkout.
-Successful runs apply existing sync-out rules from the private copy; failures
-and cancellation export no selected outputs. Logs retain their normal behavior.
-Cache-backed selected outputs are first copied from the runtime volume to a
-private ordinary snapshot, so the same sync-out confinement rules still own the
-host write.
+immutable image chain, Shadowtree prepares one private workspace. Capable local
+Docker and Podman engines mount the checkout read-only as an OverlayFS lower and
+record changes in a temporary upper; nerdctl, SELinux-enabled engines, and
+unsupported overlay setups use a copied private workspace. Both appear at the
+checkout's canonical path in one ephemeral container. A private read-only
+helper and resolved-plan file run `pre`, main or `for_each`, nested references,
+and `post` without exposing a writable host checkout.
+
+Successful selected sync-out materializes the requested lower-plus-upper result
+or reads it from the copied fallback, merges cache-backed exports, and then uses
+the existing rooted sync rules. Failures and cancellation export no selected
+outputs. Logs retain their normal failure-recovery behavior. Overlay fallback is
+allowed only before user code can start; start or attach failures do not replay
+the lifecycle.
 
 ## Failure Behavior
 

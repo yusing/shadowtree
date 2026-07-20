@@ -1,5 +1,41 @@
 version: 1
 items:
+  - id: CTR-SBOX-001
+    title: CTR-SBOX-001 — Represent one private workspace result
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
+  - id: CTR-SBOX-002
+    title: CTR-SBOX-002 — Prepare protected lower-layer exclusions
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
+  - id: CTR-SBOX-003
+    title: CTR-SBOX-003 — Let each runtime own its visible overlay mount
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
+  - id: CTR-SBOX-004
+    title: CTR-SBOX-004 — Preserve lifecycle and cache-export ordering
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
+  - id: CTR-SBOX-005
+    title: CTR-SBOX-005 — Make fallback and progress explicit
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
+  - id: CTR-SBOX-006
+    title: "CTR-SBOX-006 — Prove cleanup, confinement, and performance"
+    kind: contract
+    scope: root
+    path: doc/architecture/system-sandbox.md
+    status: implemented
   - id: CTR-TOOL-001
     title: CTR-TOOL-001 — Keep profiles and providers closed under composition
     kind: contract

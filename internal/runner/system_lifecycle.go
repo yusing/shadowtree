@@ -38,41 +38,76 @@ type systemLifecyclePlan struct {
 }
 
 type systemInvocation struct {
-	dir, workspace, export, helper, plan string
-	skipped                              []string
+	dir, export, helper, plan string
+	workspace                 *systemWorkspace
 }
 
-func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr, verbose io.Writer, setup *systemProgress) error {
-	fmt.Fprintln(verbose, "shadowtree: setting up system workspace")
-	invocation, err := createSystemInvocation(image, options)
+type systemWorkspace struct {
+	source         string
+	dir            string
+	copyRoot       string
+	overlay        *sandboxWorkspace
+	active         *sandboxWorkspace
+	mount          systemsandbox.WorkspaceMount
+	skipped        []string
+	protected      map[string]struct{}
+	replaced       []string
+	fallbackReason error
+}
+
+func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, strategy systemsandbox.WorkspaceStrategy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr, verbose io.Writer, setup *systemProgress) (runErr error) {
+	fmt.Fprintf(verbose, "shadowtree: setting up %s system workspace with runtime %s\n", strategy, runtimeName)
+	if err := setup.Start(systemWorkspaceProgressLabel(strategy, false)); err != nil {
+		return errors.Join(fmt.Errorf("render system progress: %w", err), setup.Fail())
+	}
+	invocation, err := createSystemInvocation(image, options, strategy)
 	if err != nil {
 		return errors.Join(err, setup.Fail())
 	}
-	for _, path := range invocation.skipped {
-		fmt.Fprintf(verbose, "shadowtree: system workspace skipped unreadable path %q\n", path)
-	}
 	defer func() {
 		fmt.Fprintln(verbose, "shadowtree: cleaning system invocation")
-		_ = os.RemoveAll(invocation.dir)
+		runErr = errors.Join(runErr, invocation.Close(ctx, runtimeName, image.FinalTag, verbose))
 	}()
 	workspace := invocation.workspace
+	if workspace.fallbackReason != nil {
+		if err := setup.Start(systemWorkspaceProgressLabel(systemsandbox.WorkspaceCopied, true)); err != nil {
+			return errors.Join(fmt.Errorf("render system progress: %w", err), setup.Fail())
+		}
+		fmt.Fprintf(verbose, "shadowtree: overlay workspace unavailable (%q); using copied fallback\n", workspace.fallbackReason)
+	}
+	for _, path := range workspace.skipped {
+		fmt.Fprintf(verbose, "shadowtree: system workspace skipped unreadable path %q\n", path)
+	}
 	fmt.Fprintln(verbose, "shadowtree: executing system lifecycle")
 	ready := false
-	err = systemsandbox.RunLifecycle(ctx, runtimeName, systemsandbox.LifecycleOptions{
-		Image: image.FinalTag, Platform: image.Platform, WorkspaceHost: workspace,
-		WorkspacePath: options.SourceDir, HelperHost: invocation.helper, PlanHost: invocation.plan,
-		Caches: image.Caches, ExportHost: invocation.export,
-		Confinement: confinement,
-		Stdin:       stdin, Stdout: stdout, Stderr: stderr, Progress: verbose,
-		Ready: func() error {
-			if err := setup.Succeed(); err != nil {
-				return fmt.Errorf("render system progress: %w", err)
-			}
-			ready = true
-			return nil
-		},
-	})
-	if logErr := syncSystemLog(options.Resolved, options.SourceDir, workspace); logErr != nil && err == nil {
+	run := func() error {
+		return systemsandbox.RunLifecycle(ctx, runtimeName, systemsandbox.LifecycleOptions{
+			Image: image.FinalTag, Platform: image.Platform, Workspace: workspace.mount,
+			WorkspacePath: options.SourceDir, HelperHost: invocation.helper, PlanHost: invocation.plan,
+			Caches: image.Caches, ExportHost: invocation.export,
+			Confinement: confinement,
+			Stdin:       stdin, Stdout: stdout, Stderr: stderr, Progress: verbose,
+			Ready: func() error {
+				if err := setup.Succeed(); err != nil {
+					return fmt.Errorf("render system progress: %w", err)
+				}
+				ready = true
+				return nil
+			},
+		})
+	}
+	err = run()
+	if setupErr, ok := errors.AsType[systemsandbox.WorkspaceSetupError](err); ok && workspace.mount.Strategy == systemsandbox.WorkspaceOverlay {
+		if progressErr := setup.Start(systemWorkspaceProgressLabel(systemsandbox.WorkspaceCopied, true)); progressErr != nil {
+			return errors.Join(err, fmt.Errorf("render system progress: %w", progressErr), setup.Fail())
+		}
+		fmt.Fprintf(verbose, "shadowtree: runtime overlay workspace unavailable (%q); using copied fallback\n", setupErr)
+		if fallbackErr := workspace.useCopiedFallback(options.Resolved.SyncOut, options.SyncOutAll, setupErr); fallbackErr != nil {
+			return errors.Join(err, fallbackErr, setup.Fail())
+		}
+		err = run()
+	}
+	if logErr := workspace.syncLog(options.Resolved); logErr != nil && err == nil {
 		err = logErr
 	}
 	if err != nil {
@@ -84,37 +119,31 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		}
 		return systemContainerExitError(err)
 	}
-	if err := applySystemCacheExports(image.Caches, options, invocation.export, workspace); err != nil {
-		return err
-	}
 	fmt.Fprintln(verbose, "shadowtree: exporting system workspace")
-	if options.SyncOutAll {
-		return (&sandboxWorkspace{root: workspace}).SyncAll(options.SourceDir)
-	}
-	for _, path := range options.Resolved.SyncOut {
-		if err := SyncPath(workspace, options.SourceDir, path); err != nil {
-			return fmt.Errorf("sync %s: %w", path, err)
-		}
-	}
-	return nil
+	return workspace.syncSuccess(image.Caches, options, invocation.export)
 }
 
-func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (systemInvocation, error) {
+func systemWorkspaceProgressLabel(strategy systemsandbox.WorkspaceStrategy, fallback bool) string {
+	if fallback {
+		return "Copy system workspace fallback"
+	}
+	if strategy == systemsandbox.WorkspaceOverlay {
+		return "Setup overlay workspace"
+	}
+	return "Copy system workspace"
+}
+
+func createSystemInvocation(image systemsandbox.ImagePlan, options Options, strategy systemsandbox.WorkspaceStrategy) (systemInvocation, error) {
 	dir, err := os.MkdirTemp("", "shadowtree-system-*")
 	if err != nil {
 		return systemInvocation{}, err
 	}
 	fail := func(err error) (systemInvocation, error) {
-		_ = os.RemoveAll(dir)
-		return systemInvocation{}, err
+		return systemInvocation{}, errors.Join(err, removeAll(dir))
 	}
-	workspace := filepath.Join(dir, "workspace")
-	skipped, err := copySystemWorkspaceTree(options.SourceDir, workspace)
+	workspace, err := prepareSystemWorkspace(options.SourceDir, dir, strategy, options.Resolved.SyncOut, options.SyncOutAll, image.DependencySeeds)
 	if err != nil {
-		return fail(fmt.Errorf("copy system workspace: %w", err))
-	}
-	if err := validateSkippedSystemPaths(skipped, options.Resolved.SyncOut, options.SyncOutAll); err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("prepare system workspace: %w", err))
 	}
 	export := filepath.Join(dir, "export")
 	if err := os.Mkdir(export, 0o700); err != nil {
@@ -144,7 +173,233 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	if err := os.WriteFile(planPath, planData, 0o600); err != nil {
 		return fail(fmt.Errorf("write lifecycle plan: %w", err))
 	}
-	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath, skipped: skipped}, nil
+	return systemInvocation{dir: dir, workspace: workspace, export: export, helper: helper, plan: planPath}, nil
+}
+
+func prepareSystemWorkspace(source, dir string, strategy systemsandbox.WorkspaceStrategy, syncOut []string, syncOutAll bool, seeds []systemsandbox.DependencySeed) (*systemWorkspace, error) {
+	replaced, err := validateDependencySeedTargets(seeds, source)
+	if err != nil {
+		return nil, fmt.Errorf("validate dependency seed targets: %w", err)
+	}
+	workspace := &systemWorkspace{
+		source:   source,
+		dir:      dir,
+		copyRoot: filepath.Join(dir, "workspace"),
+		replaced: replaced,
+	}
+	if strategy == systemsandbox.WorkspaceOverlay {
+		overlay, err := prepareOverlayWorkspace(source, dir, workspace.copyRoot, systemWorkspaceSkip, replaced)
+		if err == nil {
+			if err := validateSkippedSystemPaths(overlay.skipped, syncOut, syncOutAll); err != nil {
+				return nil, err
+			}
+			if err := validateProtectedSystemPaths(overlay.protectedWhiteouts, syncOut, false); err != nil {
+				return nil, err
+			}
+			workspace.overlay = overlay
+			workspace.active = overlay
+			workspace.skipped = slices.Clone(overlay.skipped)
+			workspace.protected = maps.Clone(overlay.protectedWhiteouts)
+			workspace.mount = systemsandbox.WorkspaceMount{
+				Strategy: systemsandbox.WorkspaceOverlay,
+				Source:   source,
+				Upper:    overlay.upper,
+				Work:     overlay.work,
+			}
+			return workspace, nil
+		}
+		if err := workspace.useCopiedFallback(syncOut, syncOutAll, err); err != nil {
+			return nil, err
+		}
+		return workspace, nil
+	}
+	if strategy != systemsandbox.WorkspaceCopied {
+		return nil, fmt.Errorf("unsupported system workspace strategy %q", strategy)
+	}
+	if err := workspace.useCopiedFallback(syncOut, syncOutAll, nil); err != nil {
+		return nil, err
+	}
+	workspace.fallbackReason = nil
+	return workspace, nil
+}
+
+func (workspace *systemWorkspace) useCopiedFallback(syncOut []string, syncOutAll bool, reason error) error {
+	if err := removeAll(workspace.copyRoot); err != nil {
+		return fmt.Errorf("clear copied system workspace: %w", err)
+	}
+	protected, _, err := inspectWorkspaceExclusions(workspace.source, systemWorkspaceSkip)
+	if err != nil {
+		return fmt.Errorf("inspect copied system workspace: %w", err)
+	}
+	skipped, err := copySystemWorkspaceTree(workspace.source, workspace.copyRoot, workspace.replaced)
+	if err != nil {
+		return fmt.Errorf("copy system workspace: %w", err)
+	}
+	protected, skipped, err = filterReplacedWorkspaceExclusions(protected, skipped, workspace.replaced)
+	if err != nil {
+		return err
+	}
+	if err := validateSkippedSystemPaths(skipped, syncOut, syncOutAll); err != nil {
+		return err
+	}
+	if err := validateProtectedSystemPaths(protected, syncOut, syncOutAll); err != nil {
+		return err
+	}
+	workspace.active = &sandboxWorkspace{
+		root: workspace.copyRoot, source: workspace.source, workDir: workspace.dir,
+		skipped: skipped, skip: systemWorkspaceSkip,
+	}
+	workspace.mount = systemsandbox.WorkspaceMount{Strategy: systemsandbox.WorkspaceCopied, Source: workspace.copyRoot}
+	workspace.skipped = slices.Clone(skipped)
+	workspace.protected = protected
+	workspace.fallbackReason = reason
+	return nil
+}
+
+func validateProtectedSystemPaths(protected map[string]struct{}, syncOut []string, unsafeSyncAll bool) error {
+	cleaned, err := cleanSyncOutPaths(syncOut)
+	if err != nil {
+		return err
+	}
+	for _, name := range slices.Sorted(maps.Keys(protected)) {
+		for _, selected := range cleaned {
+			if sameOrDescendant(name, selected) || sameOrDescendant(selected, name) {
+				return fmt.Errorf("system workspace protected path %q overlaps sync_out path %q", name, selected)
+			}
+		}
+		if unsafeSyncAll && name != ".git" {
+			return fmt.Errorf("system workspace cannot use sync-out-all while protecting excluded path %q", name)
+		}
+	}
+	return nil
+}
+
+func (workspace *systemWorkspace) syncLog(resolved recipe.Resolved) (syncErr error) {
+	if resolved.LogPath == "" {
+		return nil
+	}
+	_, _, hostPath, err := recipeLogPath(resolved, workspace.source)
+	if err != nil {
+		return err
+	}
+	rel, ok := relInside(workspace.source, hostPath)
+	if !ok {
+		return nil
+	}
+	root, cleanup, err := workspace.active.SyncRoot([]string{filepath.ToSlash(rel)})
+	if err != nil {
+		return err
+	}
+	defer func() { syncErr = errors.Join(syncErr, cleanup()) }()
+	if _, err := os.Stat(filepath.Join(root, rel)); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return syncPathWithPolicy(root, workspace.source, filepath.ToSlash(rel), systemWorkspaceSkip)
+}
+
+func (workspace *systemWorkspace) syncSuccess(caches []systemsandbox.CachePlan, options Options, export string) (syncErr error) {
+	if options.SyncOutAll {
+		if workspace.active.overlay {
+			root, cleanup, err := workspace.materializeAll()
+			if err != nil {
+				return err
+			}
+			defer func() { syncErr = errors.Join(syncErr, cleanup()) }()
+			if err := applySystemCacheExports(caches, options, export, root); err != nil {
+				return err
+			}
+			return replaceDirContentsWithPolicy(root, workspace.source, systemWorkspaceSkip)
+		}
+		root := workspace.active.root
+		if err := applySystemCacheExports(caches, options, export, root); err != nil {
+			return err
+		}
+		return replaceDirContentsWithPolicy(root, workspace.source, systemWorkspaceSkip)
+	}
+	root, cleanup, err := workspace.active.SyncRoot(options.Resolved.SyncOut)
+	if err != nil {
+		return err
+	}
+	defer func() { syncErr = errors.Join(syncErr, cleanup()) }()
+	if err := applySystemCacheExports(caches, options, export, root); err != nil {
+		return err
+	}
+	for _, path := range options.Resolved.SyncOut {
+		if err := syncPathWithPolicy(root, options.SourceDir, path, systemWorkspaceSkip); err != nil {
+			return fmt.Errorf("sync %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func (workspace *systemWorkspace) materializeAll() (string, func() error, error) {
+	root := filepath.Join(workspace.dir, "sync-all")
+	cleanup := func() error { return removeAll(root) }
+	if err := removeAll(root); err != nil {
+		return "", cleanup, fmt.Errorf("clear complete system materialization: %w", err)
+	}
+	if _, err := copySystemWorkspaceTree(workspace.source, root, workspace.replaced); err != nil {
+		return "", cleanup, errors.Join(fmt.Errorf("copy complete system lower workspace: %w", err), cleanup())
+	}
+	if err := applyOverlayUpper(workspace.active.upper, root, workspace.protected); err != nil {
+		return "", cleanup, errors.Join(fmt.Errorf("apply complete system overlay: %w", err), cleanup())
+	}
+	return root, cleanup, nil
+}
+
+func (workspace *systemWorkspace) close(ctx context.Context, runtimeName systemsandbox.RuntimeName, image string, verbose io.Writer) error {
+	var errs []error
+	if workspace.overlay != nil {
+		if err := removeAll(workspace.overlay.overlayDir); err != nil {
+			if runtimeName == systemsandbox.Docker || runtimeName == systemsandbox.Podman {
+				runtimeErr := systemsandbox.CleanupOverlayWorkspace(ctx, runtimeName, image, workspace.overlay.overlayDir, verbose)
+				retryErr := removeAll(workspace.overlay.overlayDir)
+				err = overlayCleanupResult(err, runtimeErr, retryErr)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("remove system overlay workspace: %w", err))
+			}
+		}
+	}
+	if err := removeAll(workspace.copyRoot); err != nil {
+		errs = append(errs, fmt.Errorf("remove copied system workspace: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+func overlayCleanupResult(initialErr, runtimeErr, retryErr error) error {
+	if retryErr == nil {
+		return nil
+	}
+	return errors.Join(initialErr, runtimeErr, retryErr)
+}
+
+func (invocation systemInvocation) Close(ctx context.Context, runtimeName systemsandbox.RuntimeName, image string, verbose io.Writer) error {
+	var errs []error
+	if invocation.workspace != nil {
+		errs = append(errs, invocation.workspace.close(ctx, runtimeName, image, verbose))
+	}
+	for _, target := range []struct {
+		label string
+		path  string
+	}{
+		{label: "cache export", path: invocation.export},
+		{label: "helper", path: invocation.helper},
+		{label: "plan", path: invocation.plan},
+	} {
+		if target.path == "" {
+			continue
+		}
+		if err := removeAll(target.path); err != nil {
+			errs = append(errs, fmt.Errorf("remove system %s: %w", target.label, err))
+		}
+	}
+	if err := removeAll(invocation.dir); err != nil {
+		errs = append(errs, fmt.Errorf("remove system invocation: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func systemLifecycleEnvironment(host []string, resolved recipe.Resolved, caches []systemsandbox.CachePlan) map[string]string {
@@ -207,29 +462,9 @@ func systemContainerExitError(err error) error {
 	type exitCoder interface{ ExitCode() int }
 	var exit exitCoder
 	if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-		return ExitError{Code: exit.ExitCode()}
+		return errors.Join(ExitError{Code: exit.ExitCode()}, fmt.Errorf("system container lifecycle: %w", err))
 	}
 	return fmt.Errorf("system container lifecycle: %w", err)
-}
-
-func syncSystemLog(resolved recipe.Resolved, source, workspace string) error {
-	if resolved.LogPath == "" {
-		return nil
-	}
-	_, _, hostPath, err := recipeLogPath(resolved, source)
-	if err != nil {
-		return err
-	}
-	rel, ok := relInside(source, hostPath)
-	if !ok {
-		return nil
-	}
-	if _, err := os.Stat(filepath.Join(workspace, rel)); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return SyncPath(workspace, source, filepath.ToSlash(rel))
 }
 
 // SystemHelperMain executes one validated resolved lifecycle inside the system
@@ -315,15 +550,10 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 }
 
 func validateDependencySeeds(seeds []systemsandbox.DependencySeed, workspace string) error {
-	root, err := os.OpenRoot(workspace)
-	if err != nil {
+	if _, err := validateDependencySeedTargets(seeds, workspace); err != nil {
 		return err
 	}
-	defer root.Close()
-	for index, seed := range seeds {
-		if seed.Provider == "" || !filepath.IsAbs(seed.SourcePath) || seed.TargetPath == "." || !filepath.IsLocal(filepath.FromSlash(seed.TargetPath)) {
-			return fmt.Errorf("seed %d has incomplete or unsafe ownership", index)
-		}
+	for _, seed := range seeds {
 		info, err := os.Stat(seed.SourcePath)
 		if err != nil {
 			return fmt.Errorf("%s source %s: %w", seed.Provider, seed.SourcePath, err)
@@ -331,7 +561,22 @@ func validateDependencySeeds(seeds []systemsandbox.DependencySeed, workspace str
 		if !info.IsDir() {
 			return fmt.Errorf("%s source %s is not a directory", seed.Provider, seed.SourcePath)
 		}
+	}
+	return nil
+}
+
+func validateDependencySeedTargets(seeds []systemsandbox.DependencySeed, workspace string) ([]string, error) {
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	targets := make([]string, 0, len(seeds))
+	for index, seed := range seeds {
 		target := filepath.Clean(filepath.FromSlash(seed.TargetPath))
+		if seed.Provider == "" || !filepath.IsAbs(seed.SourcePath) || target == "." || !filepath.IsLocal(target) {
+			return nil, fmt.Errorf("seed %d has incomplete or unsafe ownership", index)
+		}
 		var ancestors []string
 		for current := target; current != "."; current = filepath.Dir(current) {
 			ancestors = append(ancestors, filepath.ToSlash(current))
@@ -343,23 +588,26 @@ func validateDependencySeeds(seeds []systemsandbox.DependencySeed, workspace str
 				break
 			}
 			if err != nil {
-				return fmt.Errorf("%s target %s: %w", seed.Provider, current, err)
+				return nil, fmt.Errorf("%s target %s: %w", seed.Provider, current, err)
 			}
 			if info.Mode().Type() == os.ModeSymlink {
-				return fmt.Errorf("%s target %s has a symlink component", seed.Provider, current)
+				return nil, fmt.Errorf("%s target %s has a symlink component", seed.Provider, current)
 			}
 			if current != filepath.ToSlash(target) && !info.IsDir() {
-				return fmt.Errorf("%s target parent %s is not a directory", seed.Provider, current)
+				return nil, fmt.Errorf("%s target parent %s is not a directory", seed.Provider, current)
 			}
 		}
+		targetName := filepath.ToSlash(target)
 		for prior := range index {
-			left, right := seeds[prior].TargetPath, seed.TargetPath
+			left, right := targets[prior], targetName
 			if left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/") {
-				return fmt.Errorf("seed targets overlap: %s and %s", left, right)
+				return nil, fmt.Errorf("seed targets overlap: %s and %s", left, right)
 			}
 		}
+		targets = append(targets, targetName)
 	}
-	return nil
+	slices.Sort(targets)
+	return targets, nil
 }
 
 func cacheExportPaths(caches []systemsandbox.CachePlan, source string, syncOut []string, all bool) ([]string, error) {

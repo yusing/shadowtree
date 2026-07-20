@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -21,6 +23,18 @@ import (
 )
 
 func createOverlayWorkspace(ctx context.Context, source, workDir, workspace string) (*sandboxWorkspace, error) {
+	sandbox, err := prepareOverlayWorkspace(source, workDir, workspace, shouldSkip, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := sandbox.probeNamespaceOverlay(ctx); err != nil {
+		_ = removeAll(sandbox.overlayDir)
+		return nil, fmt.Errorf("namespace overlay: %w", err)
+	}
+	return sandbox, nil
+}
+
+func prepareOverlayWorkspace(source, workDir, workspace string, skip func(string, fs.DirEntry) bool, replaced []string) (*sandboxWorkspace, error) {
 	overlayDir := filepath.Join(workDir, "overlay")
 	cleanup := true
 	defer func() {
@@ -35,7 +49,7 @@ func createOverlayWorkspace(ctx context.Context, source, workDir, workspace stri
 			return nil, err
 		}
 	}
-	protectedWhiteouts, err := createSkipWhiteouts(source, upper)
+	protectedWhiteouts, skipped, err := createSkipWhiteouts(source, upper, skip, replaced)
 	if err != nil {
 		return nil, err
 	}
@@ -48,10 +62,9 @@ func createOverlayWorkspace(ctx context.Context, source, workDir, workspace stri
 		upper:              upper,
 		work:               work,
 		protectedWhiteouts: protectedWhiteouts,
+		skipped:            skipped,
+		skip:               skip,
 		overlay:            true,
-	}
-	if err := sandbox.probeNamespaceOverlay(ctx); err != nil {
-		return nil, fmt.Errorf("namespace overlay: %w", err)
 	}
 	cleanup = false
 	return sandbox, nil
@@ -395,55 +408,36 @@ func overlayHelperScriptMain(ctx context.Context, dir, path string) int {
 	return 125
 }
 
-func createSkipWhiteouts(source, upper string) (map[string]struct{}, error) {
-	protected := map[string]struct{}{}
-	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if errors.Is(walkErr, os.ErrPermission) {
-				if entry != nil && entry.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			return walkErr
+func createSkipWhiteouts(source, upper string, skip func(string, fs.DirEntry) bool, replaced []string) (map[string]struct{}, []string, error) {
+	protected, skipped, err := inspectWorkspaceExclusions(source, func(rel string, entry fs.DirEntry) bool {
+		if slices.Contains(replaced, filepath.ToSlash(rel)) {
+			return true
 		}
-		rel, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		protectedWhiteout := shouldSkip(rel, entry)
-		whiteout := protectedWhiteout
-		if !whiteout {
-			info, err := entry.Info()
-			if err != nil {
-				if errors.Is(err, os.ErrPermission) {
-					if entry.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				return err
-			}
-			mode := info.Mode()
-			whiteout = !mode.IsDir() && mode.Type() != 0 && mode.Type() != fs.ModeSymlink
-		}
-		if whiteout {
-			if err := createOverlayWhiteout(source, upper, rel); err != nil {
-				return fmt.Errorf("whiteout %s: %w", rel, err)
-			}
-			if protectedWhiteout {
-				protected[filepath.ToSlash(rel)] = struct{}{}
-			}
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-		}
-		return nil
+		return skip(rel, entry)
 	})
-	return protected, err
+	if err != nil {
+		return nil, skipped, err
+	}
+	protected, skipped, err = filterReplacedWorkspaceExclusions(protected, skipped, replaced)
+	if err != nil {
+		return nil, skipped, err
+	}
+	for _, name := range slices.Sorted(maps.Keys(protected)) {
+		if err := createOverlayWhiteout(source, upper, filepath.FromSlash(name)); err != nil {
+			return nil, skipped, fmt.Errorf("whiteout %s: %w", name, err)
+		}
+	}
+	for _, name := range replaced {
+		if _, err := os.Lstat(filepath.Join(source, filepath.FromSlash(name))); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, skipped, fmt.Errorf("inspect replacement %s: %w", name, err)
+		}
+		if err := createOverlayWhiteout(source, upper, filepath.FromSlash(name)); err != nil {
+			return nil, skipped, fmt.Errorf("whiteout replacement %s: %w", name, err)
+		}
+	}
+	return protected, skipped, nil
 }
 
 func createOverlayWhiteout(source, upper, rel string) error {

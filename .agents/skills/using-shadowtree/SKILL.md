@@ -111,12 +111,15 @@ instructions. The base stage already provides `ca-certificates`, `curl`,
 `tzdata`, and `wget`.
 
 Execution runs the complete lifecycle in one ephemeral container against a
-private copied workspace. Nested references do not create nested images or
-containers. Inherited host locale variables are replaced by `LANG=C.UTF-8`;
-explicit global or recipe environment values still win. Expect `post` on
-initial cancellation and sync-out only after full success. Default stderr shows
-semantic setup phases; detailed lifecycle and cleanup diagnostics require
-`--verbose`.
+private workspace. Capable local Docker and Podman use a read-only source lower
+plus temporary overlay upper; nerdctl, SELinux-enabled engines, and unavailable
+overlay setups use a copied fallback before user code starts. This never changes
+the selected system mode, and start or attach failures are not replayed. Nested
+references do not create nested images or containers. Inherited host locale
+variables are replaced by `LANG=C.UTF-8`; explicit global or recipe environment
+values still win. Expect `post` on initial cancellation and sync-out only after
+full success. Default stderr shows overlay setup or copy fallback; detailed
+runtime, fallback-reason, lifecycle, and cleanup diagnostics require `--verbose`.
 Runtime selection fails closed when rootless UID/GID mapping or applicable
 SELinux private relabelling cannot be established; do not retry with weakened
 user-namespace, labelling, or bind-mount flags.

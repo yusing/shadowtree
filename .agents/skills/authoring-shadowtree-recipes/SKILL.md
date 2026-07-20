@@ -148,6 +148,10 @@ sync-out. Never write `shadowtree <recipe>` inside a recipe to compose workflows
   distribution packages through `requires.system_packages`.
 - System-mode `pre`, `cmd`, nested references, and `post` share one ephemeral
   container; nested references do not perform nested sync-out.
+- System mode uses an internal overlay workspace on capable local Docker and
+  Podman engines and a copied private fallback for nerdctl, SELinux, or unsafe
+  overlay setup. Recipes do not select this internal strategy, and it never
+  falls back to ordinary workspace or host execution.
 - System mode defaults to `LANG=C.UTF-8` instead of inheriting host locale
   variables. Set `env.LANG` or an `LC_*` value explicitly only when the selected
   base provides that locale.

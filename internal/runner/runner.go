@@ -499,7 +499,7 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	}
 	stdin := cmp.Or[io.Reader](options.Stdin, os.Stdin)
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
-	return runSystemLifecycle(ctx, runtimeName, runtimeSelection.Confinement, plan, options, stdin, stdout, progress, verbose, status)
+	return runSystemLifecycle(ctx, runtimeName, runtimeSelection.Confinement, runtimeSelection.WorkspaceStrategy, plan, options, stdin, stdout, progress, verbose, status)
 }
 
 func rebaseSystemConfigPath(configPath, source, canonicalSource string) (string, error) {
@@ -656,6 +656,8 @@ type sandboxWorkspace struct {
 	upper              string
 	work               string
 	protectedWhiteouts map[string]struct{}
+	skipped            []string
+	skip               func(string, fs.DirEntry) bool
 	overlay            bool
 }
 
@@ -676,11 +678,11 @@ func createSandboxWorkspace(ctx context.Context, source, workDir, workspace stri
 	if err := CopyTree(source, workspace); err != nil {
 		return nil, fmt.Errorf("copy workspace: %w", err)
 	}
-	return &sandboxWorkspace{root: workspace, source: source, workDir: workDir}, nil
+	return &sandboxWorkspace{root: workspace, source: source, workDir: workDir, skip: shouldSkip}, nil
 }
 
-func (sandbox *sandboxWorkspace) SyncRoot(paths []string) (string, func(), error) {
-	cleanup := func() {}
+func (sandbox *sandboxWorkspace) SyncRoot(paths []string) (string, func() error, error) {
+	cleanup := func() error { return nil }
 	if !sandbox.overlay || len(paths) == 0 {
 		return sandbox.root, cleanup, nil
 	}
@@ -688,7 +690,7 @@ func (sandbox *sandboxWorkspace) SyncRoot(paths []string) (string, func(), error
 	if err := sandbox.materializePaths(root, paths); err != nil {
 		return "", cleanup, fmt.Errorf("materialize workspace: %w", err)
 	}
-	return root, func() { _ = os.RemoveAll(root) }, nil
+	return root, func() error { return removeAll(root) }, nil
 }
 
 func (sandbox *sandboxWorkspace) SyncAll(source string) error {
@@ -748,11 +750,18 @@ func (sandbox *sandboxWorkspace) materializePaths(dst string, paths []string) er
 		return err
 	}
 	for _, name := range cleaned {
-		if err := copySourcePathToRoot(srcRoot, name, dstRoot, excludedLower); err != nil {
+		if err := copySourcePathToRoot(srcRoot, name, dstRoot, excludedLower, sandbox.skipPolicy()); err != nil {
 			return fmt.Errorf("copy %s: %w", name, err)
 		}
 	}
 	return applyOverlayUpperPaths(sandbox.upper, dst, cleaned)
+}
+
+func (sandbox *sandboxWorkspace) skipPolicy() func(string, fs.DirEntry) bool {
+	if sandbox.skip != nil {
+		return sandbox.skip
+	}
+	return shouldSkip
 }
 
 func runResolvedCommands(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stdin io.Reader, stdout, stderr io.Writer, stack []string) error {
@@ -1533,10 +1542,109 @@ func CopyTree(srcRoot, dstRoot string) error {
 	return err
 }
 
-func copySystemWorkspaceTree(srcRoot, dstRoot string) ([]string, error) {
-	return copyTree(srcRoot, dstRoot, func(_ string, entry fs.DirEntry) bool {
-		return entry.Name() == ".git"
+func copySystemWorkspaceTree(srcRoot, dstRoot string, replaced []string) ([]string, error) {
+	return copyTree(srcRoot, dstRoot, func(rel string, entry fs.DirEntry) bool {
+		if slices.Contains(replaced, filepath.ToSlash(rel)) {
+			return true
+		}
+		return systemWorkspaceSkip(rel, entry)
 	}, true)
+}
+
+func systemWorkspaceSkip(_ string, entry fs.DirEntry) bool {
+	return entry.Name() == ".git"
+}
+
+func inspectWorkspaceExclusions(source string, skip func(string, fs.DirEntry) bool) (map[string]struct{}, []string, error) {
+	protected := map[string]struct{}{}
+	var unreadable []string
+	protectUnreadable := func(rel string, entry fs.DirEntry) error {
+		if rel == "." {
+			return fs.ErrPermission
+		}
+		name := filepath.ToSlash(rel)
+		protected[name] = struct{}{}
+		unreadable = append(unreadable, name)
+		if entry != nil && entry.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrPermission) {
+				return protectUnreadable(rel, entry)
+			}
+			return walkErr
+		}
+		if rel == "." {
+			return nil
+		}
+		name := filepath.ToSlash(rel)
+		if skip(rel, entry) {
+			protected[name] = struct{}{}
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				return protectUnreadable(rel, entry)
+			}
+			return err
+		}
+		switch {
+		case info.Mode().Type() == 0:
+			file, err := os.Open(path)
+			if err != nil {
+				if errors.Is(err, fs.ErrPermission) {
+					return protectUnreadable(rel, entry)
+				}
+				return err
+			}
+			return file.Close()
+		case info.IsDir(), info.Mode().Type() == fs.ModeSymlink:
+			return nil
+		default:
+			protected[name] = struct{}{}
+			return nil
+		}
+	})
+	slices.Sort(unreadable)
+	return protected, slices.Compact(unreadable), err
+}
+
+func filterReplacedWorkspaceExclusions(protected map[string]struct{}, skipped, replaced []string) (map[string]struct{}, []string, error) {
+	for name := range protected {
+		for _, replacement := range replaced {
+			switch {
+			case sameOrDescendant(name, replacement):
+				delete(protected, name)
+			case sameOrDescendant(replacement, name):
+				return nil, nil, fmt.Errorf("dependency seed target %q is inside protected workspace path %q", replacement, name)
+			}
+		}
+	}
+	filtered := skipped[:0]
+	for _, name := range skipped {
+		replacedPath := false
+		for _, replacement := range replaced {
+			if sameOrDescendant(name, replacement) {
+				replacedPath = true
+				break
+			}
+		}
+		if !replacedPath {
+			filtered = append(filtered, name)
+		}
+	}
+	return protected, filtered, nil
 }
 
 func copyTree(srcRoot, dstRoot string, skip func(string, fs.DirEntry) bool, skipUnreadable bool) ([]string, error) {
@@ -1716,7 +1824,7 @@ func overlayLowerExclusions(upperRoot string, paths []string) (*overlayLowerExcl
 	return excluded, nil
 }
 
-func copySourcePathToRoot(srcRoot *os.Root, name string, dstRoot *os.Root, excluded *overlayLowerExclude) error {
+func copySourcePathToRoot(srcRoot *os.Root, name string, dstRoot *os.Root, excluded *overlayLowerExclude, skip func(string, fs.DirEntry) bool) error {
 	if excluded.contains(name) {
 		return nil
 	}
@@ -1727,22 +1835,30 @@ func copySourcePathToRoot(srcRoot *os.Root, name string, dstRoot *os.Root, exclu
 		}
 		return err
 	}
-	if shouldSkip(name, fileInfoDirEntry{info: info}) {
+	if skip(name, fileInfoDirEntry{info: info}) {
 		return nil
 	}
-	_, err = copyRootPathToRoot(srcRoot, name, info, dstRoot, name, excluded)
+	_, err = copyRootPathToRoot(srcRoot, name, info, dstRoot, name, excluded, skip)
 	return err
 }
 
 func SyncPath(workspace, source, requested string) error {
+	return syncPathWithPolicy(workspace, source, requested, shouldSkip)
+}
+
+func syncPathWithPolicy(workspace, source, requested string, skip func(string, fs.DirEntry) bool) error {
 	cleaned, err := cleanSyncOutPath(requested)
 	if err != nil {
 		return err
 	}
-	return syncPathAs(workspace, source, cleaned, cleaned)
+	return syncPathAsWithPolicy(workspace, source, cleaned, cleaned, skip)
 }
 
 func syncPathAs(workspace, source, sourceName, destinationName string) error {
+	return syncPathAsWithPolicy(workspace, source, sourceName, destinationName, shouldSkip)
+}
+
+func syncPathAsWithPolicy(workspace, source, sourceName, destinationName string, skip func(string, fs.DirEntry) bool) error {
 	destinationName, err := cleanSyncOutPath(destinationName)
 	if err != nil {
 		return err
@@ -1756,7 +1872,7 @@ func syncPathAs(workspace, source, sourceName, destinationName string) error {
 		if err := removeRootPath(dstRoot, destinationName); err != nil {
 			return err
 		}
-		return copyTreeToRoot(workspace, dstRoot, destinationName)
+		return copyTreeToRootWithPolicy(workspace, dstRoot, destinationName, skip)
 	}
 	sourceName, err = cleanSyncOutPath(sourceName)
 	if err != nil {
@@ -1779,7 +1895,7 @@ func syncPathAs(workspace, source, sourceName, destinationName string) error {
 		}
 		return statErr
 	}
-	if info.IsDir() && shouldSkip(sourceName, fileInfoDirEntry{info: info}) {
+	if info.IsDir() && skip(sourceName, fileInfoDirEntry{info: info}) {
 		return removeRootPath(dstRoot, destinationName)
 	}
 	if info.IsDir() {
@@ -1787,7 +1903,7 @@ func syncPathAs(workspace, source, sourceName, destinationName string) error {
 			return err
 		}
 	}
-	supported, err := copyRootPathToRoot(srcRoot, sourceName, info, dstRoot, destinationName, nil)
+	supported, err := copyRootPathToRoot(srcRoot, sourceName, info, dstRoot, destinationName, nil, skip)
 	if err != nil {
 		return err
 	}
@@ -1798,6 +1914,10 @@ func syncPathAs(workspace, source, sourceName, destinationName string) error {
 }
 
 func replaceDirContents(src, dst string) error {
+	return replaceDirContentsWithPolicy(src, dst, shouldSkip)
+}
+
+func replaceDirContentsWithPolicy(src, dst string, skip func(string, fs.DirEntry) bool) error {
 	dstRoot, err := os.OpenRoot(dst)
 	if err != nil {
 		return err
@@ -1808,14 +1928,14 @@ func replaceDirContents(src, dst string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if shouldSkip(entry.Name(), entry) {
+		if skip(entry.Name(), entry) {
 			continue
 		}
 		if err := dstRoot.RemoveAll(entry.Name()); err != nil {
 			return err
 		}
 	}
-	return copyTreeToRoot(src, dstRoot, ".")
+	return copyTreeToRootWithPolicy(src, dstRoot, ".", skip)
 }
 
 func applyOverlayUpper(upperRoot, dstRoot string, excluded map[string]struct{}) error {
@@ -1996,11 +2116,11 @@ func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo) er
 	}
 }
 
-func copyRootPathToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude) (bool, error) {
+func copyRootPathToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude, skip func(string, fs.DirEntry) bool) (bool, error) {
 	mode := info.Mode()
 	switch {
 	case mode.IsDir():
-		return true, copyRootTreeToRoot(srcRoot, srcName, info, dstRoot, dstName, excluded)
+		return true, copyRootTreeToRoot(srcRoot, srcName, info, dstRoot, dstName, excluded, skip)
 	case mode.Type() == 0:
 		if err := removeRootPath(dstRoot, dstName); err != nil {
 			return true, err
@@ -2023,7 +2143,7 @@ func copyRootPathToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstR
 	}
 }
 
-func copyRootTreeToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude) error {
+func copyRootTreeToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstRoot *os.Root, dstName string, excluded *overlayLowerExclude, skip func(string, fs.DirEntry) bool) error {
 	if err := mkdirAllRootReplacingLeaf(dstRoot, dstName, info.Mode().Perm()); err != nil {
 		return err
 	}
@@ -2044,7 +2164,7 @@ func copyRootTreeToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstR
 	}
 	for _, entry := range entries {
 		childSrc := pathJoinSlash(srcName, entry.Name())
-		if excluded.contains(childSrc) || shouldSkip(childSrc, entry) {
+		if excluded.contains(childSrc) || skip(childSrc, entry) {
 			continue
 		}
 		childInfo, err := entry.Info()
@@ -2052,7 +2172,7 @@ func copyRootTreeToRoot(srcRoot *os.Root, srcName string, info fs.FileInfo, dstR
 			return err
 		}
 		childDst := pathJoinSlash(dstName, entry.Name())
-		if _, err := copyRootPathToRoot(srcRoot, childSrc, childInfo, dstRoot, childDst, excluded); err != nil {
+		if _, err := copyRootPathToRoot(srcRoot, childSrc, childInfo, dstRoot, childDst, excluded, skip); err != nil {
 			return err
 		}
 	}
@@ -2105,6 +2225,10 @@ func (entry fileInfoDirEntry) Info() (fs.FileInfo, error) {
 }
 
 func copyTreeToRoot(srcRoot string, dstRoot *os.Root, dstName string) error {
+	return copyTreeToRootWithPolicy(srcRoot, dstRoot, dstName, shouldSkip)
+}
+
+func copyTreeToRootWithPolicy(srcRoot string, dstRoot *os.Root, dstName string, skip func(string, fs.DirEntry) bool) error {
 	return filepath.WalkDir(srcRoot, func(src string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -2113,7 +2237,7 @@ func copyTreeToRoot(srcRoot string, dstRoot *os.Root, dstName string) error {
 		if err != nil {
 			return err
 		}
-		if shouldSkip(rel, entry) {
+		if skip(rel, entry) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

@@ -69,7 +69,11 @@ manifest-only contexts; ordinary project source and private credentials are
 never image inputs. Locked Yarn preparation currently requires
 `nodeLinker: node-modules` in `.yarnrc.yml`; Plug'n'Play layouts fail during
 planning rather than producing an unusable seed. All dependency seeds are validated for confinement and
-overlap before any prepared state is copied into the private workspace.
+overlap before any prepared state is mounted or copied into the private
+workspace. For an overlay workspace, each existing seed target is hidden before
+the mount so dependency setup creates a fresh upper-layer target instead of
+recursively deleting stale or differently owned host dependencies. The lower
+dependency tree remains unchanged.
 
 Expanded static inspection reports the foundation, platform, canonical exact
 toolchains and manager variants, provenance and required-by origins, reusable
@@ -80,15 +84,23 @@ Cargo build scripts, and similar builds must declare their compiler, headers,
 linker, and project libraries through `requires.system_packages`.
 
 Execution uses one named, explicitly removed container per top-level
-lifecycle. The host checkout is copied first; only that private copy is mounted
-read-write, at the checkout's canonical path. The container root is read-only,
-`/tmp` is a private tmpfs, the helper and resolved plan are private read-only
-mounts, and the runtime socket, host home, sibling projects, and host system
-paths are not mounted. The current static-helper transport requires a Linux
-host binary matching the selected image architecture and fails before building
-otherwise. Cancellation sends `TERM` so `post` can run, followed by a bounded
-forced kill only if cleanup does not finish. Sync-out runs only after complete
-success, while recipe logs are preserved after failures.
+lifecycle. Capable local Docker and Podman engines mount the canonical checkout
+as a read-only OverlayFS lower and write to a Shadowtree-owned upper. Podman uses
+its native `:O` mount with explicit upper and work directories. Docker uses an
+invocation-scoped labelled local-driver overlay volume with image copy-up
+disabled. nerdctl, SELinux-enabled engines, Docker engines without exact local
+volume driver options, unsupported filesystems, unsafe paths, and overlay setup
+failures use the copied private workspace before user code starts. A container
+start or attach failure is not retried through a different workspace strategy.
+
+The container root is read-only, `/tmp` is a private tmpfs, the helper and
+resolved plan are private read-only mounts, and the runtime socket, host home,
+sibling projects, and host system paths are not mounted. The current
+static-helper transport requires a Linux host binary matching the selected
+image architecture and fails before building otherwise. Cancellation sends
+`TERM` so `post` can run, followed by a bounded forced kill only if cleanup does
+not finish. Sync-out runs only after complete success, while recipe logs are
+preserved after failures.
 
 System lifecycles do not inherit host locale selections that may be absent from
 the slim foundation. Shadowtree removes inherited `LANG`, `LANGUAGE`, and
@@ -98,10 +110,20 @@ are applied afterward and may intentionally select another installed locale.
 The system workspace excludes `.git` but retains `.shadowtree.toml` and
 included Shadowtree configuration so cross-config recipe references can resolve
 inside the container. Source paths that the invoking user cannot read are
-omitted with a quoted warning. If an omitted path overlaps a selected sync-out
-path, execution fails before the lifecycle starts; `--sync-out-all` likewise
-fails when any source path was omitted. This prevents a partial private copy
-from being mirrored back as an accidental deletion.
+omitted with a quoted warning, and unsupported special files are hidden. The
+overlay setup inspects metadata and access but copies no readable lower-file
+contents. If an unreadable path or any other protected exclusion overlaps a
+selected sync-out path, execution fails before the lifecycle starts;
+`--sync-out-all` likewise fails when any source path was omitted or another
+protected exclusion cannot be mirrored safely. This prevents an incomplete
+private view from becoming an accidental host deletion.
+
+After success, selected paths are materialized from the lower plus upper,
+cache-backed exports are merged at their owning paths, and existing rooted
+sync-out applies the result. Whole-workspace overlay sync honors ordinary
+whiteouts while never applying setup-only protected whiteouts. On failure or
+cancellation, only a configured recipe log is recovered before the upper or
+copied workspace is removed.
 
 Runtime detection reads the engine's current security state in addition to
 checking exact CLI capabilities. Rootless engines use mapped container root;

@@ -163,13 +163,22 @@ use project-owned named volumes keyed by the canonical checkout, workspace,
 toolchain, platform, ABI, and UID/GID; compatible recipes in one checkout share
 them, but different worktrees never do. Execution then runs the complete
 lifecycle in one explicitly removed, read-only-root container against a private
-copied workspace at the canonical checkout path. Nested references stay in that
-container; only a successful lifecycle applies configured sync-out paths.
+workspace at the canonical checkout path. Capable local Docker and Podman
+engines use the checkout as a read-only OverlayFS lower with a
+Shadowtree-owned ephemeral upper; nerdctl, SELinux-enabled engines, and unsafe
+or unsupported overlay setups use a copied private workspace before user code
+starts. Neither strategy makes the checkout writable, and an attach or start
+failure is never replayed through another strategy. Nested references stay in
+that container; only a successful lifecycle materializes and applies configured
+sync-out paths.
 Runtime discovery also validates current rootless and SELinux security state:
 rootless engines use mapped container root, with Podman's reported root-to-host
 UID/GID mapping checked explicitly and bound to `--userns=host`, and
 SELinux-enabled engines privately relabel only Shadowtree's temporary bind
-sources. Missing or malformed capability fails before image or cache mutation.
+sources. Docker overlay mounts use an invocation-scoped labelled local volume;
+Podman uses its native `:O` mount with Shadowtree-managed upper and work
+directories. Missing or malformed capability fails before image or cache
+mutation.
 
 Inspect and reset only the current project's labelled caches with:
 

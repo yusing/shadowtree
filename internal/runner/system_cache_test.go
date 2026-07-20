@@ -18,7 +18,7 @@ func TestSystemCacheInspectsPlannedRecipeWithoutMutatingRuntime(t *testing.T) {
 	writeExecutable(t, bin, "docker", `
 case "$*" in
   "build --help") printf '%s' '--file --tag --label --platform --secret --build-arg' ;;
-  "volume create --help") printf '%s' '--label' ;;
+  "volume create --help") printf '%s' '--label --driver --opt' ;;
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;

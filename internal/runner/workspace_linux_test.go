@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/yusing/shadowtree/internal/recipe"
+	"github.com/yusing/shadowtree/internal/systemsandbox"
 
 	"golang.org/x/sys/unix"
 )
@@ -443,7 +447,7 @@ func TestSeededWhiteoutPreservesParentMode(t *testing.T) {
 	if err := unix.Mkfifo(filepath.Join(sourceDir, "pipe"), 0o600); err != nil {
 		t.Skipf("mkfifo unavailable: %v", err)
 	}
-	if _, err := createSkipWhiteouts(source, upper); err != nil {
+	if _, _, err := createSkipWhiteouts(source, upper, shouldSkip, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(dstDir, 0o700); err != nil {
@@ -462,6 +466,153 @@ func TestSeededWhiteoutPreservesParentMode(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o700 {
 		t.Fatalf("dir mode = %v, want 0700", got)
+	}
+}
+
+func TestSystemWhiteoutsProtectOnlyRuntimeExclusions(t *testing.T) {
+	source := t.TempDir()
+	upper := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".shadowtree.toml"), []byte("profile = \"go\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, ".shadowtree"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(filepath.Join(source, "pipe"), 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	protected, skipped, err := createSkipWhiteouts(source, upper, systemWorkspaceSkip, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("unreadable paths = %v, want none", skipped)
+	}
+	if got := slices.Sorted(maps.Keys(protected)); !slices.Equal(got, []string{".git", "pipe"}) {
+		t.Fatalf("protected whiteouts = %v, want .git and special file", got)
+	}
+	for _, name := range []string{".git", "pipe"} {
+		path := filepath.Join(upper, name)
+		info, err := os.Lstat(path)
+		if err != nil || !isOverlayWhiteout(path, info) {
+			t.Fatalf("%s is not an overlay whiteout: info=%v err=%v", name, info, err)
+		}
+	}
+	for _, name := range []string{".shadowtree.toml", ".shadowtree"} {
+		if _, err := os.Lstat(filepath.Join(upper, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("system workspace hid required config %s: %v", name, err)
+		}
+	}
+}
+
+func TestSystemOverlayHidesDependencySeedTargetBeforeLifecycle(t *testing.T) {
+	source := t.TempDir()
+	seedTarget := filepath.Join(source, "webui", "node_modules")
+	readOnlyCache := filepath.Join(seedTarget, ".vite")
+	if err := os.MkdirAll(readOnlyCache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(readOnlyCache, "stale"), []byte("lower"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(readOnlyCache, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(readOnlyCache, 0o755) }()
+
+	dir := t.TempDir()
+	workspace, err := prepareSystemWorkspace(
+		source,
+		dir,
+		systemsandbox.WorkspaceOverlay,
+		nil,
+		false,
+		[]systemsandbox.DependencySeed{{
+			Provider: "bun", SourcePath: "/opt/shadowtree/dependencies/webui/node_modules", TargetPath: "webui/node_modules",
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.mount.Strategy != systemsandbox.WorkspaceOverlay {
+		t.Skipf("overlay preparation unavailable: %v", workspace.fallbackReason)
+	}
+
+	err = workspace.active.runNamespaceCommand(
+		t.Context(),
+		os.Environ(),
+		source,
+		[]string{"sh", "-c", "test ! -e webui/node_modules && mkdir -p webui/node_modules && printf current > webui/node_modules/current"},
+		nil,
+		io.Discard,
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("replace dependency seed target through overlay: %v", err)
+	}
+	assertFileContent(t, filepath.Join(readOnlyCache, "stale"), "lower")
+	if _, err := os.Stat(filepath.Join(seedTarget, "current")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lower dependency target changed: %v", err)
+	}
+	assertFileContent(t, filepath.Join(workspace.overlay.upper, "webui", "node_modules", "current"), "current")
+}
+
+func TestDependencySeedWhiteoutSkipsReplacedTreeTraversal(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui", "node_modules")
+	if err := os.MkdirAll(filepath.Join(target, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "nested", "package.js"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inspectedChild := false
+	upper := t.TempDir()
+	protected, skipped, err := createSkipWhiteouts(source, upper, func(rel string, _ fs.DirEntry) bool {
+		if strings.HasPrefix(filepath.ToSlash(rel), "webui/node_modules/") {
+			inspectedChild = true
+		}
+		return false
+	}, []string{"webui/node_modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspectedChild {
+		t.Fatal("overlay exclusion scan entered replaced dependency seed target")
+	}
+	if len(protected) != 0 || len(skipped) != 0 {
+		t.Fatalf("replacement became protected: protected=%v skipped=%v", protected, skipped)
+	}
+	whiteout := filepath.Join(upper, "webui", "node_modules")
+	info, err := os.Lstat(whiteout)
+	if err != nil || !isOverlayWhiteout(whiteout, info) {
+		t.Fatalf("dependency replacement is not an overlay whiteout: info=%v err=%v", info, err)
+	}
+}
+
+func TestPrepareOverlayWorkspaceDoesNotCopyLowerFileContents(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "large.bin"), bytes.Repeat([]byte("x"), 8<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	sandbox, err := prepareOverlayWorkspace(source, dir, workspacePath, systemWorkspaceSkip, nil)
+	if err != nil {
+		t.Skipf("overlay preparation unavailable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sandbox.upper, "large.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("overlay preparation copied lower file into upper: %v", err)
+	}
+	entries, err := os.ReadDir(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("overlay preparation materialized workspace entries: %v", entries)
 	}
 }
 
@@ -560,6 +711,69 @@ func TestNamespaceCommandTimeoutKillsBackgroundWriterBeforeSyncOut(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(source, "late.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("late.txt err = %v, want not exist", err)
+	}
+}
+
+func BenchmarkSystemWorkspaceSetupLargeFile(b *testing.B) {
+	source := b.TempDir()
+	const size = 8 << 20
+	if err := os.WriteFile(filepath.Join(source, "large.bin"), bytes.Repeat([]byte("x"), size), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	benchmarkSystemWorkspaceStrategies(b, source)
+}
+
+func BenchmarkSystemWorkspaceSetupLargeInodeTree(b *testing.B) {
+	source := b.TempDir()
+	const files = 2048
+	for index := range files {
+		name := filepath.Join(source, fmt.Sprintf("tree/%04d.txt", index))
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte("x"), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	benchmarkSystemWorkspaceStrategies(b, source)
+}
+
+func benchmarkSystemWorkspaceStrategies(b *testing.B, source string) {
+	b.Helper()
+	for _, strategy := range []struct {
+		name    string
+		prepare func(string) error
+	}{
+		{
+			name: "overlay",
+			prepare: func(dir string) error {
+				_, err := prepareOverlayWorkspace(source, dir, filepath.Join(dir, "workspace"), systemWorkspaceSkip, nil)
+				return err
+			},
+		},
+		{
+			name: "copied",
+			prepare: func(dir string) error {
+				_, err := copySystemWorkspaceTree(source, filepath.Join(dir, "workspace"), nil)
+				return err
+			},
+		},
+	} {
+		b.Run(strategy.name, func(b *testing.B) {
+			base := b.TempDir()
+			for b.Loop() {
+				dir, err := os.MkdirTemp(base, "setup-*")
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := strategy.prepare(dir); err != nil {
+					b.Skipf("workspace strategy unavailable: %v", err)
+				}
+				if err := removeAll(dir); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

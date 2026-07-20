@@ -14,6 +14,7 @@ import (
 
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/systemsandbox"
+	"golang.org/x/sys/unix"
 )
 
 func TestRunSystemLifecycleDoesNotSyncOutputsAfterFailureButKeepsLog(t *testing.T) {
@@ -64,7 +65,7 @@ esac`)
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	err = runSystemLifecycle(t.Context(), systemsandbox.Docker, systemsandbox.ConfinementPolicy{User: "1000:1000"}, systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"}, Options{Resolved: resolved, SourceDir: source}, nil, nil, &stderr, &stderr, newSystemProgress(io.Discard))
+	err = runSystemLifecycle(t.Context(), systemsandbox.Docker, systemsandbox.ConfinementPolicy{User: "1000:1000"}, systemsandbox.WorkspaceCopied, systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"}, Options{Resolved: resolved, SourceDir: source}, nil, nil, &stderr, &stderr, newSystemProgress(io.Discard))
 	var exit ExitError
 	if !errors.As(err, &exit) || exit.Code != 7 {
 		t.Fatalf("runSystemLifecycle error = %v, want exit 7", err)
@@ -73,6 +74,108 @@ esac`)
 	assertFileContent(t, filepath.Join(source, "run.log"), "lifecycle-log")
 	if os.Geteuid() != 0 && !strings.Contains(stderr.String(), `skipped unreadable path "unreadable\nname"`) {
 		t.Fatalf("stderr does not quote unreadable path:\n%s", stderr.String())
+	}
+}
+
+func TestRunSystemLifecycleFallsBackToCopyOnlyAfterOverlayCreateFailure(t *testing.T) {
+	bin := t.TempDir()
+	workspacePath := filepath.Join(bin, "workspace")
+	writeExecutable(t, bin, "podman", `
+case "$1" in
+  create)
+    case "$*" in
+      *:O,upperdir=*) printf '%s' 'overlay setup rejected' >&2; exit 1 ;;
+    esac
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--mount" ]; then
+        shift
+        case "$1" in
+          type=bind,src=*,dst=*)
+            workspace=${1#type=bind,src=}
+            workspace=${workspace%%,dst=*}
+            printf '%s' "$workspace" > "`+workspacePath+`"
+            break
+            ;;
+        esac
+      fi
+      shift
+    done
+    ;;
+  start)
+    workspace=$(/bin/cat "`+workspacePath+`")
+    printf fallback > "$workspace/output.txt"
+    ;;
+  rm) exit 0 ;;
+  *) exit 1 ;;
+esac`)
+	t.Setenv("PATH", bin)
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "output.txt"), []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("root", recipe.Recipe{
+		Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem), SyncOut: []string{"output.txt"},
+	}, nil, nil, nil, filepath.Join(source, ".shadowtree.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verbose bytes.Buffer
+	err = runSystemLifecycle(
+		t.Context(), systemsandbox.Podman,
+		systemsandbox.ConfinementPolicy{User: "0:0", UserNamespace: "host"},
+		systemsandbox.WorkspaceOverlay,
+		systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"},
+		Options{Resolved: resolved, SourceDir: source}, nil, nil, io.Discard, &verbose, newSystemProgress(io.Discard),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "output.txt"), "fallback")
+	if !strings.Contains(verbose.String(), "runtime overlay workspace unavailable") || !strings.Contains(verbose.String(), "using copied fallback") {
+		t.Fatalf("verbose output missing quoted runtime fallback reason:\n%s", verbose.String())
+	}
+}
+
+func TestRunSystemLifecycleDoesNotFallbackAfterUncertainOverlayCleanup(t *testing.T) {
+	bin := t.TempDir()
+	createCalls := filepath.Join(bin, "create-calls")
+	writeExecutable(t, bin, "podman", `
+case "$1" in
+  create)
+    printf 'create\n' >> "`+createCalls+`"
+    printf '%s' 'overlay setup rejected' >&2
+    exit 1
+    ;;
+  rm)
+    printf '%s' 'cleanup failed' >&2
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac`)
+	t.Setenv("PATH", bin)
+	source := t.TempDir()
+	resolved, err := recipe.Resolve("root", recipe.Recipe{
+		Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem),
+	}, nil, nil, nil, filepath.Join(source, ".shadowtree.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runSystemLifecycle(
+		t.Context(), systemsandbox.Podman,
+		systemsandbox.ConfinementPolicy{User: "0:0", UserNamespace: "host"},
+		systemsandbox.WorkspaceOverlay,
+		systemsandbox.ImagePlan{FinalTag: "image:test", Platform: "linux/amd64"},
+		Options{Resolved: resolved, SourceDir: source}, nil, nil, io.Discard, io.Discard, newSystemProgress(io.Discard),
+	)
+	if err == nil || !strings.Contains(err.Error(), "remove possibly created system container") {
+		t.Fatalf("runSystemLifecycle error = %v, want uncertain cleanup failure", err)
+	}
+	data, readErr := os.ReadFile(createCalls)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got := strings.Count(string(data), "create\n"); got != 1 {
+		t.Fatalf("container create attempts = %d, want no copied fallback retry", got)
 	}
 }
 
@@ -214,7 +317,7 @@ func TestCopySystemWorkspaceTreePreservesConfigsAndReadableFiles(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Chmod(filepath.Join(destination, "read-only"), 0o755)
 	})
-	skipped, err := copySystemWorkspaceTree(source, destination)
+	skipped, err := copySystemWorkspaceTree(source, destination, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +378,153 @@ func TestValidateSkippedSystemPathsProtectsSyncBoundaries(t *testing.T) {
 				t.Fatalf("validateSkippedSystemPaths() error = %v, wantErr %t", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestOverlaySystemWorkspaceMaterializesBeforeApplyingCacheExport(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "output.txt"), []byte("lower"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	workspace, err := prepareSystemWorkspace(source, dir, systemsandbox.WorkspaceOverlay, []string{"output.txt"}, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.mount.Strategy != systemsandbox.WorkspaceOverlay {
+		t.Skipf("overlay preparation unavailable: %v", workspace.fallbackReason)
+	}
+	if err := os.WriteFile(filepath.Join(workspace.overlay.upper, "output.txt"), []byte("upper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	export := filepath.Join(dir, "export")
+	if err := os.Mkdir(export, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(export, "output.txt"), []byte("cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{
+		SourceDir: source,
+		Resolved:  recipe.Resolved{SyncOut: []string{"output.txt"}},
+	}
+	cache := systemsandbox.CachePlan{Provider: "test-cache", OutputPath: filepath.Join(source, "output.txt")}
+	if err := workspace.syncSuccess([]systemsandbox.CachePlan{cache}, options, export); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "output.txt"), "cache")
+}
+
+func TestOverlayWholeSyncCacheFailureLeavesSourceUnchanged(t *testing.T) {
+	source := t.TempDir()
+	output := filepath.Join(source, "output.txt")
+	if err := os.WriteFile(output, []byte("lower"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := prepareSystemWorkspace(source, t.TempDir(), systemsandbox.WorkspaceOverlay, nil, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.mount.Strategy != systemsandbox.WorkspaceOverlay {
+		t.Skipf("overlay preparation unavailable: %v", workspace.fallbackReason)
+	}
+	if err := os.WriteFile(filepath.Join(workspace.overlay.upper, "output.txt"), []byte("upper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	export := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(export, []byte("invalid export root"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("root", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, filepath.Join(source, ".shadowtree.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Resolved: resolved, SourceDir: source, SyncOutAll: true}
+	cache := systemsandbox.CachePlan{Provider: "test-cache", OutputPath: filepath.Join(source, "cache")}
+	if err := workspace.syncSuccess([]systemsandbox.CachePlan{cache}, options, export); err == nil {
+		t.Fatal("whole sync accepted invalid cache export root")
+	}
+	assertFileContent(t, output, "lower")
+}
+
+func TestSystemDirectorySyncRetainsNestedShadowtreeConfiguration(t *testing.T) {
+	for _, strategy := range []systemsandbox.WorkspaceStrategy{systemsandbox.WorkspaceOverlay, systemsandbox.WorkspaceCopied} {
+		t.Run(string(strategy), func(t *testing.T) {
+			source := t.TempDir()
+			project := filepath.Join(source, "subproject")
+			if err := os.MkdirAll(filepath.Join(project, ".shadowtree"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range map[string]string{
+				".shadowtree.toml":         "profile = \"go\"\n",
+				".shadowtree.local.toml":   "[vars]\nmode = \"local\"\n",
+				".shadowtree/include.toml": "[recipes.check]\ncmd = \"true\"\n",
+			} {
+				if err := os.WriteFile(filepath.Join(project, filepath.FromSlash(name)), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			workspace, err := prepareSystemWorkspace(source, t.TempDir(), strategy, []string{"subproject"}, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strategy == systemsandbox.WorkspaceOverlay && workspace.mount.Strategy != systemsandbox.WorkspaceOverlay {
+				t.Skipf("overlay preparation unavailable: %v", workspace.fallbackReason)
+			}
+			options := Options{SourceDir: source, Resolved: recipe.Resolved{SyncOut: []string{"subproject"}}}
+			if err := workspace.syncSuccess(nil, options, t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			for name, want := range map[string]string{
+				".shadowtree.toml":         "profile = \"go\"\n",
+				".shadowtree.local.toml":   "[vars]\nmode = \"local\"\n",
+				".shadowtree/include.toml": "[recipes.check]\ncmd = \"true\"\n",
+			} {
+				assertFileContent(t, filepath.Join(project, filepath.FromSlash(name)), want)
+			}
+		})
+	}
+}
+
+func TestSystemWorkspaceRejectsUnsafeWholeSyncProtectedExclusion(t *testing.T) {
+	source := t.TempDir()
+	if err := unix.Mkfifo(filepath.Join(source, "pipe"), 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	_, err := prepareSystemWorkspace(source, t.TempDir(), systemsandbox.WorkspaceCopied, nil, true, nil)
+	if err == nil || !strings.Contains(err.Error(), `protecting excluded path "pipe"`) {
+		t.Fatalf("prepareSystemWorkspace error = %v, want protected sync boundary rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(source, "pipe")); statErr != nil {
+		t.Fatalf("protected source path changed after rejection: %v", statErr)
+	}
+}
+
+func TestSystemWorkspaceRejectsSelectedProtectedExclusions(t *testing.T) {
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(filepath.Join(source, "runtime", "pipe"), 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(source, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, strategy := range []systemsandbox.WorkspaceStrategy{systemsandbox.WorkspaceOverlay, systemsandbox.WorkspaceCopied} {
+		for _, selected := range []string{"runtime/pipe", "runtime", ".git"} {
+			t.Run(string(strategy)+"/"+strings.ReplaceAll(selected, "/", "-"), func(t *testing.T) {
+				_, err := prepareSystemWorkspace(source, t.TempDir(), strategy, []string{selected}, false, nil)
+				if err == nil || !strings.Contains(err.Error(), "protected path") || !strings.Contains(err.Error(), selected) {
+					t.Fatalf("prepareSystemWorkspace error = %v, want protected overlap for %q", err, selected)
+				}
+			})
+		}
+	}
+	for _, name := range []string{"runtime/pipe", ".git"} {
+		if _, err := os.Stat(filepath.Join(source, name)); err != nil {
+			t.Fatalf("protected source path %s changed after rejection: %v", name, err)
+		}
 	}
 }
 
@@ -401,6 +651,74 @@ func TestSystemHelperReplacesStaleDependencySeedTarget(t *testing.T) {
 	assertFileContent(t, filepath.Join(source, "node_modules", "current"), "current")
 	if _, err := os.Stat(filepath.Join(source, "node_modules", "stale")); !os.IsNotExist(err) {
 		t.Fatalf("stale dependency survived seed replacement: %v", err)
+	}
+}
+
+func TestCopiedSystemWorkspaceOmitsDependencySeedTarget(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(source, "webui", "node_modules")
+	cache := filepath.Join(target, ".vite")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "stale"), []byte("lower"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cache, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(cache, 0o755) }()
+
+	workspace, err := prepareSystemWorkspace(
+		source,
+		t.TempDir(),
+		systemsandbox.WorkspaceCopied,
+		nil,
+		false,
+		[]systemsandbox.DependencySeed{{
+			Provider: "bun", SourcePath: "/opt/shadowtree/dependencies/webui/node_modules", TargetPath: "webui/node_modules",
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.copyRoot, "webui", "node_modules")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("copied workspace retained dependency seed target: %v", err)
+	}
+	assertFileContent(t, filepath.Join(cache, "stale"), "lower")
+}
+
+func TestOverlayCleanupResultUsesSuccessfulFinalRetry(t *testing.T) {
+	initialErr := errors.New("initial host removal")
+	runtimeErr := errors.New("runtime cleanup transport")
+	retryErr := errors.New("final host removal")
+	if err := overlayCleanupResult(initialErr, runtimeErr, nil); err != nil {
+		t.Fatalf("successful final retry retained cleanup error: %v", err)
+	}
+	err := overlayCleanupResult(initialErr, runtimeErr, retryErr)
+	for _, want := range []error{initialErr, runtimeErr, retryErr} {
+		if !errors.Is(err, want) {
+			t.Fatalf("failed final retry omitted %v: %v", want, err)
+		}
+	}
+}
+
+func TestPrepareSystemWorkspaceRejectsUnsafeDependencySeedTargets(t *testing.T) {
+	for name, seeds := range map[string][]systemsandbox.DependencySeed{
+		"workspace root alias": {
+			{Provider: "bun", SourcePath: "/opt/shadowtree/dependencies/node_modules", TargetPath: "webui/.."},
+		},
+		"canonical overlap": {
+			{Provider: "bun", SourcePath: "/opt/shadowtree/dependencies/webui/node_modules", TargetPath: "webui/node_modules"},
+			{Provider: "npm", SourcePath: "/opt/shadowtree/dependencies/webui/package/node_modules", TargetPath: "webui/./node_modules/package"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := prepareSystemWorkspace(t.TempDir(), t.TempDir(), systemsandbox.WorkspaceCopied, nil, false, seeds)
+			if err == nil {
+				t.Fatal("prepareSystemWorkspace accepted unsafe dependency seed targets")
+			}
+		})
 	}
 }
 

@@ -31,21 +31,32 @@ overwrite. `system.base_image` is a literal non-`latest` Debian or Ubuntu
 override valid only in system mode. Locked preparation uses manifest-only
 contexts and disables Node/Bun
 lifecycle scripts; unlocked projects skip automatic dependency preparation.
+Existing Node/Bun dependency-seed targets are hidden before an overlay mount so
+the lifecycle creates fresh upper-layer targets without traversing or changing
+stale, non-writable, or differently owned lower dependencies.
 Exact `requires.node_commands` packages use a managed Node/npm provider; a Bun
 project composes that provider alongside Bun rather than treating Bun as an npm
 binary provider.
 One ephemeral read-only-root container runs the complete resolved lifecycle
-against a private workspace mounted at the canonical checkout path. Nested
+against a private workspace mounted at the canonical checkout path. Capable
+local Docker and Podman engines use the checkout as a read-only OverlayFS lower
+with a Shadowtree-owned upper; nerdctl, SELinux-enabled engines, Docker engines
+without exact local-volume driver options, and unsupported overlay setups use a
+copied private workspace before user code starts. Nested
 references reuse that lifecycle, cancellation preserves `post`, and successful
-sync-out consumes the private workspace through the existing confinement rules.
+sync-out materializes lower-plus-upper results, merges cache exports, and uses
+the existing confinement rules. Start or attach failures never replay the
+lifecycle through another strategy.
 Inherited host locale variables are removed and system execution defaults to
 `LANG=C.UTF-8`; explicit global or recipe environment values still override the
 default.
 The system workspace excludes `.git`, retains Shadowtree configuration for
 cross-config references, and omits source paths unreadable by the invoking user;
-`--verbose` reports each omission. An omitted path that overlaps selected
-sync-out, or any omission combined with whole-workspace sync-out, fails before
-lifecycle execution.
+unsupported special files are hidden as well. Overlay preparation copies no
+readable lower-file contents. `--verbose` reports each unreadable omission. An
+unreadable path or other protected exclusion that overlaps selected sync-out,
+or an unsafe protected exclusion combined with whole-workspace sync-out, fails
+before lifecycle execution.
 Go `GOCACHE` and Rust workspace `target` use canonical-project-owned named
 volumes with complete compatibility labels; compatible recipes share within
 one checkout only. Inspection never mounts caches, and reset validates exact

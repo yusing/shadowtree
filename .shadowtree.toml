@@ -19,9 +19,9 @@ default = "./cmd/shadowtree"
 post = ["command -v deadcode >/dev/null && deadcode ./..."]
 
 [recipes.capable-host]
-help = "Run the real-engine system confinement gate outside Shadowtree's workspace sandbox."
+help = "Run real-engine system confinement and workspace gates outside Shadowtree's workspace sandbox."
 sandboxed = false
-cmd = 'SHADOWTREE_CAPABLE_RUNTIME="{runtime}" SHADOWTREE_CAPABLE_IMAGE="{image}" go test ./internal/systemsandbox -run TestCapableHostRuntimeConfinement -count=1 -v'
+cmd = 'SHADOWTREE_CAPABLE_RUNTIME="{runtime}" SHADOWTREE_CAPABLE_IMAGE="{image}" go test ./internal/systemsandbox -run "TestCapableHost(RuntimeConfinement|OverlayWorkspace)" -count=1 -v'
 
 [recipes.capable-host.arguments.runtime]
 help = "Container runtime to validate."

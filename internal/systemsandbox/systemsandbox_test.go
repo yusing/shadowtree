@@ -169,6 +169,45 @@ func TestResolveConfinementPolicyHandlesRootlessMappingsAndSELinux(t *testing.T)
 	}
 }
 
+func TestWorkspaceStrategyUsesOverlayOnlyForCapableUnlabelledRuntimes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		runtime     RuntimeName
+		confinement ConfinementPolicy
+		capable     bool
+		want        WorkspaceStrategy
+	}{
+		{name: "Docker overlay", runtime: Docker, capable: true, want: WorkspaceOverlay},
+		{name: "Podman overlay", runtime: Podman, capable: true, want: WorkspaceOverlay},
+		{name: "Docker without overlay volume options", runtime: Docker, want: WorkspaceCopied},
+		{name: "nerdctl copy fallback", runtime: Nerdctl, want: WorkspaceCopied},
+		{name: "Docker SELinux copy fallback", runtime: Docker, confinement: ConfinementPolicy{SELinux: true}, capable: true, want: WorkspaceCopied},
+		{name: "Podman SELinux copy fallback", runtime: Podman, confinement: ConfinementPolicy{SELinux: true}, capable: true, want: WorkspaceCopied},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := workspaceStrategy(test.runtime, test.confinement, test.capable); got != test.want {
+				t.Fatalf("workspaceStrategy() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDetectSelectsCopiedDockerWithoutOverlayVolumeOptions(t *testing.T) {
+	selected, err := detect(t.Context(), io.Discard, []RuntimeName{Docker}, 1000, 998, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		output := successfulProbeOutput(args)
+		if slices.Equal(args, []string{"volume", "create", "--help"}) {
+			output = []byte("--label")
+		}
+		return output, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Name != Docker || selected.WorkspaceStrategy != WorkspaceCopied {
+		t.Fatalf("selection = %#v, want copied Docker", selected)
+	}
+}
+
 func TestRuntimeProbeDoesNotRequireInapplicableConfinementFlags(t *testing.T) {
 	_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		output := successfulProbeOutput(args)
@@ -317,7 +356,7 @@ func successfulProbeOutput(args []string) []byte {
 		return []byte("--file --tag --label --platform --secret --build-arg")
 	}
 	if slices.Equal(args, []string{"volume", "create", "--help"}) {
-		return []byte("--label")
+		return []byte("--label --driver --opt")
 	}
 	if slices.Equal(args, []string{"volume", "inspect", "--help"}) {
 		return []byte("--format")

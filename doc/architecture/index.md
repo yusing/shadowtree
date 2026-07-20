@@ -7,6 +7,7 @@ pjdoc:
   revision: ARCH-1
   files:
     - toolchain-composition.md
+    - system-sandbox.md
 ---
 # Shadowtree architecture
 
@@ -14,3 +15,5 @@ Revision `ARCH-1` records the implementation contracts for the current
 Shadowtree product specification.
 
 - [Composable toolchain architecture](toolchain-composition.md)
+
+- [System sandbox architecture](system-sandbox.md)

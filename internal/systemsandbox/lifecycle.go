@@ -22,7 +22,7 @@ const lifecycleCreateTimeout = 30 * time.Second
 type LifecycleOptions struct {
 	Image         string
 	Platform      string
-	WorkspaceHost string
+	Workspace     WorkspaceMount
 	WorkspacePath string
 	HelperHost    string
 	PlanHost      string
@@ -35,6 +35,26 @@ type LifecycleOptions struct {
 	Caches        []CachePlan
 	ExportHost    string
 }
+
+// WorkspaceMount describes either a copied private tree or an OverlayFS lower,
+// upper, and work set prepared by the runner. Runtime adapters only expose this
+// view; they do not interpret or synchronize its changes.
+type WorkspaceMount struct {
+	Strategy WorkspaceStrategy
+	Source   string
+	Upper    string
+	Work     string
+}
+
+// WorkspaceSetupError reports a failure that happened before container user
+// code could start. Callers may safely retry the lifecycle with a copied
+// private workspace when this error wraps an overlay strategy.
+type WorkspaceSetupError struct {
+	err error
+}
+
+func (err WorkspaceSetupError) Error() string { return err.err.Error() }
+func (err WorkspaceSetupError) Unwrap() error { return err.err }
 
 // RunLifecycle runs one named ephemeral container and preserves graceful
 // cancellation long enough for the in-container helper to run post stages.
@@ -56,6 +76,37 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	if err != nil {
 		return err
 	}
+	workspaceVolume := ""
+	if options.Workspace.Strategy == WorkspaceOverlay && runtime == Docker {
+		workspaceVolume = name + "-workspace"
+	}
+	workspaceArgs, err := workspaceMountArgs(runtime, options.Workspace, options.WorkspacePath, workspaceVolume, options.Confinement.SELinux)
+	if err != nil {
+		if options.Workspace.Strategy == WorkspaceOverlay {
+			return WorkspaceSetupError{err: err}
+		}
+		return err
+	}
+	if workspaceVolume != "" {
+		if err := createDockerOverlayVolume(ctx, runtime, workspaceVolume, options.Workspace, control); err != nil {
+			if cleanupErr := removeWorkspaceVolume(ctx, runtime, workspaceVolume, control); cleanupErr != nil {
+				return errors.Join(err, fmt.Errorf("remove possibly created system workspace volume: %w", cleanupErr))
+			}
+			return WorkspaceSetupError{err: err}
+		}
+		defer func() {
+			if cleanupErr := removeWorkspaceVolume(ctx, runtime, workspaceVolume, control); cleanupErr != nil {
+				if setupErr, ok := errors.AsType[WorkspaceSetupError](runErr); ok {
+					runErr = setupErr.err
+				}
+				runErr = errors.Join(runErr, fmt.Errorf("remove system workspace volume: %w", cleanupErr))
+				return
+			}
+			if options.Progress != nil {
+				fmt.Fprintln(options.Progress, "shadowtree: system workspace volume cleanup complete")
+			}
+		}()
+	}
 	createArgs := []string{
 		"create", "--interactive", "--name", name,
 		"--read-only", "--platform", options.Platform, "--user", options.Confinement.User,
@@ -64,11 +115,11 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	if options.Confinement.UserNamespace != "" {
 		createArgs = append(createArgs, "--userns", options.Confinement.UserNamespace)
 	}
+	createArgs = append(createArgs, workspaceArgs...)
 	for _, mount := range []struct {
 		host, destination string
 		readOnly          bool
 	}{
-		{options.WorkspaceHost, options.WorkspacePath, false},
 		{options.HelperHost, "/opt/shadowtree/helper", true},
 		{options.PlanHost, "/opt/shadowtree/plan.json", true},
 		{options.ExportHost, "/opt/shadowtree/export", false},
@@ -97,23 +148,35 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	cancelCreate()
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
-		_, _ = control(cleanupCtx, string(runtime), "rm", "--force", name)
+		cleanupOutput, cleanupErr := control(cleanupCtx, string(runtime), "rm", "--force", name)
 		cancel()
+		if cleanupErr != nil && containerMissing(cleanupOutput) {
+			cleanupErr = nil
+		}
 		if cause := context.Cause(ctx); cause != nil {
-			return cause
+			return errors.Join(cause, cleanupErr)
 		}
 		redactions := []string{
-			name, options.Image, options.Platform, options.WorkspaceHost, options.WorkspacePath,
+			name, workspaceVolume, options.Image, options.Platform, options.Workspace.Source, options.Workspace.Upper, options.Workspace.Work, options.WorkspacePath,
 			options.HelperHost, options.PlanHost, options.ExportHost, options.Confinement.User,
 			options.Confinement.UserNamespace,
 		}
 		for _, cache := range options.Caches {
 			redactions = append(redactions, cache.Name, cache.MountPath)
 		}
+		var createErr error
 		if output := redactedCommandDiagnostic(createOutput, redactions...); output != "" {
-			return fmt.Errorf("runtime %s create system container: %s; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, output, err)
+			createErr = fmt.Errorf("runtime %s create system container: %s; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, output, err)
+		} else {
+			createErr = fmt.Errorf("runtime %s create system container; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, err)
 		}
-		return fmt.Errorf("runtime %s create system container; verify image, mount, identity, and runtime storage compatibility, then retry: %w", runtime, err)
+		if cleanupErr != nil {
+			return errors.Join(createErr, fmt.Errorf("remove possibly created system container: %w", cleanupErr))
+		}
+		if options.Workspace.Strategy == WorkspaceOverlay {
+			return WorkspaceSetupError{err: createErr}
+		}
+		return createErr
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
@@ -129,7 +192,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 			runErr = fmt.Errorf("remove system container: %w", cleanupErr)
 			return
 		}
-		runErr = fmt.Errorf("%w; remove system container: %v", runErr, cleanupErr)
+		runErr = errors.Join(runErr, fmt.Errorf("remove system container: %w", cleanupErr))
 	}()
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
@@ -195,6 +258,122 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 			return fmt.Errorf("system runtime client did not exit after forced cleanup: %w", context.Cause(ctx))
 		}
 	}
+}
+
+func removeWorkspaceVolume(ctx context.Context, runtime RuntimeName, name string, control commandRunner) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
+	output, err := control(cleanupCtx, string(runtime), "volume", "rm", name)
+	cancel()
+	if err != nil && !volumeMissing(output) {
+		return err
+	}
+	return nil
+}
+
+func containerMissing(output []byte) bool {
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "no such container") || strings.Contains(message, "container not found") || strings.Contains(message, "no such object")
+}
+
+func workspaceMountArgs(runtime RuntimeName, workspace WorkspaceMount, destination, dockerVolume string, selinux bool) ([]string, error) {
+	if !path.IsAbs(destination) {
+		return nil, fmt.Errorf("system workspace mount requires an absolute container path: %q", destination)
+	}
+	switch workspace.Strategy {
+	case WorkspaceCopied:
+		return bindMountArgs(workspace.Source, destination, false, selinux)
+	case WorkspaceOverlay:
+		if selinux {
+			return nil, errors.New("system overlay workspace is unavailable with SELinux labelling")
+		}
+		for _, item := range []struct {
+			label string
+			value string
+		}{
+			{label: "source", value: workspace.Source},
+			{label: "upper", value: workspace.Upper},
+			{label: "work", value: workspace.Work},
+		} {
+			if !filepath.IsAbs(item.value) {
+				return nil, fmt.Errorf("system overlay %s path must be absolute: %q", item.label, item.value)
+			}
+			if strings.ContainsAny(item.value, ":,\n\r") {
+				return nil, fmt.Errorf("system overlay %s path contains an unsupported delimiter: %q", item.label, item.value)
+			}
+		}
+		switch runtime {
+		case Podman:
+			return []string{"--volume", workspace.Source + ":" + destination + ":O,upperdir=" + workspace.Upper + ",workdir=" + workspace.Work}, nil
+		case Docker:
+			if dockerVolume == "" || strings.ContainsAny(dockerVolume, ",\n\r") {
+				return nil, errors.New("system Docker overlay volume has an invalid identity")
+			}
+			return []string{"--mount", "type=volume,src=" + dockerVolume + ",dst=" + destination + ",volume-nocopy"}, nil
+		default:
+			return nil, fmt.Errorf("runtime %s cannot expose an overlay system workspace", runtime)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported system workspace strategy %q", workspace.Strategy)
+	}
+}
+
+func createDockerOverlayVolume(ctx context.Context, runtime RuntimeName, name string, workspace WorkspaceMount, control commandRunner) error {
+	args := []string{
+		"volume", "create",
+		"--driver", "local",
+		"--label", "shadowtree.owner=github.com/yusing/shadowtree",
+		"--label", "shadowtree.kind=system-workspace",
+		"--label", "shadowtree.invocation=" + name,
+		"--opt", "type=overlay",
+		"--opt", "device=overlay",
+		"--opt", "o=lowerdir=" + workspace.Source + ",upperdir=" + workspace.Upper + ",workdir=" + workspace.Work + ",userxattr",
+		name,
+	}
+	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleCreateTimeout)
+	output, err := control(createCtx, string(runtime), args...)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	redactions := []string{name, workspace.Source, workspace.Upper, workspace.Work}
+	if diagnostic := redactedCommandDiagnostic(output, redactions...); diagnostic != "" {
+		return fmt.Errorf("runtime %s create overlay workspace volume: %s: %w", runtime, diagnostic, err)
+	}
+	return fmt.Errorf("runtime %s create overlay workspace volume: %w", runtime, err)
+}
+
+// CleanupOverlayWorkspace uses the selected runtime only when host cleanup
+// cannot remove runtime-owned OverlayFS work state.
+func CleanupOverlayWorkspace(ctx context.Context, runtime RuntimeName, image, overlayRoot string, progress io.Writer) error {
+	if runtime != Docker && runtime != Podman {
+		return fmt.Errorf("runtime %s does not own host-inaccessible overlay cleanup", runtime)
+	}
+	if !filepath.IsAbs(overlayRoot) || strings.ContainsAny(overlayRoot, ",\n\r") {
+		return fmt.Errorf("system overlay cleanup path is unsafe: %q", overlayRoot)
+	}
+	args := []string{
+		"run", "--rm", "--network", "none", "--read-only", "--user", "0:0",
+	}
+	if runtime == Podman {
+		args = append(args, "--userns", "host")
+	}
+	args = append(args,
+		"--mount", "type=bind,src="+overlayRoot+",dst=/opt/shadowtree/cleanup",
+		image, "/bin/rm", "-rf", "/opt/shadowtree/cleanup/upper", "/opt/shadowtree/cleanup/work",
+	)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleCreateTimeout)
+	output, err := directCommand(cleanupCtx, string(runtime), args...)
+	cancel()
+	if err != nil {
+		if diagnostic := redactedCommandDiagnostic(output, image, overlayRoot); diagnostic != "" {
+			return fmt.Errorf("runtime %s clean overlay workspace: %s: %w", runtime, diagnostic, err)
+		}
+		return fmt.Errorf("runtime %s clean overlay workspace: %w", runtime, err)
+	}
+	if progress != nil {
+		fmt.Fprintln(progress, "shadowtree: runtime-owned overlay cleanup complete")
+	}
+	return nil
 }
 
 func bindMountArgs(host, destination string, readOnly, selinux bool) ([]string, error) {
