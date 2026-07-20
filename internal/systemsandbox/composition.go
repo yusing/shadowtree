@@ -77,6 +77,9 @@ type DependencyPlan struct {
 // PlanComposition resolves a canonical provider set and renders it on the
 // managed Trixie foundation without selecting a dominant profile.
 func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) {
+	if err := validateToolchainRegistry(); err != nil {
+		return ImagePlan{}, err
+	}
 	if request.Root.SandboxMode != recipe.SandboxModeSystem {
 		return ImagePlan{}, fmt.Errorf("recipe %q image planning requires sandboxed = %q", request.Root.Name, recipe.SandboxModeSystem)
 	}
@@ -165,6 +168,21 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 		plan.ToolchainKey = stages[1].Key
 	}
 	return plan, nil
+}
+
+func validateToolchainRegistry() error {
+	for _, profile := range recipe.SupportedProfiles() {
+		provider, ok := recipe.ToolchainProvider(profile)
+		if !ok {
+			return fmt.Errorf("supported profile %q has no toolchain provider", profile)
+		}
+		switch provider {
+		case "go", "node", "rust":
+		default:
+			return fmt.Errorf("supported profile %q has unknown toolchain provider %q", profile, provider)
+		}
+	}
+	return nil
 }
 
 func rootConfigIdentity(request ImageRequest) string {
