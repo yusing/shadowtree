@@ -20,6 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/yusing/shadowtree/internal/recipe"
+	"gopkg.in/yaml.v3"
 )
 
 // ImagePlan is the complete inspectable immutable-image plan for one recipe.
@@ -31,7 +32,6 @@ type ImagePlan struct {
 	DependencySeeds []DependencySeed
 	Caches          []CachePlan
 	Toolchains      []ResolvedToolchain
-	ToolchainKey    string
 	Dependencies    []DependencyPlan
 }
 
@@ -49,7 +49,6 @@ type ImageStage struct {
 	Name          string
 	Platform      string
 	Key           string
-	ParentKey     string
 	Tag           string
 	Labels        map[string]string
 	Containerfile string
@@ -192,10 +191,10 @@ type stageInput struct {
 }
 
 type dependencyInput struct {
-	commands []string
-	context  map[string][]byte
-	metadata map[string]string
-	seed     *DependencySeed
+	commands     []string
+	context      map[string][]byte
+	metadata     map[string]string
+	seedProvider string
 }
 
 type contributionInput struct {
@@ -264,11 +263,11 @@ func contributionInputs(resolved recipe.Resolved, source, dir string) (contribut
 		if err != nil {
 			return contributionInput{}, err
 		}
-		var seed *DependencySeed
+		seedProvider := ""
 		if len(commands) > 0 {
-			seed = &DependencySeed{SourcePath: "/opt/shadowtree/dependencies", TargetPath: ".", Provider: manager.Name}
+			seedProvider = manager.Name
 		}
-		return contributionInput{dependency: dependencyInput{commands: commands, context: files, metadata: metadata, seed: seed}}, nil
+		return contributionInput{dependency: dependencyInput{commands: commands, context: files, metadata: metadata, seedProvider: seedProvider}}, nil
 	case recipe.RustProfile:
 		toolchain, err := recipe.RustToolchainWithin(dir, source)
 		if err != nil {
@@ -342,7 +341,11 @@ func nodeLockedCommand(manager, workdir string, files map[string][]byte) ([]stri
 		lockfile, command = nearestContextFile(files, workdir, "pnpm-lock.yaml"), "pnpm install --frozen-lockfile --ignore-scripts --store-dir .shadowtree-pnpm-store"
 	case "yarn":
 		lockfile, command = nearestContextFile(files, workdir, "yarn.lock"), "YARN_CACHE_FOLDER=.shadowtree-yarn-cache yarn install --immutable --mode=skip-builds"
-		if lockfile != "" && !yarnNodeModules(files, workdir) {
+		nodeModules, err := yarnNodeModules(files, workdir)
+		if err != nil {
+			return nil, err
+		}
+		if lockfile != "" && !nodeModules {
 			return nil, fmt.Errorf("Yarn dependency preparation requires nodeLinker: node-modules in .yarnrc.yml; Plug'n'Play seeding is not supported")
 		}
 	case "bun":
@@ -361,18 +364,18 @@ func nodeLockedCommand(manager, workdir string, files map[string][]byte) ([]stri
 	return lockedCommand(lockfile, workdir, command), nil
 }
 
-func yarnNodeModules(files map[string][]byte, workdir string) bool {
+func yarnNodeModules(files map[string][]byte, workdir string) (bool, error) {
 	config := nearestContextFile(files, workdir, ".yarnrc.yml")
 	if config == "" {
-		return false
+		return false, nil
 	}
-	for line := range strings.Lines(string(files[config])) {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(key) == "nodeLinker" {
-			return strings.Trim(strings.TrimSpace(value), "'\"") == "node-modules"
-		}
+	var settings struct {
+		NodeLinker string `yaml:"nodeLinker"`
 	}
-	return false
+	if err := yaml.Unmarshal(files[config], &settings); err != nil {
+		return false, fmt.Errorf("parse Yarn configuration %s: %w", config, err)
+	}
+	return settings.NodeLinker == "node-modules", nil
 }
 
 type manifestSelector func(path, name string) bool

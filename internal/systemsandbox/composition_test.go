@@ -32,7 +32,7 @@ func TestPlanCompositionCombinesEverySupportedProfileOnTrixie(t *testing.T) {
 	if !slices.Equal(kinds, []string{"go", "node", "rust"}) {
 		t.Fatalf("toolchain kinds = %v", kinds)
 	}
-	if plan.ToolchainKey == "" {
+	if plan.Stages[1].Key == "" {
 		t.Fatal("toolchain key is empty")
 	}
 }
@@ -120,8 +120,8 @@ func TestPlanCompositionToolchainKeyIgnoresOrderAndProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ToolchainKey != second.ToolchainKey {
-		t.Fatalf("toolchain keys differ by order/project: %s != %s", first.ToolchainKey, second.ToolchainKey)
+	if first.Stages[1].Key != second.Stages[1].Key {
+		t.Fatalf("toolchain keys differ by order/project: %s != %s", first.Stages[1].Key, second.Stages[1].Key)
 	}
 	for index := range first.Stages {
 		if first.Stages[index].Key != second.Stages[index].Key {
@@ -142,6 +142,21 @@ func TestPlanCompositionRejectsUnsupportedExplicitFoundation(t *testing.T) {
 	_, err := PlanComposition(request, root)
 	if err == nil || !strings.Contains(err.Error(), "Debian or Ubuntu") {
 		t.Fatalf("PlanComposition error = %v", err)
+	}
+}
+
+func TestSupportedCompositionFoundationNormalizesPinnedReferences(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for image, want := range map[string]bool{
+		"ubuntu:24.04@sha256:" + digest:                         true,
+		"debian:trixie@sha256:" + digest:                        true,
+		"registry.example:5000/library/ubuntu@sha256:" + digest: true,
+		"ubuntu@sha256:" + digest:                               true,
+		"alpine:3.22@sha256:" + digest:                          false,
+	} {
+		if got := supportedCompositionFoundation(image); got != want {
+			t.Errorf("supportedCompositionFoundation(%q) = %t, want %t", image, got, want)
+		}
 	}
 }
 
@@ -198,6 +213,40 @@ func TestPlanCompositionRejectsYarnPnPSeed(t *testing.T) {
 	_, err := PlanComposition(compositionRequest(t, root, []string{recipe.NodeProfile}), root)
 	if err == nil || !strings.Contains(err.Error(), "Plug'n'Play") {
 		t.Fatalf("PlanComposition error = %v", err)
+	}
+}
+
+func TestPlanCompositionParsesYarnNodeLinkerAsYAML(t *testing.T) {
+	for name, test := range map[string]struct {
+		config string
+		ok     bool
+	}{
+		"inline comment": {config: "nodeLinker: node-modules # required layout\n", ok: true},
+		"quoted":         {config: "nodeLinker: 'node-modules'\n", ok: true},
+		"nested":         {config: "settings:\n  nodeLinker: node-modules\n"},
+		"block scalar":   {config: "note: |\n  nodeLinker: node-modules\n"},
+		"pnp":            {config: "nodeLinker: pnp\n"},
+		"malformed":      {config: "nodeLinker: [\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := compositionProject(t)
+			writeImageTestFile(t, filepath.Join(root, "package.json"), `{"packageManager":"yarn@4.9.2"}`)
+			writeImageTestFile(t, filepath.Join(root, "yarn.lock"), "# lock\n")
+			writeImageTestFile(t, filepath.Join(root, ".yarnrc.yml"), test.config)
+			plan, err := PlanComposition(compositionRequest(t, root, []string{recipe.NodeProfile}), root)
+			if test.ok {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(plan.DependencySeeds) != 1 || plan.DependencySeeds[0].Provider != "yarn" {
+					t.Fatalf("Yarn seeds = %#v", plan.DependencySeeds)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("PlanComposition accepted unproven Yarn node_modules layout")
+			}
+		})
 	}
 }
 

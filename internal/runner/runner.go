@@ -493,7 +493,12 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 	}
 	fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
 	fmt.Fprintf(w, "platform: %s\n", plan.Platform)
-	fmt.Fprintf(w, "toolchain_key: %s\n", plan.ToolchainKey)
+	for _, stage := range plan.Stages {
+		if stage.Name == "toolchains" {
+			fmt.Fprintf(w, "toolchain_key: %s\n", stage.Key)
+			break
+		}
+	}
 	fmt.Fprintf(w, "final_image: %s\n", plan.FinalTag)
 	for index, toolchain := range plan.Toolchains {
 		prefix := fmt.Sprintf("toolchain[%d]", index)

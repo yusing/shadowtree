@@ -35,14 +35,14 @@ func TestPlanCompositionBuildsFiveOrderedImmutableStages(t *testing.T) {
 		if stage.Name != wantNames[i] || stage.Key == "" || stage.Tag != "shadowtree.local/stage/"+stage.Name+":"+stage.Key {
 			t.Fatalf("stage[%d] = %#v", i, stage)
 		}
-		if stage.Labels["shadowtree.key"] != stage.Key || stage.Labels["shadowtree.parent-key"] != stage.ParentKey {
+		if stage.Labels["shadowtree.key"] != stage.Key {
 			t.Fatalf("stage[%d] labels = %#v", i, stage.Labels)
 		}
 		if !strings.HasPrefix(stage.Containerfile, "FROM ") {
 			t.Fatalf("stage[%d] Containerfile = %q", i, stage.Containerfile)
 		}
-		if i > 0 && stage.ParentKey != plan.Stages[i-1].Key {
-			t.Fatalf("stage[%d] parent = %q, want %q", i, stage.ParentKey, plan.Stages[i-1].Key)
+		if i > 0 && stage.Labels["shadowtree.parent-key"] != plan.Stages[i-1].Key {
+			t.Fatalf("stage[%d] parent = %q, want %q", i, stage.Labels["shadowtree.parent-key"], plan.Stages[i-1].Key)
 		}
 	}
 	if !strings.Contains(plan.Stages[2].Containerfile, "'ca-certificates' 'git'") {

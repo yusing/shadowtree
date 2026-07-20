@@ -156,7 +156,7 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 			"shadowtree.key": key, "shadowtree.parent-key": parentKey, "shadowtree.platform": platform,
 		}
 		stages = append(stages, ImageStage{
-			Name: input.name, Platform: platform, Key: key, ParentKey: parentKey, Tag: tag, Labels: labels,
+			Name: input.name, Platform: platform, Key: key, Tag: tag, Labels: labels,
 			Containerfile: renderContainerfile(parentTag, labels, input.commands), Context: input.context,
 			ContextHashes: contextHashes, Metadata: maps.Clone(input.metadata),
 		})
@@ -167,9 +167,6 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 		FinalTag:   "shadowtree.local/" + projectKey + "/" + recipeKey + ":" + parentKey,
 		Toolchains: toolchains, Dependencies: dependencies, DependencySeeds: seeds,
 		Caches: planCaches(cacheDescriptors, source, projectKey, platform, stages),
-	}
-	if len(stages) > 1 {
-		plan.ToolchainKey = stages[1].Key
 	}
 	return plan, nil
 }
@@ -224,12 +221,12 @@ func contributionPlans(contributions []ImageContribution, source string) (depend
 				Metadata: maps.Clone(input.dependency.metadata),
 			})
 		}
-		if input.dependency.seed != nil {
+		if input.dependency.seedProvider != "" {
 			managerDir := input.dependency.metadata["workdir"]
 			target := slashJoin(managerDir, "node_modules")
 			sourcePath := "/opt/shadowtree/dependencies/" + target
 			seeds = append(seeds, DependencySeed{
-				Provider: input.dependency.seed.Provider, SourcePath: sourcePath, TargetPath: target,
+				Provider: input.dependency.seedProvider, SourcePath: sourcePath, TargetPath: target,
 				Origin: contribution.ConfigIdentity + ":" + contribution.Resolved.Name,
 			})
 		}
@@ -503,7 +500,8 @@ func supportedCompositionFoundation(image string) bool {
 	repository := strings.ToLower(image)
 	if name, _, ok := strings.Cut(repository, "@"); ok {
 		repository = name
-	} else if slash, colon := strings.LastIndexByte(repository, '/'), strings.LastIndexByte(repository, ':'); colon > slash {
+	}
+	if slash, colon := strings.LastIndexByte(repository, '/'), strings.LastIndexByte(repository, ':'); colon > slash {
 		repository = repository[:colon]
 	}
 	return repository == "debian" || repository == "ubuntu" || strings.HasSuffix(repository, "/library/debian") || strings.HasSuffix(repository, "/library/ubuntu")
