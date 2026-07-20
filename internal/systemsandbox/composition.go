@@ -62,6 +62,18 @@ type ResolvedToolchain struct {
 	Origins         []ToolchainOrigin
 }
 
+// DependencyPlan is one provider-owned locked preparation contribution.
+type DependencyPlan struct {
+	Provider       string
+	Identity       string
+	ConfigIdentity string
+	Recipe         string
+	Workdir        string
+	Commands       []string
+	ContextHashes  map[string]string
+	Metadata       map[string]string
+}
+
 // PlanComposition resolves a canonical provider set and renders it on the
 // managed Trixie foundation without selecting a dominant profile.
 func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) {
@@ -101,7 +113,7 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 		})
 	}
 	tooling = append(tooling, "ENV PATH=/opt/shadowtree/bin:$PATH")
-	dependency, cacheDescriptors, err := contributionPlans(request.Contributions, source)
+	dependency, dependencies, seeds, cacheDescriptors, err := contributionPlans(request.Contributions, source)
 	if err != nil {
 		return ImagePlan{}, err
 	}
@@ -146,7 +158,7 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	plan := ImagePlan{
 		BaseImage: foundation, Platform: platform, Stages: stages,
 		FinalTag:   "shadowtree.local/" + projectKey + "/" + recipeKey + ":" + parentKey,
-		Toolchains: toolchains, DependencySeed: dependency.seed,
+		Toolchains: toolchains, Dependencies: dependencies, DependencySeeds: seeds,
 		Caches: planCaches(cacheDescriptors, source, projectKey, platform, stages),
 	}
 	if len(stages) > 1 {
@@ -155,33 +167,40 @@ func PlanComposition(request ImageRequest, sourceDir string) (ImagePlan, error) 
 	return plan, nil
 }
 
-func contributionPlans(contributions []ImageContribution, source string) (dependencyInput, []cacheDescriptor, error) {
+func contributionPlans(contributions []ImageContribution, source string) (dependencyInput, []DependencyPlan, []DependencySeed, []cacheDescriptor, error) {
 	combined := dependencyInput{context: map[string][]byte{}, metadata: map[string]string{}}
+	var plans []DependencyPlan
+	var seeds []DependencySeed
 	var descriptors []cacheDescriptor
-	for index, contribution := range contributions {
+	for _, contribution := range contributions {
 		dir := filepath.Join(source, filepath.FromSlash(contribution.Workdir))
 		input, err := profileImageInputs(contribution.Resolved, source, dir)
 		if err != nil {
-			return dependencyInput{}, nil, fmt.Errorf("%s %q dependency plan: %w", contribution.ConfigIdentity, contribution.Resolved.Name, err)
+			return dependencyInput{}, nil, nil, nil, fmt.Errorf("%s %q dependency plan: %w", contribution.ConfigIdentity, contribution.Resolved.Name, err)
 		}
-		combined.commands = append(combined.commands, input.dependency.commands...)
 		for name, data := range input.dependency.context {
 			if existing, ok := combined.context[name]; ok && !slices.Equal(existing, data) {
-				return dependencyInput{}, nil, fmt.Errorf("dependency context ownership conflict at %s", name)
+				return dependencyInput{}, nil, nil, nil, fmt.Errorf("dependency context ownership conflict at %s", name)
 			}
 			combined.context[name] = data
 		}
-		prefix := fmt.Sprintf("contribution.%d.", index)
-		combined.metadata[prefix+"config"] = contribution.ConfigIdentity
-		combined.metadata[prefix+"recipe"] = contribution.Resolved.Name
-		for key, value := range input.dependency.metadata {
-			combined.metadata[prefix+key] = value
+		if len(input.dependency.commands) > 0 {
+			provider, identity := dependencyProvider(contribution.Resolved.Profile, input.dependency.metadata)
+			plans = append(plans, DependencyPlan{
+				Provider: provider, Identity: identity, ConfigIdentity: contribution.ConfigIdentity,
+				Recipe: contribution.Resolved.Name, Workdir: contribution.Workdir,
+				Commands: slices.Clone(input.dependency.commands), ContextHashes: digestContext(input.dependency.context),
+				Metadata: maps.Clone(input.dependency.metadata),
+			})
 		}
 		if input.dependency.seed != nil {
-			if combined.seed != nil {
-				return dependencyInput{}, nil, fmt.Errorf("multiple dependency seeds require plural lifecycle planning")
-			}
-			combined.seed = input.dependency.seed
+			managerDir := input.dependency.metadata["workdir"]
+			target := slashJoin(managerDir, "node_modules")
+			sourcePath := "/opt/shadowtree/dependencies/" + target
+			seeds = append(seeds, DependencySeed{
+				Provider: input.dependency.seed.Provider, SourcePath: sourcePath, TargetPath: target,
+				Origin: contribution.ConfigIdentity + ":" + contribution.Resolved.Name,
+			})
 		}
 		for _, descriptor := range input.caches {
 			merged := false
@@ -190,7 +209,7 @@ func contributionPlans(contributions []ImageContribution, source string) (depend
 					continue
 				}
 				if !compatibleCacheDescriptors(descriptors[existing], descriptor) {
-					return dependencyInput{}, nil, fmt.Errorf("incompatible cache providers share destination %s", descriptor.mountPath)
+					return dependencyInput{}, nil, nil, nil, fmt.Errorf("incompatible cache providers share destination %s", descriptor.mountPath)
 				}
 				merged = true
 				break
@@ -200,11 +219,66 @@ func contributionPlans(contributions []ImageContribution, source string) (depend
 			}
 		}
 	}
+	slices.SortFunc(plans, func(a, b DependencyPlan) int {
+		return strings.Compare(a.Provider+"\x00"+a.Identity+"\x00"+a.ConfigIdentity+"\x00"+a.Recipe+"\x00"+a.Workdir, b.Provider+"\x00"+b.Identity+"\x00"+b.ConfigIdentity+"\x00"+b.Recipe+"\x00"+b.Workdir)
+	})
+	for index, plan := range plans {
+		combined.commands = append(combined.commands, plan.Commands...)
+		prefix := fmt.Sprintf("dependency.%d.", index)
+		combined.metadata[prefix+"provider"] = plan.Provider
+		combined.metadata[prefix+"identity"] = plan.Identity
+		combined.metadata[prefix+"config"] = plan.ConfigIdentity
+		combined.metadata[prefix+"recipe"] = plan.Recipe
+		combined.metadata[prefix+"workdir"] = plan.Workdir
+		for key, value := range plan.Metadata {
+			combined.metadata[prefix+key] = value
+		}
+	}
+	seeds, err := canonicalSeeds(seeds)
+	if err != nil {
+		return dependencyInput{}, nil, nil, nil, err
+	}
+	slices.SortFunc(descriptors, func(a, b cacheDescriptor) int { return strings.Compare(a.mountPath, b.mountPath) })
 	if len(combined.commands) == 0 {
 		combined.context = nil
 		combined.metadata = nil
 	}
-	return combined, descriptors, nil
+	return combined, plans, seeds, descriptors, nil
+}
+
+func dependencyProvider(profile string, metadata map[string]string) (string, string) {
+	switch profile {
+	case recipe.GoProfile:
+		return "go", metadata["toolchain"]
+	case recipe.NodeProfile:
+		return metadata["manager"], metadata["manager_identity"]
+	case recipe.RustProfile:
+		return "rust", metadata["toolchain"]
+	default:
+		return profile, ""
+	}
+}
+
+func canonicalSeeds(seeds []DependencySeed) ([]DependencySeed, error) {
+	slices.SortFunc(seeds, func(a, b DependencySeed) int {
+		return strings.Compare(a.TargetPath+"\x00"+a.Provider+"\x00"+a.SourcePath, b.TargetPath+"\x00"+b.Provider+"\x00"+b.SourcePath)
+	})
+	out := seeds[:0]
+	for _, seed := range seeds {
+		if len(out) > 0 && out[len(out)-1].TargetPath == seed.TargetPath {
+			if out[len(out)-1].Provider == seed.Provider && out[len(out)-1].SourcePath == seed.SourcePath {
+				continue
+			}
+			return nil, fmt.Errorf("dependency seed ownership conflict at %s between %s and %s", seed.TargetPath, out[len(out)-1].Origin, seed.Origin)
+		}
+		for _, existing := range out {
+			if slashAncestor(existing.TargetPath, seed.TargetPath) || slashAncestor(seed.TargetPath, existing.TargetPath) {
+				return nil, fmt.Errorf("dependency seed targets overlap: %s and %s", existing.TargetPath, seed.TargetPath)
+			}
+		}
+		out = append(out, seed)
+	}
+	return out, nil
 }
 
 func compatibleCacheDescriptors(left, right cacheDescriptor) bool {

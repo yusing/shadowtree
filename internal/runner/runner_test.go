@@ -3188,10 +3188,10 @@ func TestSystemSandboxExpandedPlanPrintsDependencyInputsWithoutRuntime(t *testin
 	for _, want := range []string{
 		"image_stage.dependencies.context.package.json.sha256:",
 		"image_stage.dependencies.context.pnpm-lock.yaml.sha256:",
-		"image_stage.dependencies.metadata.contribution.0.manager: pnpm",
-		"image_stage.dependencies.metadata.contribution.0.manager_identity: pnpm@10.12.1",
-		"dependency_seed.manager: pnpm",
-		"dependency_seed.source: /opt/shadowtree/dependencies",
+		"image_stage.dependencies.metadata.dependency.0.manager: pnpm",
+		"image_stage.dependencies.metadata.dependency.0.manager_identity: pnpm@10.12.1",
+		"dependency_seed[0].provider: pnpm",
+		"dependency_seed[0].source: /opt/shadowtree/dependencies/node_modules",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expanded plan missing %q:\n%s", want, stdout.String())

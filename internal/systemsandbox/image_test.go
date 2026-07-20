@@ -167,8 +167,8 @@ func TestPlanImagesKeepsCompleteNodeWorkspaceManifestContextAndSeedContract(t *t
 	if _, ok := context["packages/app/main.js"]; ok {
 		t.Fatal("ordinary source entered dependency context")
 	}
-	if plan.DependencySeed == nil || plan.DependencySeed.Manager != "pnpm" || !strings.Contains(plan.Stages[4].Containerfile, "--store-dir .shadowtree-pnpm-store") {
-		t.Fatalf("dependency seed contract = %#v\n%s", plan.DependencySeed, plan.Stages[4].Containerfile)
+	if len(plan.DependencySeeds) != 1 || plan.DependencySeeds[0].Provider != "pnpm" || !strings.Contains(plan.Stages[4].Containerfile, "--store-dir .shadowtree-pnpm-store") {
+		t.Fatalf("dependency seed contract = %#v\n%s", plan.DependencySeeds, plan.Stages[4].Containerfile)
 	}
 }
 

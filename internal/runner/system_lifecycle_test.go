@@ -132,12 +132,37 @@ func TestSystemHelperCopiesDependencySeedBeforeLifecycle(t *testing.T) {
 	}
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: resolved, SourceDir: source,
-		DependencySeed: &systemsandbox.DependencySeed{SourcePath: seed, TargetPath: ".", Manager: "npm"},
+		DependencySeeds: []systemsandbox.DependencySeed{{SourcePath: seed, TargetPath: ".", Provider: "npm"}},
 	}
 	if code := runSystemHelperPlan(t, plan); code != 0 {
 		t.Fatalf("SystemHelperMain code = %d", code)
 	}
 	assertFileContent(t, filepath.Join(source, "node_modules", "tool", "index.js"), "seed")
+}
+
+func TestSystemHelperValidatesEveryDependencySeedBeforeCopying(t *testing.T) {
+	source := t.TempDir()
+	valid := t.TempDir()
+	if err := os.WriteFile(filepath.Join(valid, "copied"), []byte("must not copy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve("root", recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := systemLifecyclePlan{
+		Protocol: systemHelperProtocol, Resolved: resolved, SourceDir: source,
+		DependencySeeds: []systemsandbox.DependencySeed{
+			{SourcePath: valid, TargetPath: "first", Provider: "npm"},
+			{SourcePath: filepath.Join(t.TempDir(), "missing"), TargetPath: "second", Provider: "pnpm"},
+		},
+	}
+	if code := runSystemHelperPlan(t, plan); code != 1 {
+		t.Fatalf("SystemHelperMain code = %d, want validation failure", code)
+	}
+	if _, err := os.Stat(filepath.Join(source, "first")); !os.IsNotExist(err) {
+		t.Fatalf("first seed was copied before full validation: %v", err)
+	}
 }
 
 func TestSystemHelperRunsAggregateInsideOneLifecycle(t *testing.T) {

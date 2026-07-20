@@ -509,10 +509,10 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 			}
 		}
 	}
-	if plan.DependencySeed != nil {
-		fmt.Fprintf(w, "dependency_seed.manager: %s\n", plan.DependencySeed.Manager)
-		fmt.Fprintf(w, "dependency_seed.source: %s\n", plan.DependencySeed.SourcePath)
-		fmt.Fprintf(w, "dependency_seed.target: %s\n", plan.DependencySeed.TargetPath)
+	for index, seed := range plan.DependencySeeds {
+		fmt.Fprintf(w, "dependency_seed[%d].provider: %s\n", index, seed.Provider)
+		fmt.Fprintf(w, "dependency_seed[%d].source: %s\n", index, seed.SourcePath)
+		fmt.Fprintf(w, "dependency_seed[%d].target: %s\n", index, seed.TargetPath)
 	}
 	for index, cache := range plan.Caches {
 		prefix := fmt.Sprintf("cache[%d]", index)

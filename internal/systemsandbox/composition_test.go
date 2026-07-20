@@ -71,6 +71,39 @@ func TestPlanCompositionRejectsUnsupportedExplicitFoundation(t *testing.T) {
 	}
 }
 
+func TestPlanCompositionPreservesPluralDependencyPlansAndSeeds(t *testing.T) {
+	root := t.TempDir()
+	var contributions []ImageContribution
+	for _, dir := range []string{"packages/a", "packages/b"} {
+		absolute := filepath.Join(root, filepath.FromSlash(dir))
+		if err := os.MkdirAll(absolute, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(absolute, "package.json"), []byte(`{"packageManager":"npm@11.4.2"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(absolute, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := recipe.Resolve(filepath.Base(dir), recipe.Recipe{Cmd: recipe.Command{"true"}, Workdir: dir, Sandboxed: new(recipe.SandboxModeSystem)}, nil, nil, nil, filepath.Join(root, ".shadowtree.toml"), recipe.NodeProfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contributions = append(contributions, ImageContribution{Resolved: resolved, ConfigIdentity: ".shadowtree.toml", Workdir: dir})
+	}
+	request := ImageRequest{Root: contributions[0].Resolved, Contributions: contributions}
+	plan, err := PlanComposition(request, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Dependencies) != 2 || len(plan.DependencySeeds) != 2 {
+		t.Fatalf("dependencies/seeds = %#v / %#v", plan.Dependencies, plan.DependencySeeds)
+	}
+	if plan.DependencySeeds[0].TargetPath != "packages/a/node_modules" || plan.DependencySeeds[1].TargetPath != "packages/b/node_modules" {
+		t.Fatalf("seed targets = %#v", plan.DependencySeeds)
+	}
+}
+
 func compositionProject(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

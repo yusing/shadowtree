@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 	"github.com/yusing/shadowtree/internal/systemsandbox"
@@ -21,18 +22,18 @@ const (
 )
 
 type systemLifecyclePlan struct {
-	Protocol       int
-	Resolved       recipe.Resolved
-	Recipes        map[string]recipe.Recipe
-	EnumSets       map[string]recipe.Command
-	ConfigEnv      map[string]string
-	SourceDir      string
-	Environment    map[string]string
-	DependencySeed *systemsandbox.DependencySeed
-	Caches         []systemsandbox.CachePlan
-	SyncOut        []string
-	SyncOutAll     bool
-	ExportDir      string
+	Protocol        int
+	Resolved        recipe.Resolved
+	Recipes         map[string]recipe.Recipe
+	EnumSets        map[string]recipe.Command
+	ConfigEnv       map[string]string
+	SourceDir       string
+	Environment     map[string]string
+	DependencySeeds []systemsandbox.DependencySeed
+	Caches          []systemsandbox.CachePlan
+	SyncOut         []string
+	SyncOutAll      bool
+	ExportDir       string
 }
 
 type systemInvocation struct {
@@ -119,7 +120,7 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options) (sys
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: options.Resolved, Recipes: options.Recipes,
 		EnumSets: options.EnumSets, ConfigEnv: options.ConfigEnv, SourceDir: options.SourceDir,
-		Environment: environment, DependencySeed: image.DependencySeed,
+		Environment: environment, DependencySeeds: image.DependencySeeds,
 		Caches: image.Caches, SyncOut: options.Resolved.SyncOut, SyncOutAll: options.SyncOutAll,
 		ExportDir: "/opt/shadowtree/export",
 	}
@@ -193,14 +194,14 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "create private home:", err)
 		return 1
 	}
-	if plan.DependencySeed != nil {
-		if !filepath.IsLocal(filepath.FromSlash(plan.DependencySeed.TargetPath)) {
-			fmt.Fprintln(os.Stderr, "dependency seed target escapes the private workspace")
-			return 1
-		}
-		target := filepath.Join(plan.SourceDir, filepath.FromSlash(plan.DependencySeed.TargetPath))
-		if err := CopyTree(plan.DependencySeed.SourcePath, target); err != nil {
-			fmt.Fprintln(os.Stderr, "copy dependency seed:", err)
+	if err := validateDependencySeeds(plan.DependencySeeds); err != nil {
+		fmt.Fprintln(os.Stderr, "validate dependency seeds:", err)
+		return 1
+	}
+	for _, seed := range plan.DependencySeeds {
+		target := filepath.Join(plan.SourceDir, filepath.FromSlash(seed.TargetPath))
+		if err := CopyTree(seed.SourcePath, target); err != nil {
+			fmt.Fprintf(os.Stderr, "copy dependency seed %s to %s: %v\n", seed.Provider, seed.TargetPath, err)
 			return 1
 		}
 	}
@@ -232,6 +233,28 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1
+}
+
+func validateDependencySeeds(seeds []systemsandbox.DependencySeed) error {
+	for index, seed := range seeds {
+		if seed.Provider == "" || !filepath.IsAbs(seed.SourcePath) || !filepath.IsLocal(filepath.FromSlash(seed.TargetPath)) {
+			return fmt.Errorf("seed %d has incomplete or unsafe ownership", index)
+		}
+		info, err := os.Stat(seed.SourcePath)
+		if err != nil {
+			return fmt.Errorf("%s source %s: %w", seed.Provider, seed.SourcePath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s source %s is not a directory", seed.Provider, seed.SourcePath)
+		}
+		for prior := range index {
+			left, right := seeds[prior].TargetPath, seed.TargetPath
+			if left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/") {
+				return fmt.Errorf("seed targets overlap: %s and %s", left, right)
+			}
+		}
+	}
+	return nil
 }
 
 func cacheExportPaths(caches []systemsandbox.CachePlan, source string, syncOut []string, all bool) ([]string, error) {

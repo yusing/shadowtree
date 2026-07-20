@@ -26,14 +26,15 @@ const imagePlanVersion = "system-image-v1"
 
 // ImagePlan is the complete inspectable immutable-image plan for one recipe.
 type ImagePlan struct {
-	BaseImage      string
-	Platform       string
-	Stages         []ImageStage
-	FinalTag       string
-	DependencySeed *DependencySeed
-	Caches         []CachePlan
-	Toolchains     []ResolvedToolchain
-	ToolchainKey   string
+	BaseImage       string
+	Platform        string
+	Stages          []ImageStage
+	FinalTag        string
+	DependencySeeds []DependencySeed
+	Caches          []CachePlan
+	Toolchains      []ResolvedToolchain
+	ToolchainKey    string
+	Dependencies    []DependencyPlan
 }
 
 // DependencySeed describes image-owned Node/Bun dependency state copied into
@@ -41,7 +42,8 @@ type ImagePlan struct {
 type DependencySeed struct {
 	SourcePath string
 	TargetPath string
-	Manager    string
+	Provider   string
+	Origin     string
 }
 
 // ImageStage owns exactly one immutable image transformation.
@@ -276,10 +278,11 @@ func PlanImages(resolved recipe.Resolved, sourceDir string) (ImagePlan, error) {
 		parentTag, parentKey = tag, key
 	}
 	final := "shadowtree.local/" + projectKey + "/" + recipeKey + ":" + parentKey
-	return ImagePlan{
-		BaseImage: base, Platform: platform, Stages: stages, FinalTag: final, DependencySeed: dependency.seed,
-		Caches: planCaches(profile.caches, source, projectKey, platform, stages),
-	}, nil
+	plan := ImagePlan{BaseImage: base, Platform: platform, Stages: stages, FinalTag: final, Caches: planCaches(profile.caches, source, projectKey, platform, stages)}
+	if dependency.seed != nil {
+		plan.DependencySeeds = []DependencySeed{*dependency.seed}
+	}
+	return plan, nil
 }
 
 type stageInput struct {
@@ -385,7 +388,7 @@ func profileImageInputs(resolved recipe.Resolved, source, dir string) (profileIm
 		commands := nodeLockedCommand(manager.Name, managerDir, files)
 		var seed *DependencySeed
 		if len(commands) > 0 {
-			seed = &DependencySeed{SourcePath: "/opt/shadowtree/dependencies", TargetPath: ".", Manager: manager.Name}
+			seed = &DependencySeed{SourcePath: "/opt/shadowtree/dependencies", TargetPath: ".", Provider: manager.Name}
 		}
 		return profileImageInput{base: base, platform: platform, tooling: tooling, dependency: dependencyInput{commands: commands, context: files, metadata: metadata, seed: seed}}, nil
 	case recipe.RustProfile:
