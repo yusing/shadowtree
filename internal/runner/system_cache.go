@@ -73,7 +73,7 @@ func SystemCache(ctx context.Context, options SystemCacheOptions) error {
 		for _, plan := range plans {
 			if names := shared[plan.Key]; len(names) > 1 {
 				slices.Sort(names)
-				fmt.Fprintf(options.Stderr, "shadowtree: cache %s is shared by recipes: %s\n", plan.Provider, strings.Join(names, ", "))
+				_, _ = fmt.Fprintf(options.Stderr, "shadowtree: cache %s is shared by recipes: %s\n", plan.Provider, strings.Join(names, ", "))
 			}
 		}
 		return systemsandbox.ResetCaches(ctx, runtimeName, plans, options.Stderr)
@@ -181,26 +181,26 @@ func resolvedCachePlans(ctx context.Context, options SystemCacheOptions, source 
 
 func printCacheInspections(w io.Writer, inspections []systemsandbox.CacheInspection) {
 	if len(inspections) == 0 {
-		fmt.Fprintln(w, "No project caches found.")
+		_, _ = fmt.Fprintln(w, "No project caches found.")
 		return
 	}
 	for index, inspection := range inspections {
 		if index > 0 {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "%s (%s)\n", inspection.Provider, inspection.Name)
-		fmt.Fprintf(w, "  runtime: %s\n  exists: %t\n  active: %t\n", inspection.Runtime, inspection.Exists, inspection.Active)
-		fmt.Fprintf(w, "  project: %s\n  workspace: %s\n", inspection.ProjectRoot, inspection.WorkspaceRoot)
-		fmt.Fprintf(w, "  key: %s\n  format: %s\n  platform: %s\n", inspection.Key, inspection.Format, inspection.Platform)
-		fmt.Fprintf(w, "  toolchain: %s\n  abi: %s\n  uid/gid: %d:%d\n", inspection.Toolchain, inspection.ABIKey, inspection.UID, inspection.GID)
-		fmt.Fprintf(w, "  mount: %s\n  concurrency: %s\n", inspection.MountPath, inspection.Concurrency)
+		_, _ = fmt.Fprintf(w, "%s (%s)\n", inspection.Provider, inspection.Name)
+		_, _ = fmt.Fprintf(w, "  runtime: %s\n  exists: %t\n  active: %t\n", inspection.Runtime, inspection.Exists, inspection.Active)
+		_, _ = fmt.Fprintf(w, "  project: %s\n  workspace: %s\n", inspection.ProjectRoot, inspection.WorkspaceRoot)
+		_, _ = fmt.Fprintf(w, "  key: %s\n  format: %s\n  platform: %s\n", inspection.Key, inspection.Format, inspection.Platform)
+		_, _ = fmt.Fprintf(w, "  toolchain: %s\n  abi: %s\n  uid/gid: %d:%d\n", inspection.Toolchain, inspection.ABIKey, inspection.UID, inspection.GID)
+		_, _ = fmt.Fprintf(w, "  mount: %s\n  concurrency: %s\n", inspection.MountPath, inspection.Concurrency)
 		if len(inspection.Recipes) > 0 {
-			fmt.Fprintf(w, "  recipes: %s\n", strings.Join(inspection.Recipes, ", "))
+			_, _ = fmt.Fprintf(w, "  recipes: %s\n", strings.Join(inspection.Recipes, ", "))
 		}
-		fmt.Fprintln(w, "  size: unknown")
+		_, _ = fmt.Fprintln(w, "  size: unknown")
 		for _, diagnostic := range inspection.Diagnostics {
-			fmt.Fprintf(w, "  diagnostic: %s\n", diagnostic)
+			_, _ = fmt.Fprintf(w, "  diagnostic: %s\n", diagnostic)
 		}
-		fmt.Fprintf(w, "  reset: %s\n  native: %s\n", inspection.ResetCommand, inspection.NativeCommand)
+		_, _ = fmt.Fprintf(w, "  reset: %s\n  native: %s\n", inspection.ResetCommand, inspection.NativeCommand)
 	}
 }

@@ -125,7 +125,7 @@ func TestPlanCompositionPreservesLowerStagesForPackageChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if second.Stages[i].Key != third.Stages[i].Key {
 			t.Fatalf("recipe-package change invalidated %s", second.Stages[i].Name)
 		}

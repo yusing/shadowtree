@@ -365,11 +365,12 @@ func cacheCandidates(spec shellSpec, words []string, recipes map[string]recipe.R
 	}
 	action := positionals[1]
 	candidates := recipeCandidates(words, recipes)
-	if action == "inspect" {
+	switch action {
+	case "inspect":
 		candidates = append([]Candidate{{Value: "--json", Help: "Print stable JSON"}}, candidates...)
-	} else if action == "reset" {
+	case "reset":
 		candidates = append([]Candidate{{Value: "--all", Help: "Reset all caches owned by this project"}}, candidates...)
-	} else {
+	default:
 		return nil, true
 	}
 	return filterPrefix(candidates, current), true
@@ -889,9 +890,6 @@ func positionalWords(words []string) []string {
 		if strings.HasPrefix(word, "-") {
 			if globalflag.TakesValue(word) {
 				skipValue = true
-				continue
-			}
-			if _, ok := globalflag.Lookup(word); ok {
 				continue
 			}
 			continue

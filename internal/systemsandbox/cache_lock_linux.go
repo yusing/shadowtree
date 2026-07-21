@@ -61,7 +61,7 @@ func acquireCacheLocks(ctx context.Context, plans []CachePlan, reset bool, progr
 				return nil, fmt.Errorf("lock cache %s: %w", plan.Provider, err)
 			}
 			if !waiting && progress != nil {
-				fmt.Fprintf(progress, "shadowtree: waiting for cache lock %s\n", plan.Provider)
+				_, _ = fmt.Fprintf(progress, "shadowtree: waiting for cache lock %s\n", plan.Provider)
 				waiting = true
 			}
 			select {

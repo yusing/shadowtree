@@ -120,10 +120,7 @@ func (progress *systemProgress) finish(icon, status string) error {
 }
 
 func (progress *systemProgress) renderLocked(icon, status string) {
-	elapsed := time.Since(progress.started).Round(100 * time.Millisecond)
-	if elapsed < 0 {
-		elapsed = 0
-	}
+	elapsed := max(time.Since(progress.started).Round(100*time.Millisecond), 0)
 	if status == "" {
 		_, progress.err = fmt.Fprintf(progress.output, "\r\x1b[2K %s%s  %s", icon, progress.current, elapsed)
 		return

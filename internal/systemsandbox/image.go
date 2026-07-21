@@ -129,7 +129,7 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 		if err := reportImageBuildProgress(options, ImageBuildStageLookup, stage.Name); err != nil {
 			return err
 		}
-		fmt.Fprintf(verbose, "shadowtree: image stage %s lookup\n", stage.Name)
+		_, _ = fmt.Fprintf(verbose, "shadowtree: image stage %s lookup\n", stage.Name)
 		labels, exists, err := inspectImageLabels(ctx, runtime, stage.Tag, run)
 		if err != nil {
 			return fmt.Errorf("runtime %s stage %s lookup: %w", runtime, stage.Name, err)
@@ -138,13 +138,13 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 			if !labelsMatch(labels, stage.Labels) {
 				return fmt.Errorf("runtime %s stage %s tag collision at %s; remove or retag the conflicting image", runtime, stage.Name, stage.Tag)
 			}
-			fmt.Fprintf(verbose, "shadowtree: image stage %s reused\n", stage.Name)
+			_, _ = fmt.Fprintf(verbose, "shadowtree: image stage %s reused\n", stage.Name)
 			continue
 		}
 		if err := reportImageBuildProgress(options, ImageBuildStageBuild, stage.Name); err != nil {
 			return err
 		}
-		fmt.Fprintf(verbose, "shadowtree: image stage %s build\n", stage.Name)
+		_, _ = fmt.Fprintf(verbose, "shadowtree: image stage %s build\n", stage.Name)
 		if err := buildStage(ctx, runtime, stage, build); err != nil {
 			return fmt.Errorf("runtime %s stage %s build: %w", runtime, stage.Name, err)
 		}
@@ -176,7 +176,7 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 	if err := reportImageBuildProgress(options, ImageBuildFinalTag, ""); err != nil {
 		return err
 	}
-	fmt.Fprintln(verbose, "shadowtree: publishing recipe image alias")
+	_, _ = fmt.Fprintln(verbose, "shadowtree: publishing recipe image alias")
 	output, err := run(ctx, string(runtime), "image", "tag", plan.Stages[len(plan.Stages)-1].Tag, plan.FinalTag)
 	if err != nil {
 		return fmt.Errorf("runtime %s publish final tag: %s", runtime, commandFailure(err, output))
@@ -231,7 +231,7 @@ func buildStage(ctx context.Context, runtime RuntimeName, stage ImageStage, run 
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(stage.Containerfile), 0o600); err != nil {
 		return err
 	}
@@ -428,7 +428,7 @@ func nodeLockedCommand(manager, workdir string, files map[string][]byte) ([]stri
 			return nil, err
 		}
 		if lockfile != "" && !nodeModules {
-			return nil, fmt.Errorf("Yarn dependency preparation requires nodeLinker: node-modules in .yarnrc.yml; Plug'n'Play seeding is not supported")
+			return nil, fmt.Errorf("yarn dependency preparation requires nodeLinker: node-modules in .yarnrc.yml; Plug'n'Play seeding is not supported")
 		}
 	case "bun":
 		lockfile = nearestContextFile(files, workdir, "bun.lock")
@@ -478,7 +478,7 @@ func filterGoManifestContext(files map[string][]byte, workdir string) error {
 		for _, local := range localGoModulePaths(files[workspace]) {
 			dir := path.Clean(path.Join(root, local))
 			if !filepath.IsLocal(filepath.FromSlash(dir)) {
-				return fmt.Errorf("Go workspace %s local module %q escapes the canonical project", workspace, local)
+				return fmt.Errorf("go workspace %s local module %q escapes the canonical project", workspace, local)
 			}
 			allowedDirs[dir] = true
 		}
@@ -499,7 +499,7 @@ func filterGoManifestContext(files map[string][]byte, workdir string) error {
 			for _, local := range localGoModulePaths(files[slashJoin(dir, "go.mod")]) {
 				target := path.Clean(path.Join(dir, local))
 				if !filepath.IsLocal(filepath.FromSlash(target)) {
-					return fmt.Errorf("Go module %s local replacement %q escapes the canonical project", slashJoin(dir, "go.mod"), local)
+					return fmt.Errorf("go module %s local replacement %q escapes the canonical project", slashJoin(dir, "go.mod"), local)
 				}
 				if !allowedDirs[target] {
 					allowedDirs[target] = true
@@ -524,7 +524,7 @@ func localGoModulePaths(data []byte) []string {
 	var paths []string
 	for line := range strings.Lines(string(data)) {
 		line, _, _ = strings.Cut(line, "//")
-		for _, field := range strings.Fields(line) {
+		for field := range strings.FieldsSeq(line) {
 			field = strings.Trim(field, "()'\"")
 			if strings.HasPrefix(field, "./") || strings.HasPrefix(field, "../") {
 				paths = append(paths, field)
@@ -572,20 +572,20 @@ func filterRustManifestContext(files map[string][]byte, workdir string) error {
 		if dir == "." {
 			dir = ""
 		}
-		switch {
-		case name == "Cargo.toml":
+		switch name {
+		case "Cargo.toml":
 			if !allowedManifests[file] {
 				delete(files, file)
 			}
-		case name == "Cargo.lock":
+		case "Cargo.lock":
 			if !allowedDirs[dir] {
 				delete(files, file)
 			}
-		case name == recipe.RustToolchainFile || name == recipe.RustToolchainTOML:
+		case recipe.RustToolchainFile, recipe.RustToolchainTOML:
 			if !slashAncestor(dir, workdir) {
 				delete(files, file)
 			}
-		case name == "config" || name == "config.toml":
+		case "config", "config.toml":
 			cargoDir := path.Dir(dir)
 			if cargoDir == "." {
 				cargoDir = ""
@@ -739,7 +739,7 @@ func rejectSecretManifestInputs(files map[string][]byte) error {
 		if strings.HasSuffix(lowerPath, "/.pnpmfile.cjs") || lowerPath == ".pnpmfile.cjs" || strings.Contains(lowerPath, "/.yarn/plugins/") || strings.Contains(lowerPath, "/.yarn/releases/") {
 			return fmt.Errorf("unsupported executable package-manager configuration %s", path)
 		}
-		if !(strings.HasSuffix(lowerPath, ".npmrc") || strings.HasSuffix(lowerPath, ".yarnrc.yml") || strings.Contains(lowerPath, "/.cargo/config") || strings.HasPrefix(lowerPath, ".cargo/config")) {
+		if !strings.HasSuffix(lowerPath, ".npmrc") && !strings.HasSuffix(lowerPath, ".yarnrc.yml") && !strings.Contains(lowerPath, "/.cargo/config") && !strings.HasPrefix(lowerPath, ".cargo/config") {
 			continue
 		}
 		content := strings.ToLower(string(data))
@@ -922,7 +922,7 @@ func slashParent(dir string) string {
 func rejectUnsafeCargoSources(files map[string][]byte) error {
 	for path, data := range files {
 		lowerPath := strings.ToLower(path)
-		if !(strings.Contains(lowerPath, "/.cargo/config") || strings.HasPrefix(lowerPath, ".cargo/config")) {
+		if !strings.Contains(lowerPath, "/.cargo/config") && !strings.HasPrefix(lowerPath, ".cargo/config") {
 			continue
 		}
 		var config struct {
@@ -936,11 +936,11 @@ func rejectUnsafeCargoSources(files map[string][]byte) error {
 			return fmt.Errorf("parse Cargo configuration %s: %w", path, err)
 		}
 		if len(config.Paths) > 0 {
-			return fmt.Errorf("Cargo configuration %s uses local path overrides; automatic image preparation cannot safely pre-key ordinary source", path)
+			return fmt.Errorf("cargo configuration %s uses local path overrides; automatic image preparation cannot safely pre-key ordinary source", path)
 		}
 		for name, source := range config.Source {
 			if source.Directory != "" || source.LocalRegistry != "" {
-				return fmt.Errorf("Cargo configuration %s source %q uses a local directory or registry; automatic image preparation cannot safely pre-key ordinary source", path, name)
+				return fmt.Errorf("cargo configuration %s source %q uses a local directory or registry; automatic image preparation cannot safely pre-key ordinary source", path, name)
 			}
 		}
 	}
@@ -1028,7 +1028,7 @@ func defaultImagePlatform() string {
 func rustHostPlatform(host string) (string, error) {
 	parts := strings.Split(host, "-")
 	if len(parts) < 3 || parts[len(parts)-2] != "linux" {
-		return "", fmt.Errorf("Rust toolchain host %q is not supported by the Linux system sandbox", host)
+		return "", fmt.Errorf("rust toolchain host %q is not supported by the Linux system sandbox", host)
 	}
 	switch parts[0] {
 	case "x86_64":
@@ -1036,7 +1036,7 @@ func rustHostPlatform(host string) (string, error) {
 	case "aarch64":
 		return "linux/arm64", nil
 	default:
-		return "", fmt.Errorf("Rust toolchain host architecture %q is not supported by the system sandbox", parts[0])
+		return "", fmt.Errorf("rust toolchain host architecture %q is not supported by the system sandbox", parts[0])
 	}
 }
 
@@ -1102,9 +1102,9 @@ func exactNodeVersion(value string) bool {
 
 func renderContainerfile(parent string, labels map[string]string, commands []string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "FROM %s\n", parent)
+	_, _ = fmt.Fprintf(&out, "FROM %s\n", parent)
 	for _, key := range slices.Sorted(maps.Keys(labels)) {
-		fmt.Fprintf(&out, "LABEL %s=%s\n", key, shellQuote(labels[key]))
+		_, _ = fmt.Fprintf(&out, "LABEL %s=%s\n", key, shellQuote(labels[key]))
 	}
 	for _, command := range commands {
 		out.WriteString(command)

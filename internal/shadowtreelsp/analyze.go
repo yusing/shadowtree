@@ -1070,15 +1070,15 @@ func recipeArgumentCompletionLabel(value string) string {
 }
 
 func tableCompletions(analysis documentAnalysis, prefix string, opts completionOptions) []completion {
-	switch {
-	case prefix == "":
+	switch prefix {
+	case "":
 		return []completion{
 			{Label: "env", InsertText: "env]", Kind: completionKindField, Detail: "Environment variables"},
 			{Label: "vars", InsertText: "vars]", Kind: completionKindVariable, Detail: "Shared placeholders"},
 			{Label: "var_commands", InsertText: "var_commands]", Kind: completionKindFunction, Detail: "Dynamic placeholders"},
 			{Label: "recipes", InsertText: "recipes.", Kind: completionKindField, Detail: "Recipe table"},
 		}
-	case prefix == "recipes" || prefix == "recipes.":
+	case "recipes", "recipes.":
 		items := []completion{
 			{Label: "<name>", InsertText: "", Kind: completionKindField, Detail: "New recipe name"},
 		}
@@ -1096,10 +1096,10 @@ func tableCompletions(analysis documentAnalysis, prefix string, opts completionO
 	if !ok || recipe == "" {
 		return nil
 	}
-	switch {
-	case rest == "":
+	switch rest {
+	case "":
 		return recipeSubtableCompletions()
-	case rest == "arguments" || rest == "arguments.":
+	case "arguments", "arguments.":
 		items := []completion{
 			{Label: "<name>", InsertText: "", Kind: completionKindField, Detail: "New argument name"},
 		}
@@ -1112,7 +1112,7 @@ func tableCompletions(analysis documentAnalysis, prefix string, opts completionO
 			})
 		}
 		return items
-	case rest == "presets" || rest == "presets.":
+	case "presets", "presets.":
 		items := []completion{
 			{Label: "<name>", InsertText: "", Kind: completionKindField, Detail: "New recipe preset"},
 		}
@@ -1127,12 +1127,12 @@ func tableCompletions(analysis documentAnalysis, prefix string, opts completionO
 		return items
 	}
 	if _, presetRest, ok := cutRecipePresetRest(rest); ok {
-		switch {
-		case presetRest == "":
+		switch presetRest {
+		case "":
 			return recipePresetSubtableCompletions()
-		case presetRest == "arguments":
+		case "arguments":
 			return []completion{{Label: "arguments", InsertText: "arguments]", Kind: completionKindField, Detail: "Preset argument defaults"}}
-		case presetRest == "arguments.":
+		case "arguments.":
 			return nil
 		}
 	}
@@ -3368,7 +3368,7 @@ func placeholderPrefix(prefix string) (string, bool) {
 			}
 			continue
 		}
-		if !(ch == '_' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z') {
+		if ch != '_' && (ch < '0' || ch > '9') && (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') {
 			return "", false
 		}
 	}

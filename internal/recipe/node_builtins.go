@@ -159,7 +159,7 @@ func ResolveNodePackageManagerWithin(dir, boundary string) (NodePackageManagerIn
 		return NodePackageManagerInfo{}, err
 	}
 	if rel, err := filepath.Rel(absBoundary, absDir); err != nil || !filepath.IsLocal(rel) {
-		return NodePackageManagerInfo{}, fmt.Errorf("Node workdir %q is outside canonical project %q", absDir, absBoundary)
+		return NodePackageManagerInfo{}, fmt.Errorf("node workdir %q is outside canonical project %q", absDir, absBoundary)
 	}
 	return resolveNodePackageManager(absDir, absBoundary)
 }

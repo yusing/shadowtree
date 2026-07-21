@@ -29,7 +29,7 @@ func ResolveGoToolchain(dir, boundary string) (GoToolchainInfo, error) {
 		return GoToolchainInfo{}, err
 	}
 	if rel, err := filepath.Rel(limit, root); err != nil || !filepath.IsLocal(rel) {
-		return GoToolchainInfo{}, fmt.Errorf("Go workdir %q is outside canonical project %q", root, limit)
+		return GoToolchainInfo{}, fmt.Errorf("go workdir %q is outside canonical project %q", root, limit)
 	}
 	for _, name := range []string{"go.work", "go.mod"} {
 		if path := nearestRegularFile(root, limit, name); path != "" {
@@ -46,7 +46,7 @@ func ResolveGoToolchain(dir, boundary string) (GoToolchainInfo, error) {
 			if directive != "" {
 				version, err := pinnedGoDirectiveVersion(directive)
 				if err != nil {
-					return GoToolchainInfo{}, fmt.Errorf("Go directive in %s: %w", path, err)
+					return GoToolchainInfo{}, fmt.Errorf("go directive in %s: %w", path, err)
 				}
 				return GoToolchainInfo{Version: version, Provenance: path + "#go"}, nil
 			}

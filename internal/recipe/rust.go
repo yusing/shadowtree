@@ -158,7 +158,7 @@ func RustDependencyTargetPaths(files map[string][]byte) ([]string, error) {
 		for _, target := range targets {
 			targetPath := path.Clean(path.Join(manifestDir, target))
 			if !filepath.IsLocal(filepath.FromSlash(targetPath)) {
-				return nil, fmt.Errorf("Cargo manifest %s target path %q escapes the canonical project", manifestPath, target)
+				return nil, fmt.Errorf("cargo manifest %s target path %q escapes the canonical project", manifestPath, target)
 			}
 			paths = append(paths, targetPath)
 		}
@@ -172,7 +172,7 @@ func RustDependencyTargetPaths(files map[string][]byte) ([]string, error) {
 func RustDependencyManifestPaths(files map[string][]byte, workdir string) ([]string, error) {
 	selected := nearestRustContextFile(files, workdir, "Cargo.toml")
 	if selected == "" {
-		return nil, errors.New("Rust profile requires an in-project Cargo.toml")
+		return nil, errors.New("rust profile requires an in-project Cargo.toml")
 	}
 	root := selected
 	for current := path.Dir(selected); ; current = path.Dir(current) {
@@ -242,7 +242,7 @@ func RustDependencyManifestPaths(files map[string][]byte, workdir string) ([]str
 			for _, local := range cargoLocalPaths(decoded) {
 				candidate := path.Clean(path.Join(manifestDir, local, "Cargo.toml"))
 				if !filepath.IsLocal(filepath.FromSlash(candidate)) {
-					return nil, fmt.Errorf("Cargo manifest %s local path %q escapes the canonical project", manifest, local)
+					return nil, fmt.Errorf("cargo manifest %s local path %q escapes the canonical project", manifest, local)
 				}
 				if _, exists := files[candidate]; exists && !allowed[candidate] {
 					allowed[candidate] = true
@@ -355,7 +355,7 @@ func ResolveRustProject(ctx context.Context, dir string, env, buildArgs []string
 		return RustProject{}, fmt.Errorf("decode Cargo metadata for %s: %w", manifest, err)
 	}
 	if metadata.WorkspaceRoot == "" || metadata.TargetDirectory == "" || len(metadata.Packages) == 0 {
-		return RustProject{}, fmt.Errorf("Cargo metadata for %s omitted workspace root, target directory, or packages", manifest)
+		return RustProject{}, fmt.Errorf("cargo metadata for %s omitted workspace root, target directory, or packages", manifest)
 	}
 	workspaceRoot := filepath.Clean(metadata.WorkspaceRoot)
 	rootManifest := filepath.Join(workspaceRoot, "Cargo.toml")
@@ -424,15 +424,15 @@ func selectRustProjectWithin(dir, boundary string) (rustSelection, error) {
 			return rustSelection{}, fmt.Errorf("resolve Rust boundary %q: %w", boundary, err)
 		}
 		if rel, err := filepath.Rel(absBoundary, absDir); err != nil || !filepath.IsLocal(rel) {
-			return rustSelection{}, fmt.Errorf("Rust directory %q is outside canonical project %q", absDir, absBoundary)
+			return rustSelection{}, fmt.Errorf("rust directory %q is outside canonical project %q", absDir, absBoundary)
 		}
 	}
 	manifest, ok := nearestRustFile(absDir, absBoundary, "Cargo.toml")
 	if !ok {
 		if absBoundary != "" {
-			return rustSelection{}, fmt.Errorf("Rust profile requires Cargo.toml between %s and canonical project %s", absDir, absBoundary)
+			return rustSelection{}, fmt.Errorf("rust profile requires Cargo.toml between %s and canonical project %s", absDir, absBoundary)
 		}
-		return rustSelection{}, fmt.Errorf("Rust profile requires Cargo.toml at or above %s", absDir)
+		return rustSelection{}, fmt.Errorf("rust profile requires Cargo.toml at or above %s", absDir)
 	}
 	toolchain, provenance, err := resolveRustToolchainWithin(absDir, absBoundary)
 	if err != nil {
@@ -597,7 +597,7 @@ func rustTargetArgument(args []string) (string, bool, error) {
 		}
 		if value, ok := strings.CutPrefix(arg, "--target="); ok {
 			if value == "" {
-				return "", false, errors.New("Cargo --target requires a non-empty value")
+				return "", false, errors.New("cargo --target requires a non-empty value")
 			}
 			target, found = value, true
 			continue
@@ -606,7 +606,7 @@ func rustTargetArgument(args []string) (string, bool, error) {
 			continue
 		}
 		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return "", false, errors.New("Cargo --target requires a value")
+			return "", false, errors.New("cargo --target requires a value")
 		}
 		i++
 		target, found = args[i], true

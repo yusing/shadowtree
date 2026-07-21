@@ -98,7 +98,7 @@ func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, u
 		if err := context.Cause(ctx); err != nil {
 			return RuntimeSelection{}, err
 		}
-		fmt.Fprintf(progress, "shadowtree: detecting system runtime %s\n", candidate)
+		_, _ = fmt.Fprintf(progress, "shadowtree: detecting system runtime %s\n", candidate)
 		security, err := probe(ctx, candidate, run)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
@@ -106,18 +106,18 @@ func detect(ctx context.Context, progress io.Writer, candidates []RuntimeName, u
 			}
 			failure := fmt.Sprintf("%s: %v", candidate, err)
 			failures = append(failures, failure)
-			fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
+			_, _ = fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
 			continue
 		}
 		policy, err := confinementPolicy(candidate, security, uid, gid)
 		if err != nil {
 			failure := fmt.Sprintf("%s: rootless UID/GID mapping: %v", candidate, err)
 			failures = append(failures, failure)
-			fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
+			_, _ = fmt.Fprintf(progress, "shadowtree: system runtime rejected: %s\n", failure)
 			continue
 		}
 		strategy := workspaceStrategy(candidate, policy, security.overlayWorkspace)
-		fmt.Fprintf(progress, "shadowtree: selected system runtime %s with %s workspace\n", candidate, strategy)
+		_, _ = fmt.Fprintf(progress, "shadowtree: selected system runtime %s with %s workspace\n", candidate, strategy)
 		return RuntimeSelection{Name: candidate, Confinement: policy, WorkspaceStrategy: strategy}, nil
 	}
 	return RuntimeSelection{}, fmt.Errorf("no usable system runtime: %s", strings.Join(failures, "; "))

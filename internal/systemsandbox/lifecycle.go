@@ -105,7 +105,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 				return
 			}
 			if options.Progress != nil {
-				fmt.Fprintln(options.Progress, "shadowtree: system workspace volume cleanup complete")
+				_, _ = fmt.Fprintln(options.Progress, "shadowtree: system workspace volume cleanup complete")
 			}
 		}()
 	}
@@ -143,7 +143,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	}
 	createArgs = append(createArgs, options.Image, "/opt/shadowtree/helper", "__shadowtree_system_helper", "/opt/shadowtree/plan.json")
 	if options.Progress != nil {
-		fmt.Fprintln(options.Progress, "shadowtree: creating system container")
+		_, _ = fmt.Fprintln(options.Progress, "shadowtree: creating system container")
 	}
 	createCtx, cancelCreate := context.WithTimeout(context.WithoutCancel(ctx), lifecycleCreateTimeout)
 	createOutput, err := control(createCtx, string(runtime), createArgs...)
@@ -186,7 +186,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 		cancel()
 		if cleanupErr == nil {
 			if options.Progress != nil {
-				fmt.Fprintln(options.Progress, "shadowtree: system container cleanup complete")
+				_, _ = fmt.Fprintln(options.Progress, "shadowtree: system container cleanup complete")
 			}
 			return
 		}
@@ -209,7 +209,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	cmd.Stdout = options.Stdout
 	cmd.Stderr = options.Stderr
 	if options.Progress != nil {
-		fmt.Fprintln(options.Progress, "shadowtree: starting system container")
+		_, _ = fmt.Fprintln(options.Progress, "shadowtree: starting system container")
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start system container: %w", err)
@@ -222,13 +222,13 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	case <-ctx.Done():
 	}
 	if options.Progress != nil {
-		fmt.Fprintln(options.Progress, "shadowtree: stopping system container")
+		_, _ = fmt.Fprintln(options.Progress, "shadowtree: stopping system container")
 	}
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
 	_, stopErr := control(stopCtx, string(runtime), "kill", "--signal", "TERM", name)
 	cancel()
 	if stopErr != nil && options.Progress != nil {
-		fmt.Fprintf(options.Progress, "shadowtree: graceful container stop failed: %v\n", stopErr)
+		_, _ = fmt.Fprintf(options.Progress, "shadowtree: graceful container stop failed: %v\n", stopErr)
 	}
 	timer := time.NewTimer(lifecycleStopTimeout)
 	defer timer.Stop()
@@ -238,13 +238,13 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	case <-timer.C:
 	}
 	if options.Progress != nil {
-		fmt.Fprintln(options.Progress, "shadowtree: forcing system container cleanup")
+		_, _ = fmt.Fprintln(options.Progress, "shadowtree: forcing system container cleanup")
 	}
 	killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lifecycleStopTimeout)
 	_, killErr := control(killCtx, string(runtime), "kill", "--signal", "KILL", name)
 	cancel()
 	if killErr != nil && options.Progress != nil {
-		fmt.Fprintf(options.Progress, "shadowtree: forced container stop failed: %v\n", killErr)
+		_, _ = fmt.Fprintf(options.Progress, "shadowtree: forced container stop failed: %v\n", killErr)
 	}
 	select {
 	case <-wait:
@@ -373,7 +373,7 @@ func CleanupOverlayWorkspace(ctx context.Context, runtime RuntimeName, image, ov
 		return fmt.Errorf("runtime %s clean overlay workspace: %w", runtime, err)
 	}
 	if progress != nil {
-		fmt.Fprintln(progress, "shadowtree: runtime-owned overlay cleanup complete")
+		_, _ = fmt.Fprintln(progress, "shadowtree: runtime-owned overlay cleanup complete")
 	}
 	return nil
 }

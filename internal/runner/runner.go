@@ -287,7 +287,7 @@ func checkRecipeRequirements(resolved recipe.Resolved, dir string, env []string,
 		}
 	}
 	if len(missingOptional) > 0 {
-		fmt.Fprintf(stderr, "shadowtree: recipe %q optional tools not found: %s\n", resolved.Name, strings.Join(missingOptional, ", "))
+		_, _ = fmt.Fprintf(stderr, "shadowtree: recipe %q optional tools not found: %s\n", resolved.Name, strings.Join(missingOptional, ", "))
 	}
 	return nil
 }
@@ -334,7 +334,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	stdout := cmp.Or[io.Writer](options.Stdout, os.Stdout)
 	stderr := cmp.Or[io.Writer](options.Stderr, os.Stderr)
 	for _, warning := range options.Resolved.Warnings {
-		fmt.Fprintf(stderr, "shadowtree: warning: recipe %q args: %s\n", options.Resolved.Name, warning)
+		_, _ = fmt.Fprintf(stderr, "shadowtree: warning: recipe %q args: %s\n", options.Resolved.Name, warning)
 	}
 	source, err := filepath.Abs(options.SourceDir)
 	if err != nil {
@@ -376,7 +376,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	}
 	if options.Resolved.SandboxMode == recipe.SandboxModeHost {
 		if options.Verbose {
-			fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
+			_, _ = fmt.Fprintf(stderr, "shadowtree: running unsandboxed in %s\n", source)
 		}
 		_, err := runWithRecipeLog(options, source, func(logged Options) error {
 			return runResolvedCommands(ctx, nil, source, env, logged, stdin, stdout, stderr, []string{recipeReferenceStackKey(logged.Resolved.ConfigPath, logged.Resolved.Name)})
@@ -409,7 +409,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	}
 	if options.SyncOutAll {
 		if options.Verbose {
-			fmt.Fprintln(stderr, "shadowtree: syncing entire workspace")
+			_, _ = fmt.Fprintln(stderr, "shadowtree: syncing entire workspace")
 		}
 		return sandbox.SyncAll(source)
 	}
@@ -417,7 +417,7 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() { runErr = errors.Join(runErr, cleanup()) }()
 	for _, path := range options.Resolved.SyncOut {
 		if err := SyncPath(syncRoot, source, path); err != nil {
 			return fmt.Errorf("sync %s: %w", path, err)
@@ -541,91 +541,91 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 	if err != nil {
 		return fmt.Errorf("recipe %q system image plan: %w", resolved.Name, err)
 	}
-	fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
-	fmt.Fprintf(w, "platform: %s\n", plan.Platform)
-	fmt.Fprintf(w, "toolchain_mode: %s\n", plan.ToolchainMode)
+	_, _ = fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
+	_, _ = fmt.Fprintf(w, "platform: %s\n", plan.Platform)
+	_, _ = fmt.Fprintf(w, "toolchain_mode: %s\n", plan.ToolchainMode)
 	for _, stage := range plan.Stages {
 		if stage.Name == "toolchains" {
-			fmt.Fprintf(w, "toolchain_key: %s\n", stage.Key)
+			_, _ = fmt.Fprintf(w, "toolchain_key: %s\n", stage.Key)
 			break
 		}
 	}
-	fmt.Fprintf(w, "final_image: %s\n", plan.FinalTag)
+	_, _ = fmt.Fprintf(w, "final_image: %s\n", plan.FinalTag)
 	for index, toolchain := range plan.Toolchains {
 		prefix := fmt.Sprintf("toolchain[%d]", index)
-		fmt.Fprintf(w, "%s.kind: %s\n", prefix, toolchain.Kind)
-		fmt.Fprintf(w, "%s.identity: %s\n", prefix, toolchain.Identity)
-		fmt.Fprintf(w, "%s.provider_image: %s\n", prefix, toolchain.ProviderImage)
+		_, _ = fmt.Fprintf(w, "%s.kind: %s\n", prefix, toolchain.Kind)
+		_, _ = fmt.Fprintf(w, "%s.identity: %s\n", prefix, toolchain.Identity)
+		_, _ = fmt.Fprintf(w, "%s.provider_image: %s\n", prefix, toolchain.ProviderImage)
 		if toolchain.Variant != "" {
-			fmt.Fprintf(w, "%s.variant: %s\n", prefix, toolchain.Variant)
+			_, _ = fmt.Fprintf(w, "%s.variant: %s\n", prefix, toolchain.Variant)
 		}
 		for originIndex, origin := range toolchain.Origins {
 			originPrefix := fmt.Sprintf("%s.origin[%d]", prefix, originIndex)
-			fmt.Fprintf(w, "%s.required_by: %s:%s\n", originPrefix, origin.ConfigIdentity, origin.Recipe)
-			fmt.Fprintf(w, "%s.workdir: %s\n", originPrefix, origin.Workdir)
-			fmt.Fprintf(w, "%s.provenance: %s\n", originPrefix, origin.Provenance)
+			_, _ = fmt.Fprintf(w, "%s.required_by: %s:%s\n", originPrefix, origin.ConfigIdentity, origin.Recipe)
+			_, _ = fmt.Fprintf(w, "%s.workdir: %s\n", originPrefix, origin.Workdir)
+			_, _ = fmt.Fprintf(w, "%s.provenance: %s\n", originPrefix, origin.Provenance)
 			for routeIndex, step := range origin.ReferenceRoute {
-				fmt.Fprintf(w, "%s.route[%d]: %s:%s %s @%s\n", originPrefix, routeIndex, step.ConfigIdentity, step.Recipe, step.Stage, step.Reference)
+				_, _ = fmt.Fprintf(w, "%s.route[%d]: %s:%s %s @%s\n", originPrefix, routeIndex, step.ConfigIdentity, step.Recipe, step.Stage, step.Reference)
 			}
 		}
 		if expanded {
-			fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)
+			_, _ = fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)
 			for _, name := range slices.Sorted(maps.Keys(toolchain.Environment)) {
-				fmt.Fprintf(w, "%s.env.%s: %s\n", prefix, name, toolchain.Environment[name])
+				_, _ = fmt.Fprintf(w, "%s.env.%s: %s\n", prefix, name, toolchain.Environment[name])
 			}
 		}
 	}
 	for index, dependency := range plan.Dependencies {
 		prefix := fmt.Sprintf("dependency[%d]", index)
-		fmt.Fprintf(w, "%s.provider: %s\n", prefix, dependency.Provider)
-		fmt.Fprintf(w, "%s.identity: %s\n", prefix, dependency.Identity)
-		fmt.Fprintf(w, "%s.required_by: %s:%s\n", prefix, dependency.ConfigIdentity, dependency.Recipe)
-		fmt.Fprintf(w, "%s.workdir: %s\n", prefix, dependency.Workdir)
+		_, _ = fmt.Fprintf(w, "%s.provider: %s\n", prefix, dependency.Provider)
+		_, _ = fmt.Fprintf(w, "%s.identity: %s\n", prefix, dependency.Identity)
+		_, _ = fmt.Fprintf(w, "%s.required_by: %s:%s\n", prefix, dependency.ConfigIdentity, dependency.Recipe)
+		_, _ = fmt.Fprintf(w, "%s.workdir: %s\n", prefix, dependency.Workdir)
 	}
-	fmt.Fprintln(w, "native_builds: declare compiler, headers, linker, and project libraries through explicit system_packages; provider image contents are not a requirements contract")
+	_, _ = fmt.Fprintln(w, "native_builds: declare compiler, headers, linker, and project libraries through explicit system_packages; provider image contents are not a requirements contract")
 	for _, stage := range plan.Stages {
-		fmt.Fprintf(w, "image_stage.%s.key: %s\n", stage.Name, stage.Key)
-		fmt.Fprintf(w, "image_stage.%s.tag: %s\n", stage.Name, stage.Tag)
+		_, _ = fmt.Fprintf(w, "image_stage.%s.key: %s\n", stage.Name, stage.Key)
+		_, _ = fmt.Fprintf(w, "image_stage.%s.tag: %s\n", stage.Name, stage.Tag)
 		if expanded {
-			fmt.Fprintf(w, "image_stage.%s.containerfile: |\n", stage.Name)
+			_, _ = fmt.Fprintf(w, "image_stage.%s.containerfile: |\n", stage.Name)
 			for line := range strings.Lines(stage.Containerfile) {
-				fmt.Fprintf(w, "  %s", line)
+				_, _ = fmt.Fprintf(w, "  %s", line)
 			}
 			for _, path := range slices.Sorted(maps.Keys(stage.ContextHashes)) {
-				fmt.Fprintf(w, "image_stage.%s.context.%s.sha256: %s\n", stage.Name, path, stage.ContextHashes[path])
+				_, _ = fmt.Fprintf(w, "image_stage.%s.context.%s.sha256: %s\n", stage.Name, path, stage.ContextHashes[path])
 			}
 			for _, name := range slices.Sorted(maps.Keys(stage.Metadata)) {
-				fmt.Fprintf(w, "image_stage.%s.metadata.%s: %s\n", stage.Name, name, stage.Metadata[name])
+				_, _ = fmt.Fprintf(w, "image_stage.%s.metadata.%s: %s\n", stage.Name, name, stage.Metadata[name])
 			}
 		}
 	}
 	for index, seed := range plan.DependencySeeds {
-		fmt.Fprintf(w, "dependency_seed[%d].provider: %s\n", index, seed.Provider)
-		fmt.Fprintf(w, "dependency_seed[%d].source: %s\n", index, seed.SourcePath)
-		fmt.Fprintf(w, "dependency_seed[%d].target: %s\n", index, seed.TargetPath)
+		_, _ = fmt.Fprintf(w, "dependency_seed[%d].provider: %s\n", index, seed.Provider)
+		_, _ = fmt.Fprintf(w, "dependency_seed[%d].source: %s\n", index, seed.SourcePath)
+		_, _ = fmt.Fprintf(w, "dependency_seed[%d].target: %s\n", index, seed.TargetPath)
 	}
 	for index, cache := range plan.Caches {
 		prefix := fmt.Sprintf("cache[%d]", index)
-		fmt.Fprintf(w, "%s.provider: %s\n", prefix, cache.Provider)
-		fmt.Fprintf(w, "%s.key: %s\n", prefix, cache.Key)
-		fmt.Fprintf(w, "%s.volume: %s\n", prefix, cache.Name)
-		fmt.Fprintf(w, "%s.workspace: %s\n", prefix, cache.WorkspaceRoot)
-		fmt.Fprintf(w, "%s.mount: %s\n", prefix, cache.MountPath)
+		_, _ = fmt.Fprintf(w, "%s.provider: %s\n", prefix, cache.Provider)
+		_, _ = fmt.Fprintf(w, "%s.key: %s\n", prefix, cache.Key)
+		_, _ = fmt.Fprintf(w, "%s.volume: %s\n", prefix, cache.Name)
+		_, _ = fmt.Fprintf(w, "%s.workspace: %s\n", prefix, cache.WorkspaceRoot)
+		_, _ = fmt.Fprintf(w, "%s.mount: %s\n", prefix, cache.MountPath)
 		if cache.OutputPath != "" {
-			fmt.Fprintf(w, "%s.output: %s\n", prefix, cache.OutputPath)
+			_, _ = fmt.Fprintf(w, "%s.output: %s\n", prefix, cache.OutputPath)
 		}
-		fmt.Fprintf(w, "%s.concurrency: %s\n", prefix, cache.Concurrency)
+		_, _ = fmt.Fprintf(w, "%s.concurrency: %s\n", prefix, cache.Concurrency)
 		paths, err := cacheExportPaths([]systemsandbox.CachePlan{cache}, options.SourceDir, options.Resolved.SyncOut, options.SyncOutAll)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "%s.sync_intersections: %s\n", prefix, strings.Join(paths, ","))
+		_, _ = fmt.Fprintf(w, "%s.sync_intersections: %s\n", prefix, strings.Join(paths, ","))
 		if expanded {
-			fmt.Fprintf(w, "%s.format: %s\n", prefix, cache.Format)
-			fmt.Fprintf(w, "%s.platform: %s\n", prefix, cache.Platform)
-			fmt.Fprintf(w, "%s.toolchain: %s\n", prefix, cache.Toolchain)
-			fmt.Fprintf(w, "%s.abi: %s\n", prefix, cache.ABIKey)
-			fmt.Fprintf(w, "%s.uid_gid: %d:%d\n", prefix, cache.UID, cache.GID)
+			_, _ = fmt.Fprintf(w, "%s.format: %s\n", prefix, cache.Format)
+			_, _ = fmt.Fprintf(w, "%s.platform: %s\n", prefix, cache.Platform)
+			_, _ = fmt.Fprintf(w, "%s.toolchain: %s\n", prefix, cache.Toolchain)
+			_, _ = fmt.Fprintf(w, "%s.abi: %s\n", prefix, cache.ABIKey)
+			_, _ = fmt.Fprintf(w, "%s.uid_gid: %d:%d\n", prefix, cache.UID, cache.GID)
 		}
 	}
 	return nil
@@ -658,13 +658,13 @@ func createSandboxWorkspace(ctx context.Context, source, workDir, workspace stri
 	sandbox, err := newOverlayWorkspace(ctx, source, workDir, workspace)
 	if err == nil {
 		if verbose {
-			fmt.Fprintf(stderr, "shadowtree: overlayfs %s -> %s\n", source, workspace)
+			_, _ = fmt.Fprintf(stderr, "shadowtree: overlayfs %s -> %s\n", source, workspace)
 		}
 		return sandbox, nil
 	}
-	fmt.Fprintf(stderr, "shadowtree: overlayfs unavailable (%v); falling back to copied workspace\n", err)
+	_, _ = fmt.Fprintf(stderr, "shadowtree: overlayfs unavailable (%v); falling back to copied workspace\n", err)
 	if verbose {
-		fmt.Fprintf(stderr, "shadowtree: copying %s -> %s\n", source, workspace)
+		_, _ = fmt.Fprintf(stderr, "shadowtree: copying %s -> %s\n", source, workspace)
 	}
 	if err := CopyTree(source, workspace); err != nil {
 		return nil, fmt.Errorf("copy workspace: %w", err)
@@ -887,7 +887,7 @@ func runAggregateCommands(ctx context.Context, sandbox *sandboxWorkspace, dir st
 		return fmt.Errorf("recipe %q with --all found no %s", options.Resolved.Name, options.Resolved.TargetDomain)
 	}
 	if options.Verbose {
-		fmt.Fprintf(stderr, "shadowtree: discovered %d execution batch(es) for %s\n", len(targets), options.Resolved.TargetDomain)
+		_, _ = fmt.Fprintf(stderr, "shadowtree: discovered %d execution batch(es) for %s\n", len(targets), options.Resolved.TargetDomain)
 	}
 	for index, target := range targets {
 		item := recipe.ValueCandidate{Value: target.Value, Help: target.Label}
@@ -981,7 +981,7 @@ func runCommand(ctx context.Context, sandbox *sandboxWorkspace, dir string, env 
 	if options.Verbose || logBoundary {
 		boundary := stageBoundary(phase, index, resolvedHasMultipleCommands(options.Resolved), command)
 		if options.Verbose {
-			fmt.Fprintln(stderr, boundary)
+			_, _ = fmt.Fprintln(stderr, boundary)
 		}
 		if logBoundary {
 			if err := options.stageLog.writeBoundary(boundary); err != nil {
@@ -1343,82 +1343,82 @@ func recipeReferenceStackKey(configPath, name string) string {
 }
 
 func printPlan(w io.Writer, resolved recipe.Resolved) {
-	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
+	_, _ = fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
 	if resolved.Scope != "" {
-		fmt.Fprintf(w, "scope: %s\n", resolved.Scope)
-		fmt.Fprintf(w, "target_domain: %s\n", resolved.TargetDomain)
-		fmt.Fprintf(w, "target_source: %s\n", resolved.TargetSource)
+		_, _ = fmt.Fprintf(w, "scope: %s\n", resolved.Scope)
+		_, _ = fmt.Fprintf(w, "target_domain: %s\n", resolved.TargetDomain)
+		_, _ = fmt.Fprintf(w, "target_source: %s\n", resolved.TargetSource)
 	}
 	if resolved.Profile != "" {
-		fmt.Fprintf(w, "profile: %s\n", resolved.Profile)
+		_, _ = fmt.Fprintf(w, "profile: %s\n", resolved.Profile)
 	}
 	if resolved.ConfigPath != "" {
-		fmt.Fprintf(w, "config: %s\n", resolved.ConfigPath)
+		_, _ = fmt.Fprintf(w, "config: %s\n", resolved.ConfigPath)
 	}
 	if resolved.LogPath != "" {
-		fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
-		fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
-		fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
+		_, _ = fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
+		_, _ = fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
+		_, _ = fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
 	}
 	if resolved.SandboxMode != recipe.SandboxModeWorkspace {
-		fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
+		_, _ = fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
 		if resolved.SandboxMode == recipe.SandboxModeSystem {
-			fmt.Fprintln(w, "runtime: <not probed>")
+			_, _ = fmt.Fprintln(w, "runtime: <not probed>")
 		}
 	}
 	printPlanRequirements(w, resolved.Recipe.Requires)
 	for i, command := range resolved.Recipe.Pre {
-		fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.StageCommandHelpText(command))
+		_, _ = fmt.Fprintf(w, "pre[%d]: %s\n", i, recipe.StageCommandHelpText(command))
 	}
 	if len(resolved.Recipe.ForEach) > 0 {
-		fmt.Fprintf(w, "for_each: %s\n", recipe.CommandHelpText(resolved.Recipe.ForEach))
+		_, _ = fmt.Fprintf(w, "for_each: %s\n", recipe.CommandHelpText(resolved.Recipe.ForEach))
 	}
 	if resolved.Recipe.Workdir != "" {
-		fmt.Fprintf(w, "workdir: %s\n", resolved.Recipe.Workdir)
+		_, _ = fmt.Fprintf(w, "workdir: %s\n", resolved.Recipe.Workdir)
 	}
-	fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
+	_, _ = fmt.Fprintf(w, "main: %s\n", recipe.CommandHelpText(resolved.Main))
 	for i, command := range resolved.Recipe.Post {
-		fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.StageCommandHelpText(command))
+		_, _ = fmt.Fprintf(w, "post[%d]: %s\n", i, recipe.StageCommandHelpText(command))
 	}
 	for _, path := range resolved.SyncOut {
-		fmt.Fprintf(w, "sync_out: %s\n", path)
+		_, _ = fmt.Fprintf(w, "sync_out: %s\n", path)
 	}
 }
 
 func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
-	fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
+	_, _ = fmt.Fprintf(w, "recipe: %s\n", resolved.Name)
 	printPlanValue(w, "scope", string(resolved.Scope))
 	printPlanValue(w, "target_domain", resolved.TargetDomain)
 	printPlanValue(w, "target_source", string(resolved.TargetSource))
 	printPlanValue(w, "config", resolved.ConfigPath)
 	printPlanValue(w, "profile", resolved.Profile)
-	fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
+	_, _ = fmt.Fprintf(w, "sandboxed: %s\n", resolved.SandboxMode)
 	if resolved.SandboxMode == recipe.SandboxModeSystem {
-		fmt.Fprintln(w, "runtime: <not probed>")
+		_, _ = fmt.Fprintln(w, "runtime: <not probed>")
 	}
 	printPlanValue(w, "workdir", cmp.Or(resolved.Recipe.Workdir, "."))
 	if len(resolved.SyncOut) == 0 {
-		fmt.Fprintln(w, "sync_out: <none>")
+		_, _ = fmt.Fprintln(w, "sync_out: <none>")
 	} else {
 		for _, path := range resolved.SyncOut {
-			fmt.Fprintf(w, "sync_out: %s\n", path)
+			_, _ = fmt.Fprintf(w, "sync_out: %s\n", path)
 		}
 	}
 	if resolved.LogPath == "" {
-		fmt.Fprintln(w, "log: <none>")
+		_, _ = fmt.Fprintln(w, "log: <none>")
 	} else {
-		fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
-		fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
-		fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
+		_, _ = fmt.Fprintf(w, "log: %s\n", resolved.LogPath)
+		_, _ = fmt.Fprintf(w, "log_stages: %s\n", strings.Join(resolved.LogStages, ","))
+		_, _ = fmt.Fprintf(w, "log_tee: %t\n", resolved.LogTee)
 	}
 	printPlanRequirements(w, resolved.Recipe.Requires)
 	if resolved.Preset != "" {
-		fmt.Fprintf(w, "preset: %s\n", resolved.Preset)
+		_, _ = fmt.Fprintf(w, "preset: %s\n", resolved.Preset)
 	}
 	printStringMapSection(w, "arguments", resolved.Arguments)
 	printArgumentValueCommands(w, resolved.Recipe.Arguments)
 	if len(resolved.VariadicArgs) > 0 {
-		fmt.Fprintf(w, "variadic_args: %s\n", strings.Join(resolved.VariadicArgs, " "))
+		_, _ = fmt.Fprintf(w, "variadic_args: %s\n", strings.Join(resolved.VariadicArgs, " "))
 	}
 	printStringMapSection(w, "vars", resolved.Recipe.Vars)
 	printStringMapSection(w, "env", resolved.Recipe.Env)
@@ -1438,17 +1438,17 @@ func printPlanValue(w io.Writer, key, value string) {
 	if value == "" {
 		value = "<none>"
 	}
-	fmt.Fprintf(w, "%s: %s\n", key, value)
+	_, _ = fmt.Fprintf(w, "%s: %s\n", key, value)
 }
 
 func printStringMapSection(w io.Writer, name string, values map[string]string) {
-	fmt.Fprintf(w, "%s:\n", name)
+	_, _ = fmt.Fprintf(w, "%s:\n", name)
 	if len(values) == 0 {
-		fmt.Fprintln(w, "  <none>")
+		_, _ = fmt.Fprintln(w, "  <none>")
 		return
 	}
 	for _, key := range slices.Sorted(maps.Keys(values)) {
-		fmt.Fprintf(w, "  %s: %s\n", key, values[key])
+		_, _ = fmt.Fprintf(w, "  %s: %s\n", key, values[key])
 	}
 }
 
@@ -1463,41 +1463,41 @@ func printArgumentValueCommands(w io.Writer, args map[string]recipe.Argument) {
 		return
 	}
 	slices.Sort(names)
-	fmt.Fprintln(w, "argument_values:")
+	_, _ = fmt.Fprintln(w, "argument_values:")
 	for _, name := range names {
-		fmt.Fprintf(w, "  %s: %s\n", name, recipe.CommandHelpText(args[name].Values))
+		_, _ = fmt.Fprintf(w, "  %s: %s\n", name, recipe.CommandHelpText(args[name].Values))
 	}
 }
 
 func printExpandedStageCommand(w io.Writer, label string, command recipe.StageCommand) {
 	printExpandedCommand(w, label, command.Cmd)
 	if timeout := recipe.StageTimeout(command); timeout > 0 {
-		fmt.Fprintf(w, "%s.timeout: %s\n", label, timeout)
+		_, _ = fmt.Fprintf(w, "%s.timeout: %s\n", label, timeout)
 	}
 }
 
 func printExpandedCommand(w io.Writer, label string, command recipe.Command) {
 	if recipe.IsScriptCommand(command) {
 		if shell := recipe.ScriptShell(command); shell != "" {
-			fmt.Fprintf(w, "%s.shell: %s\n", label, shell)
+			_, _ = fmt.Fprintf(w, "%s.shell: %s\n", label, shell)
 		}
-		fmt.Fprintf(w, "%s.script: |\n", label)
+		_, _ = fmt.Fprintf(w, "%s.script: |\n", label)
 		printIndentedBlock(w, recipe.ScriptBody(command), "  ")
 		return
 	}
-	fmt.Fprintf(w, "%s: %s\n", label, recipe.CommandHelpText(command))
+	_, _ = fmt.Fprintf(w, "%s: %s\n", label, recipe.CommandHelpText(command))
 }
 
 func printIndentedBlock(w io.Writer, text, indent string) {
 	text = strings.TrimRight(text, "\r\n")
 	if text == "" {
-		fmt.Fprintf(w, "%s<empty>\n", indent)
+		_, _ = fmt.Fprintf(w, "%s<empty>\n", indent)
 		return
 	}
 	for line := range strings.Lines(text) {
-		fmt.Fprintf(w, "%s%s", indent, line)
+		_, _ = fmt.Fprintf(w, "%s%s", indent, line)
 		if !strings.HasSuffix(line, "\n") {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 		}
 	}
 }
@@ -1507,16 +1507,16 @@ func printPlanRequirements(w io.Writer, req recipe.Requirements) {
 		return
 	}
 	if len(req.Commands) > 0 {
-		fmt.Fprintf(w, "requires.commands: %s\n", strings.Join(req.Commands, ", "))
+		_, _ = fmt.Fprintf(w, "requires.commands: %s\n", strings.Join(req.Commands, ", "))
 	}
 	if len(req.OptionalCommands) > 0 {
-		fmt.Fprintf(w, "requires.optional_commands: %s\n", strings.Join(req.OptionalCommands, ", "))
+		_, _ = fmt.Fprintf(w, "requires.optional_commands: %s\n", strings.Join(req.OptionalCommands, ", "))
 	}
 	if len(req.GoCommands) > 0 {
-		fmt.Fprintf(w, "requires.go_commands: %s\n", requirementMapText(req.GoCommands))
+		_, _ = fmt.Fprintf(w, "requires.go_commands: %s\n", requirementMapText(req.GoCommands))
 	}
 	if len(req.NodeCommands) > 0 {
-		fmt.Fprintf(w, "requires.node_commands: %s\n", requirementMapText(req.NodeCommands))
+		_, _ = fmt.Fprintf(w, "requires.node_commands: %s\n", requirementMapText(req.NodeCommands))
 	}
 }
 

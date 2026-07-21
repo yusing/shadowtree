@@ -173,7 +173,7 @@ func validateCachePlan(plan CachePlan) error {
 			return errors.New("invalid Cargo target cache provider contract")
 		}
 		if rel, err := filepath.Rel(plan.WorkspaceRoot, plan.OutputPath); err != nil || rel != "target" {
-			return errors.New("Cargo target cache output must be the workspace target directory")
+			return errors.New("cargo target cache output must be the workspace target directory")
 		}
 	default:
 		return fmt.Errorf("unsupported cache provider %q", plan.Provider)
@@ -204,7 +204,7 @@ func WaitForCacheAvailability(ctx context.Context, runtime RuntimeName, plans []
 				break
 			}
 			if !waiting && progress != nil {
-				fmt.Fprintf(progress, "shadowtree: waiting for runtime cache %s\n", plan.Provider)
+				_, _ = fmt.Fprintf(progress, "shadowtree: waiting for runtime cache %s\n", plan.Provider)
 				waiting = true
 			}
 			select {
@@ -225,7 +225,7 @@ func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePl
 		if err := validateCachePlan(plan); err != nil {
 			return err
 		}
-		fmt.Fprintf(progress, "shadowtree: cache %s lookup\n", plan.Provider)
+		_, _ = fmt.Fprintf(progress, "shadowtree: cache %s lookup\n", plan.Provider)
 		labels, exists, err := inspectVolumeLabels(ctx, runtime, plan.Name, run)
 		if err != nil {
 			return fmt.Errorf("runtime %s cache %s lookup: %w", runtime, plan.Provider, err)
@@ -234,10 +234,10 @@ func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePl
 			if !labelsMatch(labels, plan.Labels) {
 				return fmt.Errorf("runtime %s cache %s volume collision at %s; inspect or remove the conflicting volume", runtime, plan.Provider, plan.Name)
 			}
-			fmt.Fprintf(progress, "shadowtree: cache %s reused\n", plan.Provider)
+			_, _ = fmt.Fprintf(progress, "shadowtree: cache %s reused\n", plan.Provider)
 			continue
 		}
-		fmt.Fprintf(progress, "shadowtree: cache %s create\n", plan.Provider)
+		_, _ = fmt.Fprintf(progress, "shadowtree: cache %s create\n", plan.Provider)
 		args := []string{"volume", "create"}
 		keys := slices.Sorted(maps.Keys(plan.Labels))
 		for _, key := range keys {
@@ -252,7 +252,7 @@ func prepareCachesWith(ctx context.Context, runtime RuntimeName, plans []CachePl
 		if err != nil || !exists || !labelsMatch(labels, plan.Labels) {
 			return fmt.Errorf("runtime %s cache %s create did not publish the requested labelled volume", runtime, plan.Provider)
 		}
-		fmt.Fprintf(progress, "shadowtree: cache %s initialize ownership\n", plan.Provider)
+		_, _ = fmt.Fprintf(progress, "shadowtree: cache %s initialize ownership\n", plan.Provider)
 		output, err = run(ctx, string(runtime), "run", "--rm", "--network", "none", "--read-only", "--user", "0:0", "--entrypoint", "/bin/sh", "--volume", plan.Name+":/opt/shadowtree/cache-init", image, "-c", fmt.Sprintf("chown -R %d:%d /opt/shadowtree/cache-init && chmod u+rwx /opt/shadowtree/cache-init", plan.UID, plan.GID))
 		if err != nil {
 			return fmt.Errorf("runtime %s cache %s initialize ownership: %s", runtime, plan.Provider, commandFailure(err, output))

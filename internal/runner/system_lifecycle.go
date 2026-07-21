@@ -57,7 +57,7 @@ type systemWorkspace struct {
 }
 
 func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeName, confinement systemsandbox.ConfinementPolicy, strategy systemsandbox.WorkspaceStrategy, image systemsandbox.ImagePlan, options Options, stdin io.Reader, stdout, stderr, verbose io.Writer, setup *systemProgress) (runErr error) {
-	fmt.Fprintf(verbose, "shadowtree: setting up %s system workspace with runtime %s\n", strategy, runtimeName)
+	_, _ = fmt.Fprintf(verbose, "shadowtree: setting up %s system workspace with runtime %s\n", strategy, runtimeName)
 	if err := setup.Start(systemWorkspaceProgressLabel(strategy, false)); err != nil {
 		return errors.Join(fmt.Errorf("render system progress: %w", err), setup.Fail())
 	}
@@ -66,7 +66,7 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		return errors.Join(err, setup.Fail())
 	}
 	defer func() {
-		fmt.Fprintln(verbose, "shadowtree: cleaning system invocation")
+		_, _ = fmt.Fprintln(verbose, "shadowtree: cleaning system invocation")
 		runErr = errors.Join(runErr, invocation.Close(ctx, runtimeName, image.FinalTag, verbose))
 	}()
 	workspace := invocation.workspace
@@ -74,12 +74,12 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		if err := setup.Start(systemWorkspaceProgressLabel(systemsandbox.WorkspaceCopied, true)); err != nil {
 			return errors.Join(fmt.Errorf("render system progress: %w", err), setup.Fail())
 		}
-		fmt.Fprintf(verbose, "shadowtree: overlay workspace unavailable (%q); using copied fallback\n", workspace.fallbackReason)
+		_, _ = fmt.Fprintf(verbose, "shadowtree: overlay workspace unavailable (%q); using copied fallback\n", workspace.fallbackReason)
 	}
 	for _, path := range workspace.skipped {
-		fmt.Fprintf(verbose, "shadowtree: system workspace skipped unreadable path %q\n", path)
+		_, _ = fmt.Fprintf(verbose, "shadowtree: system workspace skipped unreadable path %q\n", path)
 	}
-	fmt.Fprintln(verbose, "shadowtree: executing system lifecycle")
+	_, _ = fmt.Fprintln(verbose, "shadowtree: executing system lifecycle")
 	ready := false
 	run := func() error {
 		return systemsandbox.RunLifecycle(ctx, runtimeName, systemsandbox.LifecycleOptions{
@@ -102,7 +102,7 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		if progressErr := setup.Start(systemWorkspaceProgressLabel(systemsandbox.WorkspaceCopied, true)); progressErr != nil {
 			return errors.Join(err, fmt.Errorf("render system progress: %w", progressErr), setup.Fail())
 		}
-		fmt.Fprintf(verbose, "shadowtree: runtime overlay workspace unavailable (%q); using copied fallback\n", setupErr)
+		_, _ = fmt.Fprintf(verbose, "shadowtree: runtime overlay workspace unavailable (%q); using copied fallback\n", setupErr)
 		if fallbackErr := workspace.useCopiedFallback(options.Resolved.SyncOut, options.SyncOutAll, setupErr); fallbackErr != nil {
 			return errors.Join(err, fallbackErr, setup.Fail())
 		}
@@ -120,7 +120,7 @@ func runSystemLifecycle(ctx context.Context, runtimeName systemsandbox.RuntimeNa
 		}
 		return systemContainerExitError(err)
 	}
-	fmt.Fprintln(verbose, "shadowtree: exporting system workspace")
+	_, _ = fmt.Fprintln(verbose, "shadowtree: exporting system workspace")
 	return workspace.syncSuccess(image.Caches, options, invocation.export)
 }
 
@@ -478,51 +478,51 @@ func systemContainerExitError(err error) error {
 // container. It returns a process exit code for the hidden CLI entry point.
 func SystemHelperMain(ctx context.Context, args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "system helper requires one plan path")
+		_, _ = fmt.Fprintln(os.Stderr, "system helper requires one plan path")
 		return 2
 	}
 	info, err := os.Stat(args[0])
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		fmt.Fprintln(os.Stderr, "system lifecycle plan must be a private regular file")
+		_, _ = fmt.Fprintln(os.Stderr, "system lifecycle plan must be a private regular file")
 		return 1
 	}
 	data, err := os.ReadFile(args[0])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "read system lifecycle plan:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "read system lifecycle plan:", err)
 		return 1
 	}
 	var plan systemLifecyclePlan
 	if err := json.Unmarshal(data, &plan); err != nil {
-		fmt.Fprintln(os.Stderr, "decode system lifecycle plan:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "decode system lifecycle plan:", err)
 		return 1
 	}
 	if plan.Protocol != systemHelperProtocol || plan.SourceDir == "" {
-		fmt.Fprintln(os.Stderr, "unsupported or incomplete system lifecycle plan")
+		_, _ = fmt.Fprintln(os.Stderr, "unsupported or incomplete system lifecycle plan")
 		return 1
 	}
 	if err := os.MkdirAll("/tmp/shadowtree-home", 0o700); err != nil {
-		fmt.Fprintln(os.Stderr, "create private home:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "create private home:", err)
 		return 1
 	}
 	if err := validateDependencySeeds(plan.DependencySeeds, plan.SourceDir); err != nil {
-		fmt.Fprintln(os.Stderr, "validate dependency seeds:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "validate dependency seeds:", err)
 		return 1
 	}
 	workspaceRoot, err := os.OpenRoot(plan.SourceDir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "open dependency seed workspace:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "open dependency seed workspace:", err)
 		return 1
 	}
 	defer workspaceRoot.Close()
 	for _, seed := range plan.DependencySeeds {
 		if err := workspaceRoot.RemoveAll(filepath.ToSlash(seed.TargetPath)); err != nil {
-			fmt.Fprintf(os.Stderr, "clear dependency seed target %s: %v\n", seed.TargetPath, err)
+			_, _ = fmt.Fprintf(os.Stderr, "clear dependency seed target %s: %v\n", seed.TargetPath, err)
 			return 1
 		}
 	}
 	for _, seed := range plan.DependencySeeds {
 		if err := copyTreeToRoot(seed.SourcePath, workspaceRoot, filepath.ToSlash(seed.TargetPath)); err != nil {
-			fmt.Fprintf(os.Stderr, "copy dependency seed %s to %s: %v\n", seed.Provider, seed.TargetPath, err)
+			_, _ = fmt.Fprintf(os.Stderr, "copy dependency seed %s to %s: %v\n", seed.Provider, seed.TargetPath, err)
 			return 1
 		}
 	}
@@ -533,7 +533,7 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 		Stdout: os.Stdout, Stderr: os.Stderr, systemLifecycle: true,
 	}
 	if err := checkRecipeRequirements(plan.Resolved, plan.SourceDir, environment, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	_, err = runWithRecipeLog(options, plan.SourceDir, func(logged Options) error {
@@ -541,7 +541,7 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 	})
 	if err == nil {
 		if err := exportSystemCaches(plan); err != nil {
-			fmt.Fprintln(os.Stderr, "export cache-backed sync paths:", err)
+			_, _ = fmt.Fprintln(os.Stderr, "export cache-backed sync paths:", err)
 			return 1
 		}
 		return 0
@@ -552,7 +552,7 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 	if cause := context.Cause(ctx); cause != nil {
 		return 130
 	}
-	fmt.Fprintln(os.Stderr, err)
+	_, _ = fmt.Fprintln(os.Stderr, err)
 	return 1
 }
 
