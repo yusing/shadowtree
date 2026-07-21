@@ -144,10 +144,10 @@ paths over `--sync-out-all`.
 `sandboxed = "system"` is an explicit third mode. Static help and plan output
 show it as `system` with `runtime: <not probed>` and never contact a container
 engine. Execution and `--check` probe Docker, Podman, then nerdctl and select
-the first reachable client with the required build, image, volume, mount,
-identity, signalling, and cleanup operations. Detection is bounded, reports
-progress on stderr, and creates no runtime or workspace state. It never falls
-back to workspace or host execution.
+the first reachable client with the required build, image, volume, executable
+private-tmpfs mount, identity, signalling, and cleanup operations. Detection is
+bounded, reports progress on stderr, and creates no runtime or workspace state.
+It never falls back to workspace or host execution.
 
 System mode composes every profile contributed by the resolved recipe-reference
 graph. With exactly one toolchain and no `system.base_image`, its exact provider

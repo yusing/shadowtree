@@ -69,7 +69,7 @@ var capabilityProbes = []capabilityProbe{
 	{phase: "filtered volume listing", args: []string{"volume", "ls", "--help"}, requiredOptions: []string{"--filter", "--format"}},
 	{phase: "volume removal", args: []string{"volume", "rm", "--help"}},
 	{phase: "container volume-use inspection", args: []string{"ps", "--help"}, requiredOptions: []string{"--filter", "--format"}},
-	{phase: "nested and read-only mounts, UID/GID, signalling identity, SELinux relabelling, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--read-only", "--user", "--platform", "--name", "--interactive"}},
+	{phase: "nested, read-only, and executable tmpfs mounts, UID/GID, signalling identity, SELinux relabelling, and stdin", args: []string{"create", "--help"}, requiredOptions: []string{"--mount", "--tmpfs", "--read-only", "--user", "--platform", "--name", "--interactive"}},
 	{phase: "attached container start", args: []string{"start", "--help"}, requiredOptions: []string{"--attach", "--interactive"}},
 	{phase: "container signalling", args: []string{"kill", "--help"}, requiredOptions: []string{"--signal"}},
 	{phase: "forced container removal", args: []string{"rm", "--help"}, requiredOptions: []string{"--force"}},

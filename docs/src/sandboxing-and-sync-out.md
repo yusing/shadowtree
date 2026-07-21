@@ -104,8 +104,9 @@ volume driver options, unsupported filesystems, unsafe paths, and overlay setup
 failures use the copied private workspace before user code starts. A container
 start or attach failure is not retried through a different workspace strategy.
 
-The container root is read-only, `/tmp` is a private tmpfs, the helper and
-resolved plan are private read-only mounts, and the runtime socket, host home,
+The container root is read-only, `/tmp` is a private writable and executable
+tmpfs, the helper and resolved plan are private read-only mounts, and the
+runtime socket, host home,
 sibling projects, and host system paths are not mounted. The current
 static-helper transport requires a Linux host binary matching the selected
 image architecture and fails before building otherwise. Cancellation sends

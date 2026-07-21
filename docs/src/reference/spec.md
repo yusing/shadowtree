@@ -41,7 +41,8 @@ stale, non-writable, or differently owned lower dependencies.
 Exact `requires.node_commands` packages use a managed Node/npm provider; a Bun
 project composes that provider alongside Bun rather than treating Bun as an npm
 binary provider.
-One ephemeral read-only-root container runs the complete resolved lifecycle
+One ephemeral read-only-root container with a private, writable, executable
+`/tmp` tmpfs runs the complete resolved lifecycle
 against a private workspace mounted at the canonical checkout path. Capable
 local Docker and Podman engines use the checkout as a read-only OverlayFS lower
 with a Shadowtree-owned upper; nerdctl, SELinux-enabled engines, Docker engines

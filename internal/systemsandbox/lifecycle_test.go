@@ -202,6 +202,29 @@ esac
 	}
 }
 
+func TestRunLifecycleMountsExecutablePrivateTemp(t *testing.T) {
+	bin := t.TempDir()
+	writeLifecycleRuntime(t, bin, Docker)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var create []string
+	err := runLifecycle(t.Context(), Docker, lifecycleTestOptions(t), func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			create = append([]string(nil), args...)
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(create, " ")
+	if !strings.Contains(joined, "--read-only") || !strings.Contains(joined, "--tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777") {
+		t.Fatalf("create args do not preserve a read-only root with executable private temp: %s", joined)
+	}
+	if strings.Contains(joined, "type=tmpfs,dst=/tmp") {
+		t.Fatalf("create args retain the implicitly noexec tmpfs mount: %s", joined)
+	}
+}
+
 func TestRunLifecycleCreatesAndCleansDockerOverlayVolume(t *testing.T) {
 	bin := t.TempDir()
 	writeLifecycleRuntime(t, bin, Docker)
@@ -446,7 +469,7 @@ esac
 	}
 	arguments := string(data)
 	for _, want := range []string{
-		"--user 0:0 --mount type=tmpfs,dst=/tmp --userns host",
+		"--user 0:0 --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 --userns host",
 		"--volume " + options.Workspace.Source + ":" + options.WorkspacePath + ":Z",
 		"--volume " + options.HelperHost + ":/opt/shadowtree/helper:ro,Z",
 	} {

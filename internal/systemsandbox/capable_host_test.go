@@ -41,7 +41,7 @@ func TestCapableHostRuntimeConfinement(t *testing.T) {
 	invocation := t.TempDir()
 	helper := filepath.Join(invocation, "helper")
 	identity := filepath.Join(workspace, "identity")
-	script := fmt.Sprintf("#!/bin/sh\nid -u | tr -d '\\n' > %q\nprintf ':' >> %q\nid -g >> %q\n", identity, identity, identity)
+	script := fmt.Sprintf("#!/bin/sh\nset -eu\ntemporary=/tmp/shadowtree-capable-executable\nprintf '#!/bin/sh\\nexit 0\\n' > \"$temporary\"\nchmod 700 \"$temporary\"\n\"$temporary\"\nrm \"$temporary\"\nid -u | tr -d '\\n' > %q\nprintf ':' >> %q\nid -g >> %q\n", identity, identity, identity)
 	if err := os.WriteFile(helper, []byte(script), 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +81,7 @@ func runCapablePodmanCopied(t *testing.T, image string, policy ConfinementPolicy
 	args := []string{
 		"create", "--name", name, "--network", "none", "--read-only",
 		"--platform", "linux/" + runtime.GOARCH, "--user", policy.User,
+		"--tmpfs", lifecyclePrivateTempMount,
 	}
 	if policy.UserNamespace != "" {
 		args = append(args, "--userns", policy.UserNamespace)

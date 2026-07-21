@@ -257,7 +257,7 @@ func TestRuntimeSecurityInspectionRejectsMissingDockerState(t *testing.T) {
 }
 
 func TestRuntimeProbeRequiresNeededLifecycleAndVolumeFlags(t *testing.T) {
-	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--read-only", "--user", "--name", "--interactive", "--attach", "--signal", "--force", "--filter", "--format"} {
+	for _, missing := range []string{"--file", "--tag", "--label", "--platform", "--secret", "--build-arg", "--mount", "--tmpfs", "--read-only", "--user", "--name", "--interactive", "--attach", "--signal", "--force", "--filter", "--format"} {
 		t.Run(missing, func(t *testing.T) {
 			_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				output := successfulProbeOutput(args)
@@ -295,15 +295,35 @@ func TestRuntimeProbeRequiresOnlyApplicableConfinementFlags(t *testing.T) {
 }
 
 func TestRuntimeProbeRejectsPrefixCollisionOptions(t *testing.T) {
-	for required, collision := range map[string]string{"--label": "--label-file", "--user": "--userns"} {
-		t.Run(required, func(t *testing.T) {
+	for _, test := range []struct {
+		name, required, collision string
+	}{
+		{name: "label prefix", required: "--label", collision: "--label-file"},
+		{name: "user prefix", required: "--user", collision: "--userns"},
+		{name: "tmpfs prefix", required: "--tmpfs", collision: "--tmpfs-mode"},
+		{name: "tmpfs assigned token", required: "--tmpfs", collision: "--tmpfs=/tmp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
-				return bytes.ReplaceAll(successfulProbeOutput(args), []byte(required), []byte(collision)), nil
+				return bytes.ReplaceAll(successfulProbeOutput(args), []byte(test.required), []byte(test.collision)), nil
 			})
-			if err == nil || !strings.Contains(err.Error(), "lacks exact option "+required) {
+			if err == nil || !strings.Contains(err.Error(), "lacks exact option "+test.required) {
 				t.Fatalf("probe error = %v, want exact-option rejection", err)
 			}
 		})
+	}
+}
+
+func TestRuntimeProbeAllowsUnrelatedFutureOptions(t *testing.T) {
+	_, err := probe(t.Context(), Docker, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		output := successfulProbeOutput(args)
+		if slices.Equal(args, []string{"create", "--help"}) {
+			output = append(output, []byte(" --tmpfs-size --future-runtime-option")...)
+		}
+		return output, nil
+	})
+	if err != nil {
+		t.Fatalf("probe rejected unrelated future options: %v", err)
 	}
 }
 
@@ -365,7 +385,7 @@ func successfulProbeOutput(args []string) []byte {
 		return []byte("--filter --format")
 	}
 	if slices.Equal(args, []string{"create", "--help"}) {
-		return []byte("--mount --volume --read-only --user --userns --platform --name --interactive")
+		return []byte("--mount --tmpfs --volume --read-only --user --userns --platform --name --interactive")
 	}
 	if slices.Equal(args, []string{"info", "--format", "{{json .SecurityOptions}}"}) {
 		return []byte("[]")

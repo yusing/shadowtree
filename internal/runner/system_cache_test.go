@@ -22,7 +22,7 @@ case "$*" in
   "volume inspect --help") printf '%s' '--format' ;;
   "volume ls --help"|"ps --help") printf '%s' '--filter --format' ;;
   "volume rm --help") printf '%s' ok ;;
-  "create --help") printf '%s' '--mount --volume --read-only --user --userns --platform --name --interactive' ;;
+  "create --help") printf '%s' '--mount --tmpfs --volume --read-only --user --userns --platform --name --interactive' ;;
   "start --help") printf '%s' '--attach --interactive' ;;
   "kill --help") printf '%s' '--signal' ;;
   "rm --help") printf '%s' '--force' ;;

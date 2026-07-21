@@ -18,6 +18,8 @@ const lifecycleStopTimeout = 5 * time.Second
 
 const lifecycleCreateTimeout = 30 * time.Second
 
+const lifecyclePrivateTempMount = "/tmp:rw,exec,nosuid,nodev,mode=1777"
+
 // LifecycleOptions describes one ephemeral system-container invocation.
 type LifecycleOptions struct {
 	Image         string
@@ -110,7 +112,7 @@ func runLifecycle(ctx context.Context, runtime RuntimeName, options LifecycleOpt
 	createArgs := []string{
 		"create", "--interactive", "--name", name,
 		"--read-only", "--platform", options.Platform, "--user", options.Confinement.User,
-		"--mount", "type=tmpfs,dst=/tmp",
+		"--tmpfs", lifecyclePrivateTempMount,
 	}
 	if options.Confinement.UserNamespace != "" {
 		createArgs = append(createArgs, "--userns", options.Confinement.UserNamespace)
