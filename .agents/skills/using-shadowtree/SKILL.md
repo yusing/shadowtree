@@ -103,9 +103,11 @@ the selected runtime.
 
 For a system recipe, expanded plans expose the toolchain mode, effective
 provider/managed/explicit foundation, platform, canonical exact toolchains and
-origins, shared toolchain key, provider setup and verification, five immutable stages, plural dependencies
-and seeds, context hashes, mutable cache identities and mounts, and sync-out
-intersections without building. Treat
+origins, shared toolchain key, five immutable stages, plural dependencies and
+seeds, context hashes, mutable cache identities and mounts, and sync-out
+intersections without building. Generated Containerfiles are the sole rendering
+of image-build instructions; toolchain and dependency sections do not repeat
+those commands. Treat
 `requires.system_packages` as image inputs, not host package installation
 instructions. One toolchain without an explicit foundation uses its provider
 image directly; zero or multiple toolchains use the managed foundation, and an

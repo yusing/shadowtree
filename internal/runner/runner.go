@@ -570,16 +570,6 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		}
 		if expanded {
 			fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)
-			setupCommands := toolchain.Setup
-			if plan.ToolchainMode == systemsandbox.ToolchainModeProviderRoot {
-				setupCommands = toolchain.RootSetup
-			}
-			for setupIndex, setup := range setupCommands {
-				fmt.Fprintf(w, "%s.setup[%d]: %s\n", prefix, setupIndex, setup)
-			}
-			for verifyIndex, verify := range toolchain.Verification {
-				fmt.Fprintf(w, "%s.verify[%d]: %s\n", prefix, verifyIndex, verify)
-			}
 			for _, name := range slices.Sorted(maps.Keys(toolchain.Environment)) {
 				fmt.Fprintf(w, "%s.env.%s: %s\n", prefix, name, toolchain.Environment[name])
 			}
@@ -591,11 +581,6 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		fmt.Fprintf(w, "%s.identity: %s\n", prefix, dependency.Identity)
 		fmt.Fprintf(w, "%s.required_by: %s:%s\n", prefix, dependency.ConfigIdentity, dependency.Recipe)
 		fmt.Fprintf(w, "%s.workdir: %s\n", prefix, dependency.Workdir)
-		if expanded {
-			for commandIndex, command := range dependency.Commands {
-				fmt.Fprintf(w, "%s.command[%d]: %s\n", prefix, commandIndex, command)
-			}
-		}
 	}
 	fmt.Fprintln(w, "native_builds: declare compiler, headers, linker, and project libraries through explicit system_packages; provider image contents are not a requirements contract")
 	for _, stage := range plan.Stages {

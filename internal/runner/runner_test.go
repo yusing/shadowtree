@@ -3164,6 +3164,13 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 			if expanded && !strings.Contains(stdout.String(), "image_stage.base.containerfile: |\n") {
 				t.Fatalf("expanded plan missing Containerfile:\n%s", stdout.String())
 			}
+			if expanded {
+				for _, duplicate := range []string{"toolchain[0].setup[", "toolchain[0].verify["} {
+					if strings.Contains(stdout.String(), duplicate) {
+						t.Fatalf("expanded plan duplicates Containerfile instruction %q:\n%s", duplicate, stdout.String())
+					}
+				}
+			}
 		})
 	}
 }
@@ -3196,6 +3203,9 @@ func TestSystemSandboxExpandedPlanPrintsDependencyInputsWithoutRuntime(t *testin
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("expanded plan missing %q:\n%s", want, stdout.String())
 		}
+	}
+	if strings.Contains(stdout.String(), "dependency[0].command[") {
+		t.Fatalf("expanded plan duplicates dependency Containerfile instructions:\n%s", stdout.String())
 	}
 }
 

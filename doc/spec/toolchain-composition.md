@@ -98,8 +98,10 @@ volumes are never mounted at the same destination.
 
 Static expanded output reports the managed or explicit foundation, platform,
 canonical toolchain identities, variants, provenance and required-by origins,
-shared toolchain key, provider setup and verification, dependency plans, seeds,
-caches, native-build qualification, and conflicts without probing a runtime.
+shared toolchain key, dependency plans, seeds, caches, native-build
+qualification, and conflicts without probing a runtime. Generated
+Containerfiles are the sole rendering of image-build instructions; toolchain
+and dependency sections do not duplicate those commands.
 
 Planning fails before image construction for conflicting exact versions,
 platform disagreement, provider filesystem, command, environment, dependency,

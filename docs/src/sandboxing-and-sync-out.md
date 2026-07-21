@@ -86,12 +86,13 @@ dependency tree remains unchanged.
 
 Expanded static inspection reports the toolchain mode, effective foundation,
 platform, canonical exact provider images, toolchains and manager variants,
-provenance and required-by origins, reusable toolchain key, provider setup and
-verification, dependency plans, seeds, and
-caches without probing a runtime. Provider setup guarantees language tooling
-coexistence, not native compiler or library availability; cgo, native addons,
-Cargo build scripts, and similar builds must declare their compiler, headers,
-linker, and project libraries through `requires.system_packages`.
+provenance and required-by origins, reusable toolchain key, dependency plans,
+seeds, and caches without probing a runtime. Generated Containerfiles are the
+sole rendering of image-build instructions instead of repeating toolchain and
+dependency commands in separate fields. Provider setup guarantees language
+tooling coexistence, not native compiler or library availability; cgo, native
+addons, Cargo build scripts, and similar builds must declare their compiler,
+headers, linker, and project libraries through `requires.system_packages`.
 
 Execution uses one named, explicitly removed container per top-level
 lifecycle. Capable local Docker and Podman engines mount the canonical checkout

@@ -160,11 +160,14 @@ stages own the verified base packages (`ca-certificates`, `curl`, `tzdata`, and
 locked project dependencies. `requires.system_packages` remains the recipe's
 package contract; incidental packages in a provider image are not.
 Expanded static plans expose every generated Containerfile and mutable cache
-plan, toolchain mode, exact provider image, toolchain identity and origin, setup and verification,
-dependency plans, and seeds without contacting the runtime. Go `GOCACHE` and Rust workspace `target`
-use project-owned named volumes keyed by the canonical checkout, workspace,
-toolchain, platform, ABI, and UID/GID; compatible recipes in one checkout share
-them, but different worktrees never do. Execution then runs the complete
+plan, toolchain mode, exact provider image, toolchain identity and origin,
+dependency plans, and seeds without contacting the runtime. Generated
+Containerfiles are the sole rendering of image-build instructions rather than
+duplicating those commands in toolchain and dependency sections. Go `GOCACHE`
+and Rust workspace `target` use project-owned named volumes keyed by the
+canonical checkout, workspace, toolchain, platform, ABI, and UID/GID;
+compatible recipes in one checkout share them, but different worktrees never
+do. Execution then runs the complete
 lifecycle in one explicitly removed, read-only-root container against a private
 workspace at the canonical checkout path. Capable local Docker and Podman
 engines use the checkout as a read-only OverlayFS lower with a

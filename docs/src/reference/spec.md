@@ -1241,9 +1241,10 @@ preset, resolved typed arguments, leftover variadic args, computed vars,
 recipe-local env, expanded log settings, and expanded sync-out paths. For
 system mode it statically reports the toolchain mode, effective foundation,
 platform, canonical exact provider images, toolchains and variants, provenance
-and required-by origins, reusable toolchain key, provider setup and
-verification, plural dependencies and seeds,
-caches, and native-build qualification without probing a runtime.
+and required-by origins, reusable toolchain key, plural dependencies and seeds,
+caches, and native-build qualification without probing a runtime. Generated
+Containerfiles are the sole rendering of image-build instructions; toolchain
+and dependency sections do not duplicate those commands.
 
 `--check` validates the selected resolved recipe without running commands. It
 checks the same command forms that resolution would run, validates nested
