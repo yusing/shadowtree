@@ -1,6 +1,6 @@
 ---
 name: using-shadowtree
-description: Run and inspect existing Shadowtree recipes without changing .shadowtree.toml. Use when a project already exposes Shadowtree workflows and the task is to list, understand, validate, or execute a recipe; pass recipe arguments; inspect a resolved plan; run a one-off sandboxed command; select a profile; or request invocation-local sync-out. Do not use for designing or editing recipes.
+description: Run and inspect existing Shadowtree recipes without changing .shadowtree.toml. Use when a project already exposes Shadowtree workflows and the task is to list, understand, validate, or execute a recipe; pass recipe arguments; inspect a resolved plan; Not for designing or editing recipes.
 ---
 
 # Using Shadowtree
@@ -40,8 +40,8 @@ Follow these rules:
   values, for example `shadowtree --all test -- -run TestName`.
 - Pass positional values and `key=value` arguments directly after the recipe.
 - Omit `--` for ordinary recipe arguments and single-token passthrough flags.
-- Use `shadowtree exec -- <cmd> [args...]` only for a one-off command that is not
-  a recipe:
+- Use `shadowtree exec -- <cmd> [args...]` when a command require sandboxing
+  and is not a recipe:
 
   ```sh
   shadowtree exec -- go test ./...
@@ -65,7 +65,7 @@ Do not guess recipe names or arguments:
 ```sh
 shadowtree config
 shadowtree recipes
-shadowtree help <recipe>
+shadowtree help <recipe> [color=false]
 ```
 
 - Use `config` when the config path or selected profile is unknown.
