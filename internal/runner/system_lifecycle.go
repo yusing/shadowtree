@@ -23,18 +23,19 @@ const (
 )
 
 type systemLifecyclePlan struct {
-	Protocol        int
-	Resolved        recipe.Resolved
-	Recipes         map[string]recipe.Recipe
-	EnumSets        map[string]recipe.Command
-	ConfigEnv       map[string]string
-	SourceDir       string
-	Environment     map[string]string
-	DependencySeeds []systemsandbox.DependencySeed
-	Caches          []systemsandbox.CachePlan
-	SyncOut         []string
-	SyncOutAll      bool
-	ExportDir       string
+	Protocol            int
+	Resolved            recipe.Resolved
+	Recipes             map[string]recipe.Recipe
+	EnumSets            map[string]recipe.Command
+	ConfigEnv           map[string]string
+	SourceDir           string
+	Environment         map[string]string
+	ExcludedEnvironment []string
+	DependencySeeds     []systemsandbox.DependencySeed
+	Caches              []systemsandbox.CachePlan
+	SyncOut             []string
+	SyncOutAll          bool
+	ExportDir           string
 }
 
 type systemInvocation struct {
@@ -161,8 +162,9 @@ func createSystemInvocation(image systemsandbox.ImagePlan, options Options, stra
 	plan := systemLifecyclePlan{
 		Protocol: systemHelperProtocol, Resolved: options.Resolved, Recipes: options.Recipes,
 		EnumSets: options.EnumSets, ConfigEnv: options.ConfigEnv, SourceDir: options.SourceDir,
-		Environment: environment, DependencySeeds: image.DependencySeeds,
-		Caches: image.Caches, SyncOut: options.Resolved.SyncOut, SyncOutAll: options.SyncOutAll,
+		Environment: environment, ExcludedEnvironment: slices.Clone(image.ExcludedEnvironment),
+		DependencySeeds: image.DependencySeeds,
+		Caches:          image.Caches, SyncOut: options.Resolved.SyncOut, SyncOutAll: options.SyncOutAll,
 		ExportDir: "/opt/shadowtree/export",
 	}
 	planData, err := json.Marshal(plan)
@@ -422,8 +424,13 @@ func systemLifecycleEnvironment(host []string, resolved recipe.Resolved, caches 
 	return environment
 }
 
-func systemRuntimeEnvironment(runtime []string, planned map[string]string) []string {
+func systemRuntimeEnvironment(runtime []string, planned map[string]string, excluded []string) []string {
 	environment := envListMap(runtime)
+	// Remove defaults inherited only from the provider image. The planned host
+	// and recipe environment is applied afterward and intentionally wins.
+	for _, name := range excluded {
+		delete(environment, name)
+	}
 	for name := range environment {
 		if systemLocaleEnvironmentName(name) {
 			delete(environment, name)
@@ -519,7 +526,7 @@ func SystemHelperMain(ctx context.Context, args []string) int {
 			return 1
 		}
 	}
-	environment := systemRuntimeEnvironment(os.Environ(), plan.Environment)
+	environment := systemRuntimeEnvironment(os.Environ(), plan.Environment, plan.ExcludedEnvironment)
 	options := Options{
 		Resolved: plan.Resolved, Recipes: plan.Recipes, EnumSets: plan.EnumSets,
 		ConfigEnv: plan.ConfigEnv, SourceDir: plan.SourceDir, Stdin: os.Stdin,

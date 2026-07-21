@@ -19,11 +19,15 @@ and reports progress on stderr. Unusable candidates are diagnosed before the
 next candidate is tried. Detection creates no image, volume, workspace, or
 container, and system mode never falls back.
 
-System images use a deterministic lower-to-higher chain: the managed
-`debian:trixie-slim` foundation (or supported explicit foundation), base
-distribution verification plus `ca-certificates`, `curl`, `tzdata`, and `wget`,
-composed profile toolchains, normalized additional `requires.system_packages`,
-exact recipe tool packages, and plural locked project dependencies. Every
+System images use a deterministic lower-to-higher chain. One toolchain without
+an explicit foundation uses its exact provider image as the effective base and
+links that provider into Shadowtree's managed paths without copying its payload.
+Zero or multiple toolchains use `debian:trixie-slim`; an explicit pinned Debian
+or Ubuntu foundation always composes provider payloads onto that foundation.
+The remaining chain owns base distribution verification plus `ca-certificates`,
+`curl`, `tzdata`, and `wget`, normalized additional
+`requires.system_packages`, exact recipe tool packages, and plural locked
+project dependencies. Every
 immutable stage
 has a content key, canonical local tag, complete ownership labels, and its
 lower-stage key as an input. Existing tags are reused only when all expected
@@ -32,7 +36,8 @@ labels match; collisions fail without overwriting the image.
 Every profile referenced by the top-level lifecycle contributes a toolchain.
 Providers install into disjoint versioned paths below
 `/opt/shadowtree/toolchains` and publish declared commands through
-`/opt/shadowtree/bin`; root profile and reference order never choose a base.
+`/opt/shadowtree/bin`. A sole provider without an explicit foundation becomes
+the base; provider and reference order never choose among multiple providers.
 A recipe may set a literal non-`latest` override only in system mode. The
 override must be pinned Debian or Ubuntu so Shadowtree can guarantee the base
 packages:
@@ -48,6 +53,10 @@ packages:
 - Rust uses the exact resolved Rust release and verifies any declared host
   qualifier against the selected Linux platform.
 - A recipe without a profile still uses the managed Trixie foundation.
+
+`requires.system_packages` remains the recipe's package contract. A direct
+provider foundation may contain additional packages, but recipes must not rely
+on those incidental contents.
 
 ```toml
 [recipes.build]
@@ -75,9 +84,10 @@ the mount so dependency setup creates a fresh upper-layer target instead of
 recursively deleting stale or differently owned host dependencies. The lower
 dependency tree remains unchanged.
 
-Expanded static inspection reports the foundation, platform, canonical exact
-toolchains and manager variants, provenance and required-by origins, reusable
-toolchain key, provider setup and verification, dependency plans, seeds, and
+Expanded static inspection reports the toolchain mode, effective foundation,
+platform, canonical exact provider images, toolchains and manager variants,
+provenance and required-by origins, reusable toolchain key, provider setup and
+verification, dependency plans, seeds, and
 caches without probing a runtime. Provider setup guarantees language tooling
 coexistence, not native compiler or library availability; cgo, native addons,
 Cargo build scripts, and similar builds must declare their compiler, headers,

@@ -3156,7 +3156,7 @@ func TestSystemSandboxStaticPlansDoNotProbeRuntime(t *testing.T) {
 			if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: t.TempDir(), PrintOnly: true, PrintExpanded: expanded, Stdout: &stdout}); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: debian:trixie-slim\n", "platform: linux/", "toolchain_key:", "toolchain[0].kind: go\n", "toolchain[0].identity: 1.26.4\n", "toolchain[0].origin[0].required_by:", "native_builds:", "image_stage.base.key:", "image_stage.toolchains.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
+			for _, want := range []string{"sandboxed: system\n", "runtime: <not probed>\n", "base_image: golang:1.26.4-trixie\n", "platform: linux/", "toolchain_mode: provider-root\n", "toolchain_key:", "toolchain[0].kind: go\n", "toolchain[0].identity: 1.26.4\n", "toolchain[0].provider_image: golang:1.26.4-trixie\n", "toolchain[0].origin[0].required_by:", "native_builds:", "image_stage.base.key:", "image_stage.toolchains.key:", "image_stage.dependencies.tag:", "final_image: shadowtree.local/"} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Fatalf("plan missing %q:\n%s", want, stdout.String())
 				}
@@ -3285,7 +3285,7 @@ esac`)
 	if err == nil || !strings.Contains(err.Error(), "system image build") {
 		t.Fatalf("Run() error = %v, want image-build boundary", err)
 	}
-	for _, want := range []string{"Image ", "Failed"} {
+	for _, want := range []string{"Detect container runtime", "Verify foundation image", "Failed"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
 		}
@@ -3410,7 +3410,7 @@ fi`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, status := range []string{"Image ", "Setup toolchains", "Setup system packages", "Setup recipe packages", "Setup dependencies", "Setup build cache", "Setup workspace"} {
+	for _, status := range []string{"Detect container runtime", "Build foundation image", "Build toolchain image", "Build system package image", "Build recipe package image", "Build dependency image", "Publish recipe image", "Setup build cache", "Setup workspace"} {
 		if !strings.Contains(stderr.String(), status) {
 			t.Fatalf("stderr missing status %q:\n%s", status, stderr.String())
 		}

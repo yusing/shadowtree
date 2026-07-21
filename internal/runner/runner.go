@@ -446,7 +446,7 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 		statusOutput = io.Discard
 	}
 	status := newSystemProgress(statusOutput)
-	if err := status.Start("Image " + plan.BaseImage); err != nil {
+	if err := status.Start("Detect container runtime"); err != nil {
 		return errors.Join(fmt.Errorf("render system progress: %w", err), status.Fail())
 	}
 	fail := func(runErr error) error {
@@ -463,8 +463,8 @@ func prepareSystemImages(ctx context.Context, options Options, progress io.Write
 	}
 	if err := systemsandbox.BuildImages(ctx, runtimeName, plan, systemsandbox.ImageBuildOptions{
 		Verbose: verbose,
-		Stage: func(stage systemsandbox.ImageStage) error {
-			return status.Stage(plan.BaseImage, stage)
+		Progress: func(event systemsandbox.ImageBuildProgress) error {
+			return status.Image(plan.BaseImage, event)
 		},
 	}); err != nil {
 		runErr := fail(fmt.Errorf("recipe %q system image build: %w", resolved.Name, err))
@@ -543,6 +543,7 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 	}
 	fmt.Fprintf(w, "base_image: %s\n", plan.BaseImage)
 	fmt.Fprintf(w, "platform: %s\n", plan.Platform)
+	fmt.Fprintf(w, "toolchain_mode: %s\n", plan.ToolchainMode)
 	for _, stage := range plan.Stages {
 		if stage.Name == "toolchains" {
 			fmt.Fprintf(w, "toolchain_key: %s\n", stage.Key)
@@ -554,6 +555,7 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		prefix := fmt.Sprintf("toolchain[%d]", index)
 		fmt.Fprintf(w, "%s.kind: %s\n", prefix, toolchain.Kind)
 		fmt.Fprintf(w, "%s.identity: %s\n", prefix, toolchain.Identity)
+		fmt.Fprintf(w, "%s.provider_image: %s\n", prefix, toolchain.ProviderImage)
 		if toolchain.Variant != "" {
 			fmt.Fprintf(w, "%s.variant: %s\n", prefix, toolchain.Variant)
 		}
@@ -568,7 +570,11 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 		}
 		if expanded {
 			fmt.Fprintf(w, "%s.contract: %s\n", prefix, toolchain.ContractVersion)
-			for setupIndex, setup := range toolchain.Setup {
+			setupCommands := toolchain.Setup
+			if plan.ToolchainMode == systemsandbox.ToolchainModeProviderRoot {
+				setupCommands = toolchain.RootSetup
+			}
+			for setupIndex, setup := range setupCommands {
 				fmt.Fprintf(w, "%s.setup[%d]: %s\n", prefix, setupIndex, setup)
 			}
 			for verifyIndex, verify := range toolchain.Verification {
@@ -591,7 +597,7 @@ func printSystemImagePlan(ctx context.Context, w io.Writer, options Options, exp
 			}
 		}
 	}
-	fmt.Fprintln(w, "native_builds: compiler, headers, linker, and project libraries require explicit system_packages")
+	fmt.Fprintln(w, "native_builds: declare compiler, headers, linker, and project libraries through explicit system_packages; provider image contents are not a requirements contract")
 	for _, stage := range plan.Stages {
 		fmt.Fprintf(w, "image_stage.%s.key: %s\n", stage.Name, stage.Key)
 		fmt.Fprintf(w, "image_stage.%s.tag: %s\n", stage.Name, stage.Tag)

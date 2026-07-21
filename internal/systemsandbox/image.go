@@ -25,15 +25,26 @@ import (
 
 // ImagePlan is the complete inspectable immutable-image plan for one recipe.
 type ImagePlan struct {
-	BaseImage       string
-	Platform        string
-	Stages          []ImageStage
-	FinalTag        string
-	DependencySeeds []DependencySeed
-	Caches          []CachePlan
-	Toolchains      []ResolvedToolchain
-	Dependencies    []DependencyPlan
+	BaseImage           string
+	Platform            string
+	ToolchainMode       ToolchainMode
+	Stages              []ImageStage
+	FinalTag            string
+	DependencySeeds     []DependencySeed
+	Caches              []CachePlan
+	Toolchains          []ResolvedToolchain
+	Dependencies        []DependencyPlan
+	ExcludedEnvironment []string
 }
+
+// ToolchainMode identifies how resolved providers enter the system image.
+type ToolchainMode string
+
+const (
+	ToolchainModeNone         ToolchainMode = "none"
+	ToolchainModeProviderRoot ToolchainMode = "provider-root"
+	ToolchainModeComposed     ToolchainMode = "composed"
+)
 
 // DependencySeed describes image-owned Node/Bun dependency state copied into
 // the private workspace before the canonical project bind is used.
@@ -57,11 +68,30 @@ type ImageStage struct {
 	Metadata      map[string]string
 }
 
-// ImageBuildOptions separates verbose orchestration logs from semantic stage
+// ImageBuildOperation identifies one externally waiting image operation.
+type ImageBuildOperation string
+
+const (
+	ImageBuildStageLookup ImageBuildOperation = "stage-lookup"
+	ImageBuildStageBuild  ImageBuildOperation = "stage-build"
+	ImageBuildStageVerify ImageBuildOperation = "stage-verify"
+	ImageBuildFinalLookup ImageBuildOperation = "final-lookup"
+	ImageBuildFinalTag    ImageBuildOperation = "final-tag"
+	ImageBuildFinalVerify ImageBuildOperation = "final-verify"
+)
+
+// ImageBuildProgress describes the operation about to block on the runtime.
+// StageName is empty for recipe-scoped final-image operations.
+type ImageBuildProgress struct {
+	Operation ImageBuildOperation
+	StageName string
+}
+
+// ImageBuildOptions separates verbose orchestration logs from operation-level
 // progress. Container-runtime build output is always buffered by BuildImages.
 type ImageBuildOptions struct {
-	Verbose io.Writer
-	Stage   func(ImageStage) error
+	Verbose  io.Writer
+	Progress func(ImageBuildProgress) error
 }
 
 type imageBuildError struct {
@@ -96,10 +126,8 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 		verbose = io.Discard
 	}
 	for _, stage := range plan.Stages {
-		if options.Stage != nil {
-			if err := options.Stage(stage); err != nil {
-				return fmt.Errorf("report image stage %s: %w", stage.Name, err)
-			}
+		if err := reportImageBuildProgress(options, ImageBuildStageLookup, stage.Name); err != nil {
+			return err
 		}
 		fmt.Fprintf(verbose, "shadowtree: image stage %s lookup\n", stage.Name)
 		labels, exists, err := inspectImageLabels(ctx, runtime, stage.Tag, run)
@@ -113,9 +141,15 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 			fmt.Fprintf(verbose, "shadowtree: image stage %s reused\n", stage.Name)
 			continue
 		}
+		if err := reportImageBuildProgress(options, ImageBuildStageBuild, stage.Name); err != nil {
+			return err
+		}
 		fmt.Fprintf(verbose, "shadowtree: image stage %s build\n", stage.Name)
 		if err := buildStage(ctx, runtime, stage, build); err != nil {
 			return fmt.Errorf("runtime %s stage %s build: %w", runtime, stage.Name, err)
+		}
+		if err := reportImageBuildProgress(options, ImageBuildStageVerify, stage.Name); err != nil {
+			return err
 		}
 		labels, exists, err = inspectImageLabels(ctx, runtime, stage.Tag, run)
 		if err != nil || !exists || !labelsMatch(labels, stage.Labels) {
@@ -124,6 +158,9 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 	}
 	if len(plan.Stages) == 0 {
 		return errors.New("image plan has no stages")
+	}
+	if err := reportImageBuildProgress(options, ImageBuildFinalLookup, ""); err != nil {
+		return err
 	}
 	labels, exists, err := inspectImageLabels(ctx, runtime, plan.FinalTag, run)
 	if err != nil {
@@ -136,14 +173,30 @@ func buildImagesWith(ctx context.Context, runtime RuntimeName, plan ImagePlan, o
 		}
 		return nil
 	}
+	if err := reportImageBuildProgress(options, ImageBuildFinalTag, ""); err != nil {
+		return err
+	}
 	fmt.Fprintln(verbose, "shadowtree: publishing recipe image alias")
 	output, err := run(ctx, string(runtime), "image", "tag", plan.Stages[len(plan.Stages)-1].Tag, plan.FinalTag)
 	if err != nil {
 		return fmt.Errorf("runtime %s publish final tag: %s", runtime, commandFailure(err, output))
 	}
+	if err := reportImageBuildProgress(options, ImageBuildFinalVerify, ""); err != nil {
+		return err
+	}
 	labels, exists, err = inspectImageLabels(ctx, runtime, plan.FinalTag, run)
 	if err != nil || !exists || !labelsMatch(labels, want) {
 		return fmt.Errorf("runtime %s final tag %s did not resolve to the requested dependency image", runtime, plan.FinalTag)
+	}
+	return nil
+}
+
+func reportImageBuildProgress(options ImageBuildOptions, operation ImageBuildOperation, stageName string) error {
+	if options.Progress == nil {
+		return nil
+	}
+	if err := options.Progress(ImageBuildProgress{Operation: operation, StageName: stageName}); err != nil {
+		return fmt.Errorf("report image operation %s for stage %q: %w", operation, stageName, err)
 	}
 	return nil
 }

@@ -21,6 +21,14 @@ func TestPlanCompositionCombinesEverySupportedProfileOnTrixie(t *testing.T) {
 	if plan.BaseImage != managedFoundation {
 		t.Fatalf("foundation = %q", plan.BaseImage)
 	}
+	if plan.ToolchainMode != ToolchainModeComposed {
+		t.Fatalf("toolchain mode = %q, want composed", plan.ToolchainMode)
+	}
+	if !strings.Contains(plan.Stages[1].Containerfile, "COPY --from=golang:") ||
+		!strings.Contains(plan.Stages[1].Containerfile, "COPY --from="+recipe.DefaultNodeImage) ||
+		!strings.Contains(plan.Stages[1].Containerfile, "COPY --from=rust:") {
+		t.Fatalf("multi-provider toolchain stage does not compose provider payloads:\n%s", plan.Stages[1].Containerfile)
+	}
 	kinds := make([]string, 0, len(plan.Toolchains))
 	for _, toolchain := range plan.Toolchains {
 		kinds = append(kinds, toolchain.Kind)
@@ -218,6 +226,24 @@ func TestPlanCompositionRejectsUnsupportedExplicitFoundation(t *testing.T) {
 	}
 }
 
+func TestPlanCompositionKeepsExplicitFoundationAndComposesSingleProvider(t *testing.T) {
+	root := compositionProject(t)
+	request := compositionRequest(t, root, []string{recipe.GoProfile})
+	request.Contributions[0].Resolved.Recipe.System = &recipe.SystemConfig{BaseImage: "ubuntu:24.04"}
+	request.Root.Recipe.System = request.Contributions[0].Resolved.Recipe.System
+
+	plan, err := PlanComposition(request, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.BaseImage != "ubuntu:24.04" || plan.ToolchainMode != ToolchainModeComposed {
+		t.Fatalf("explicit foundation plan = base %q mode %q", plan.BaseImage, plan.ToolchainMode)
+	}
+	if !strings.Contains(plan.Stages[1].Containerfile, "COPY --from=golang:") {
+		t.Fatalf("explicit foundation did not compose Go payload:\n%s", plan.Stages[1].Containerfile)
+	}
+}
+
 func TestSupportedCompositionFoundationNormalizesPinnedReferences(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	for image, want := range map[string]bool{
@@ -293,7 +319,7 @@ func TestPlanCompositionKeepsCorepackPayloadInManagedEnvironment(t *testing.T) {
 		t.Fatalf("Corepack provider = %#v", toolchain)
 	}
 	containerfile := plan.Stages[1].Containerfile
-	pathIndex := strings.Index(containerfile, "ENV PATH=/opt/shadowtree/bin:$PATH")
+	pathIndex := strings.Index(containerfile, "ENV PATH=/opt/shadowtree/bin:")
 	corepackIndex := strings.Index(containerfile, "/opt/shadowtree/bin/corepack enable")
 	if pathIndex < 0 || corepackIndex < 0 || pathIndex > corepackIndex {
 		t.Fatalf("managed PATH is not published before Corepack setup:\n%s", containerfile)
@@ -317,11 +343,11 @@ func TestToolchainStageCommandsRejectsInvalidProviderContracts(t *testing.T) {
 			Environment: map[string]string{"BAD NAME": "value"},
 		},
 		"unknown contract": {
-			Kind: "future", ContractVersion: "toolchain-provider-v2",
+			Kind: "future", ContractVersion: "toolchain-provider-v3",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := toolchainStageCommands([]ResolvedToolchain{toolchain}); err == nil {
+			if _, _, err := toolchainStageCommands([]ResolvedToolchain{toolchain}, ToolchainModeComposed); err == nil {
 				t.Fatalf("toolchainStageCommands accepted %#v", toolchain)
 			}
 		})
@@ -333,7 +359,7 @@ func TestToolchainStageCommandsAllowsUnrelatedEnvironmentNames(t *testing.T) {
 		Kind:            "future",
 		ContractVersion: toolchainContractVersion,
 		Environment:     map[string]string{"PATH_SUFFIX": "/future/bin", "PYTHONPATH": "/future/lib"},
-	}})
+	}}, ToolchainModeComposed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +368,23 @@ func TestToolchainStageCommandsAllowsUnrelatedEnvironmentNames(t *testing.T) {
 		if !strings.Contains(containerfile, environment) {
 			t.Fatalf("toolchain commands omit %q:\n%s", environment, containerfile)
 		}
+	}
+}
+
+func TestToolchainStageCommandsRejectsMalformedProviderRootContracts(t *testing.T) {
+	for name, toolchains := range map[string][]ResolvedToolchain{
+		"missing provider":   {{Kind: "go", ContractVersion: toolchainContractVersion, RootSetup: []string{"RUN true"}}},
+		"missing root setup": {{Kind: "go", ContractVersion: toolchainContractVersion, ProviderImage: "golang:1.26.4-trixie"}},
+		"multiple providers": {
+			{Kind: "go", ContractVersion: toolchainContractVersion, ProviderImage: "golang:1.26.4-trixie", RootSetup: []string{"RUN true"}},
+			{Kind: "rust", ContractVersion: toolchainContractVersion, ProviderImage: "rust:1.96.0-trixie", RootSetup: []string{"RUN true"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := toolchainStageCommands(toolchains, ToolchainModeProviderRoot); err == nil {
+				t.Fatalf("toolchainStageCommands accepted %#v", toolchains)
+			}
+		})
 	}
 }
 

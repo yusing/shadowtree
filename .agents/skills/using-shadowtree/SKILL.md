@@ -101,14 +101,17 @@ interpreted as proof that execution capability exists. Execution and `--check`
 probe Docker, Podman, then nerdctl; read stderr for candidate diagnostics and
 the selected runtime.
 
-For a system recipe, expanded plans expose the managed or explicit foundation,
-platform, canonical exact toolchains and origins, shared toolchain key,
-provider setup and verification, five immutable stages, plural dependencies
+For a system recipe, expanded plans expose the toolchain mode, effective
+provider/managed/explicit foundation, platform, canonical exact toolchains and
+origins, shared toolchain key, provider setup and verification, five immutable stages, plural dependencies
 and seeds, context hashes, mutable cache identities and mounts, and sync-out
 intersections without building. Treat
 `requires.system_packages` as image inputs, not host package installation
-instructions. The base stage already provides `ca-certificates`, `curl`,
-`tzdata`, and `wget`.
+instructions. One toolchain without an explicit foundation uses its provider
+image directly; zero or multiple toolchains use the managed foundation, and an
+explicit foundation always composes provider payloads. Incidental provider-image
+packages are not a recipe requirements contract. The base stage provides
+`ca-certificates`, `curl`, `tzdata`, and `wget`.
 
 Execution runs the complete lifecycle in one ephemeral container against a
 private workspace. Capable local Docker and Podman use a read-only source lower

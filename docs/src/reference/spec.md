@@ -22,10 +22,14 @@ progress on stderr, continue after an unusable installed candidate, and aggregat
 candidate failures when none is usable.
 
 System images form five deterministic immutable stages above a pinned external
-profile base: verified Debian/Ubuntu foundation plus preinstalled
-`ca-certificates`, `curl`, `tzdata`, and `wget`, exact tooling, normalized
-additional system packages, exact recipe packages, and locked project
-dependencies. Tags and full
+base. Exactly one toolchain without an explicit foundation uses its exact
+provider image as that base and links the provider into managed paths without a
+payload copy. Zero or multiple toolchains use `debian:trixie-slim`; an explicit
+pinned Debian or Ubuntu foundation always uses composed provider copies. The
+remaining stages own verified Debian/Ubuntu foundation behavior plus
+preinstalled `ca-certificates`, `curl`, `tzdata`, and `wget`, exact tooling,
+normalized additional system packages, exact recipe packages, and locked
+project dependencies. Tags and full
 ownership/key labels are validated before reuse, and collisions fail without
 overwrite. `system.base_image` is a literal non-`latest` Debian or Ubuntu
 override valid only in system mode. Locked preparation uses manifest-only
@@ -168,11 +172,13 @@ shadowtree __complete zsh <words...>
 --version           print the version
 ```
 
-System-container preparation reports concise semantic stages through image,
-toolchain, package, dependency, build-cache, and private-workspace setup.
+System-container preparation reports the operation currently waiting: runtime
+detection; lookup, build, and verification for each image stage; final recipe
+image lookup, publication, and verification; build-cache setup; and
+private-workspace setup.
 Progress remains active through container creation and completes immediately
 before the attached recipe starts. Interactive stderr uses one transient
-progress line; redirected stderr uses newline-delimited stage names. Runtime
+progress line; redirected stderr uses newline-delimited operation names. Runtime
 build output is buffered and omitted after success. On failure, stderr receives
 a bounded diagnostic tail with an explicit marker if earlier output was
 discarded. Detailed runtime detection, cache, and container lifecycle messages
@@ -1233,9 +1239,10 @@ The plan includes these fields when present or applicable:
 expanded script bodies for `pre`, `cmd`, `post`, and `for_each`, the selected
 preset, resolved typed arguments, leftover variadic args, computed vars,
 recipe-local env, expanded log settings, and expanded sync-out paths. For
-system mode it statically reports the foundation, platform, canonical exact
-toolchains and variants, provenance and required-by origins, reusable
-toolchain key, provider setup and verification, plural dependencies and seeds,
+system mode it statically reports the toolchain mode, effective foundation,
+platform, canonical exact provider images, toolchains and variants, provenance
+and required-by origins, reusable toolchain key, provider setup and
+verification, plural dependencies and seeds,
 caches, and native-build qualification without probing a runtime.
 
 `--check` validates the selected resolved recipe without running commands. It

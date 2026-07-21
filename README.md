@@ -150,14 +150,17 @@ progress on stderr, and creates no runtime or workspace state. It never falls
 back to workspace or host execution.
 
 System mode composes every profile contributed by the resolved recipe-reference
-graph on the managed `debian:trixie-slim` foundation. Five immutable
-content-keyed stages own the verified base packages (`ca-certificates`, `curl`,
-`tzdata`, and `wget`), exact provider toolchains, system
-packages, recipe tools, and plural locked project dependencies. A composed
-`system.base_image` override must be a pinned Debian or Ubuntu reference;
-`requires.system_packages` selects normalized distribution packages.
+graph. With exactly one toolchain and no `system.base_image`, its exact provider
+image is the effective foundation and the provider is linked into the managed
+command paths without copying its payload. Zero or multiple toolchains use the
+managed `debian:trixie-slim` foundation; an explicit pinned Debian or Ubuntu
+foundation always uses the composed-provider path. Five immutable content-keyed
+stages own the verified base packages (`ca-certificates`, `curl`, `tzdata`, and
+`wget`), exact provider toolchains, system packages, recipe tools, and plural
+locked project dependencies. `requires.system_packages` remains the recipe's
+package contract; incidental packages in a provider image are not.
 Expanded static plans expose every generated Containerfile and mutable cache
-plan, exact toolchain identity and origin, provider setup and verification,
+plan, toolchain mode, exact provider image, toolchain identity and origin, setup and verification,
 dependency plans, and seeds without contacting the runtime. Go `GOCACHE` and Rust workspace `target`
 use project-owned named volumes keyed by the canonical checkout, workspace,
 toolchain, platform, ABI, and UID/GID; compatible recipes in one checkout share

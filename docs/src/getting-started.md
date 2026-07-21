@@ -78,8 +78,9 @@ shadowtree --check --shell test
 shadowtree --verbose build
 ```
 
-System-container setup normally prints concise image, toolchain, package,
-dependency, build-cache, and private-workspace progress. Progress remains active
+System-container setup reports the exact waiting operation: runtime detection;
+image lookup, build, and verification; final-image lookup, publication, and
+verification; then build-cache and private-workspace setup. Progress remains active
 through container creation, until the attached recipe is ready to start.
 `--verbose` additionally prints detailed runtime setup and compact stage
 boundaries such as `== cmd: @build ==` before commands run. Multiline scripts

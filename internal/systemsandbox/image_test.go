@@ -28,6 +28,12 @@ func TestPlanCompositionBuildsFiveOrderedImmutableStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if plan.ToolchainMode != ToolchainModeProviderRoot || plan.BaseImage != "golang:1.26.4-trixie" {
+		t.Fatalf("provider-root plan = mode %q base %q", plan.ToolchainMode, plan.BaseImage)
+	}
+	if strings.Contains(plan.Stages[1].Containerfile, "COPY --from=") {
+		t.Fatalf("single provider copied its toolchain payload:\n%s", plan.Stages[1].Containerfile)
+	}
 	wantNames := []string{"base", "toolchains", "system-packages", "recipe-packages", "dependencies"}
 	if len(plan.Stages) != len(wantNames) {
 		t.Fatalf("stages = %d, want %d", len(plan.Stages), len(wantNames))
@@ -316,17 +322,18 @@ func TestPlanCompositionSelectsExactProfileBasesAndTooling(t *testing.T) {
 		name         string
 		profile      string
 		files        map[string]string
+		wantBase     string
 		wantTool     string
 		wantPlatform string
 	}{
-		{name: "none"},
-		{name: "go", profile: recipe.GoProfile, files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.26\n"}, wantTool: "go1.26.4"},
-		{name: "npm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{}`}, wantTool: "npm --version"},
-		{name: "pnpm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"pnpm@10.12.1"}`}, wantTool: "pnpm@10.12.1"},
-		{name: "yarn", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"yarn@4.9.2"}`}, wantTool: "yarn@4.9.2"},
-		{name: "bun", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"bun@1.2.17"}`}, wantTool: "bun --version"},
-		{name: "rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"}, wantTool: "release: 1.96.0"},
-		{name: "host-qualified rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n", "rust-toolchain": "1.96.0-x86_64-unknown-linux-gnu\n"}, wantTool: "host: x86_64-unknown-linux-gnu", wantPlatform: "linux/amd64"},
+		{name: "none", wantBase: managedFoundation},
+		{name: "go", profile: recipe.GoProfile, files: map[string]string{"go.mod": "module example.com/app\n\ngo 1.26\n"}, wantBase: "golang:1.26.4-trixie", wantTool: "go1.26.4"},
+		{name: "npm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{}`}, wantBase: recipe.DefaultNodeImage, wantTool: "npm --version"},
+		{name: "pnpm", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"pnpm@10.12.1"}`}, wantBase: recipe.DefaultNodeImage, wantTool: "pnpm@10.12.1"},
+		{name: "yarn", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"yarn@4.9.2"}`}, wantBase: recipe.DefaultNodeImage, wantTool: "yarn@4.9.2"},
+		{name: "bun", profile: recipe.NodeProfile, files: map[string]string{"package.json": `{"packageManager":"bun@1.2.17"}`}, wantBase: "oven/bun:1.2.17-slim", wantTool: "bun --version"},
+		{name: "rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"}, wantBase: "rust:1.96.0-trixie", wantTool: "release: 1.96.0"},
+		{name: "host-qualified rust", profile: recipe.RustProfile, files: map[string]string{"Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\n", "rust-toolchain": "1.96.0-x86_64-unknown-linux-gnu\n"}, wantBase: "rust:1.96.0-trixie", wantTool: "host: x86_64-unknown-linux-gnu", wantPlatform: "linux/amd64"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -338,11 +345,21 @@ func TestPlanCompositionSelectsExactProfileBasesAndTooling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.BaseImage != managedFoundation {
-				t.Fatalf("base = %q, want %q", plan.BaseImage, managedFoundation)
+			if plan.BaseImage != tc.wantBase {
+				t.Fatalf("base = %q, want %q", plan.BaseImage, tc.wantBase)
 			}
 			if tc.wantTool != "" && !strings.Contains(plan.Stages[1].Containerfile, tc.wantTool) {
 				t.Fatalf("toolchains stage does not contain %q:\n%s", tc.wantTool, plan.Stages[1].Containerfile)
+			}
+			if tc.wantTool != "" && strings.Contains(plan.Stages[1].Containerfile, "COPY --from=") {
+				t.Fatalf("single toolchain copied its provider payload:\n%s", plan.Stages[1].Containerfile)
+			}
+			wantMode := ToolchainModeProviderRoot
+			if tc.profile == "" {
+				wantMode = ToolchainModeNone
+			}
+			if plan.ToolchainMode != wantMode {
+				t.Fatalf("toolchain mode = %q, want %q", plan.ToolchainMode, wantMode)
 			}
 			wantPlatform := tc.wantPlatform
 			if wantPlatform == "" {
@@ -462,6 +479,96 @@ func TestBuildImagesBuildsMissingStagesAndPublishesFinalAlias(t *testing.T) {
 	}
 	if images[plan.FinalTag]["shadowtree.key"] != plan.Stages[4].Key {
 		t.Fatalf("final labels = %#v", images[plan.FinalTag])
+	}
+}
+
+func TestBuildImagesReportsEachRuntimeWaitAtItsBoundary(t *testing.T) {
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	images := map[string]map[string]string{}
+	var events []ImageBuildProgress
+	run := imageRuntimeFake(images, nil, nil, nil)
+	err = buildImagesWith(t.Context(), Docker, plan, ImageBuildOptions{
+		Progress: func(event ImageBuildProgress) error {
+			events = append(events, event)
+			return nil
+		},
+	}, run, bufferedTestBuildRunner(run))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCount := len(plan.Stages)*3 + 3
+	if len(events) != wantCount {
+		t.Fatalf("progress events = %#v, want %d operations", events, wantCount)
+	}
+	for index, stage := range plan.Stages {
+		for offset, operation := range []ImageBuildOperation{ImageBuildStageLookup, ImageBuildStageBuild, ImageBuildStageVerify} {
+			event := events[index*3+offset]
+			if event.Operation != operation || event.StageName != stage.Name {
+				t.Fatalf("event[%d] = %#v, want %s for %s", index*3+offset, event, operation, stage.Name)
+			}
+		}
+	}
+	for index, operation := range []ImageBuildOperation{ImageBuildFinalLookup, ImageBuildFinalTag, ImageBuildFinalVerify} {
+		event := events[len(plan.Stages)*3+index]
+		if event.Operation != operation || event.StageName != "" {
+			t.Fatalf("final event[%d] = %#v, want %s", index, event, operation)
+		}
+	}
+}
+
+func TestBuildImagesReusedImagesOnlyReportLookups(t *testing.T) {
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	images := map[string]map[string]string{plan.FinalTag: plan.Stages[len(plan.Stages)-1].Labels}
+	for _, stage := range plan.Stages {
+		images[stage.Tag] = stage.Labels
+	}
+	var events []ImageBuildProgress
+	run := imageRuntimeFake(images, nil, nil, nil)
+	err = buildImagesWith(t.Context(), Docker, plan, ImageBuildOptions{
+		Progress: func(event ImageBuildProgress) error {
+			events = append(events, event)
+			return nil
+		},
+	}, run, bufferedTestBuildRunner(run))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != len(plan.Stages)+1 {
+		t.Fatalf("progress events = %#v, want stage and final lookups only", events)
+	}
+	for index, stage := range plan.Stages {
+		if events[index].Operation != ImageBuildStageLookup || events[index].StageName != stage.Name {
+			t.Fatalf("event[%d] = %#v, want lookup for %s", index, events[index], stage.Name)
+		}
+	}
+	if events[len(events)-1].Operation != ImageBuildFinalLookup {
+		t.Fatalf("final event = %#v, want lookup", events[len(events)-1])
+	}
+}
+
+func TestBuildImagesPropagatesProgressFailureBeforeRuntimeWait(t *testing.T) {
+	plan, err := PlanComposition(testImageRequest(systemImageRecipe(t, "", recipe.Requirements{})), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("render failed")
+	runtimeCalled := false
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		runtimeCalled = true
+		return nil, nil
+	}
+	err = buildImagesWith(t.Context(), Docker, plan, ImageBuildOptions{Progress: func(ImageBuildProgress) error { return want }}, run, bufferedTestBuildRunner(run))
+	if !errors.Is(err, want) {
+		t.Fatalf("BuildImages error = %v, want %v", err, want)
+	}
+	if runtimeCalled {
+		t.Fatal("runtime was called after progress rendering failed")
 	}
 }
 

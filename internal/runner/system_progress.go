@@ -85,8 +85,8 @@ func (progress *systemProgress) Start(label string) error {
 	return progress.err
 }
 
-func (progress *systemProgress) Stage(baseImage string, stage systemsandbox.ImageStage) error {
-	return progress.Start(imageStageProgressLabel(baseImage, stage.Name))
+func (progress *systemProgress) Image(baseImage string, event systemsandbox.ImageBuildProgress) error {
+	return progress.Start(imageBuildProgressLabel(baseImage, event))
 }
 
 func (progress *systemProgress) Succeed() error {
@@ -131,20 +131,43 @@ func (progress *systemProgress) renderLocked(icon, status string) {
 	_, progress.err = fmt.Fprintf(progress.output, "\r\x1b[2K %s%s  %s  %s", icon, progress.current, status, elapsed)
 }
 
-func imageStageProgressLabel(baseImage, stage string) string {
+func imageBuildProgressLabel(baseImage string, event systemsandbox.ImageBuildProgress) string {
+	if event.Operation == systemsandbox.ImageBuildFinalLookup {
+		return "Check recipe image"
+	}
+	if event.Operation == systemsandbox.ImageBuildFinalTag {
+		return "Publish recipe image"
+	}
+	if event.Operation == systemsandbox.ImageBuildFinalVerify {
+		return "Verify recipe image"
+	}
+	stage := imageStageProgressSubject(baseImage, event.StageName)
+	switch event.Operation {
+	case systemsandbox.ImageBuildStageLookup:
+		return "Check " + stage
+	case systemsandbox.ImageBuildStageBuild:
+		return "Build " + stage
+	case systemsandbox.ImageBuildStageVerify:
+		return "Verify " + stage
+	default:
+		return "Run image operation " + string(event.Operation) + " for " + stage
+	}
+}
+
+func imageStageProgressSubject(baseImage, stage string) string {
 	switch stage {
 	case "base":
-		return "Image " + baseImage
+		return "foundation image " + baseImage
 	case "toolchains":
-		return "Setup toolchains"
+		return "toolchain image"
 	case "system-packages":
-		return "Setup system packages"
+		return "system package image"
 	case "recipe-packages":
-		return "Setup recipe packages"
+		return "recipe package image"
 	case "dependencies":
-		return "Setup dependencies"
+		return "dependency image"
 	default:
-		return "Setup image stage " + stage
+		return "image stage " + stage
 	}
 }
 

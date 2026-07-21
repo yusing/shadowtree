@@ -189,6 +189,7 @@ func TestSystemLifecycleEnvironmentUsesDeterministicLocaleUnlessExplicitlyOverri
 		"LC_ALL=en_US.UTF-8",
 		"LC_TIME=de_DE.UTF-8",
 		"LC_FUTURE=malformed locale value",
+		"GOTOOLCHAIN=host-setting",
 		"LOCAL_SETTING=preserved",
 		"XLC_ALL=preserved",
 	}
@@ -234,11 +235,13 @@ func TestSystemLifecycleEnvironmentUsesDeterministicLocaleUnlessExplicitlyOverri
 	runtime := []string{
 		"PATH=/opt/shadowtree/bin:/usr/bin",
 		"COREPACK_HOME=/opt/shadowtree/corepack",
+		"GOLANG_VERSION=1.26.4",
+		"GOTOOLCHAIN=local",
 		"LANG=base-image-locale",
 		"LC_ALL=base-image-locale",
 		"LC_FUTURE=base-image-locale",
 	}
-	merged := envListMap(systemRuntimeEnvironment(runtime, environment))
+	merged := envListMap(systemRuntimeEnvironment(runtime, environment, []string{"GOLANG_VERSION", "GOTOOLCHAIN"}))
 	for name, want := range map[string]string{
 		"PATH":          "/opt/shadowtree/bin:/usr/bin",
 		"COREPACK_HOME": "/opt/shadowtree/corepack",
@@ -246,12 +249,13 @@ func TestSystemLifecycleEnvironmentUsesDeterministicLocaleUnlessExplicitlyOverri
 		"LC_TIME":       "fr_FR.UTF-8",
 		"LC_NUMERIC":    "ar_EG.UTF-8",
 		"GOCACHE":       "/opt/shadowtree/cache/go-build",
+		"GOTOOLCHAIN":   "host-setting",
 	} {
 		if got := merged[name]; got != want {
 			t.Errorf("runtime %s = %q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"LC_ALL", "LC_FUTURE"} {
+	for _, name := range []string{"GOLANG_VERSION", "LC_ALL", "LC_FUTURE"} {
 		if _, ok := merged[name]; ok {
 			t.Errorf("base image %s was preserved: %#v", name, merged)
 		}
