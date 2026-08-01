@@ -1136,6 +1136,18 @@ func TestGoBuiltinInstallUsesStrippedLdflagsByDefault(t *testing.T) {
 	}
 }
 
+func TestGoBuiltinBuildPlacesFlagsBeforePackage(t *testing.T) {
+	build := Builtins(GoProfile, BuiltinOptions{})["build"]
+
+	got, err := Resolve("build", build, []string{"./cmd/git-agent", "-o=/tmp/git-agent"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Main, Command{"go", "build", "-o=/tmp/git-agent", "./cmd/git-agent"}) {
+		t.Fatalf("build command = %#v", got.Main)
+	}
+}
+
 func TestGoBuiltinsExposePackageArgumentCompletions(t *testing.T) {
 	builtins := go1264Builtins(t)
 	for _, name := range []string{"fix", "generate", "lint", "test", "test-race", "vet"} {
