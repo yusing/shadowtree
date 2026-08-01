@@ -436,7 +436,7 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		},
 		"build": {
 			Help: "Build Go packages.",
-			Cmd:  Command{"go", "build", "{pkg}", "{@}"},
+			Cmd:  Command{"go", "build", "{@}", "{pkg}"},
 			Arguments: map[string]Argument{
 				"pkg": defaultGoMainPackageArgument,
 			},
