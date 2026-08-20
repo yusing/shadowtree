@@ -52,22 +52,50 @@ shadowtree --all test
 
 Profile built-ins have established interfaces. Invoke a built-in directly when
 its name and intended operation are known. Do the same for a project override
-that retains the built-in interface; use `--print` if the override's behavior,
-not its usage, needs inspection.
+that retains the built-in interface. A compatible override preserves the
+built-in positional and named arguments and forwards supported trailing tool
+arguments through `{@}`. Use `--print` if the override's behavior, not its
+usage, needs inspection.
 
 For the common Go built-ins:
 
 - `fmt` formats source and persists the edits. Use it instead of
   `shadowtree exec -- gofmt -w ...`.
 - `test` runs tests.
+- `test-race` runs tests with the race detector.
 - `vet` runs `go vet` only.
 - `check` runs `vet` and then `test`.
 - `build` builds packages or an artifact. It is not the default way to check a
   change.
 
 Do not call `recipes` or `help` merely to confirm one of these known shapes.
-If an invocation fails because a project override changed the interface, then
-inspect that concrete uncertainty.
+An `unknown argument` error is conclusive: the selected recipe does not expose
+that token. Do not follow the error with `help`. If the override is intended to
+retain the built-in contract and changing it is in scope, correct the override;
+otherwise omit the unsupported option or use the owning tool directly when no
+recipe exposes the required operation.
+
+## Keep the Owning Working Directory
+
+Invoke Shadowtree from the repository or module that owns the target paths.
+Recipe execution starts from that directory unless the resolved recipe declares
+a different `workdir`.
+
+Shadowtree may discover a superproject configuration while invoked from a
+registered submodule. That configuration can intentionally provide recipes to
+the submodule, but it does not move execution to the superproject. Therefore:
+
+- Keep the invocation in the target repository or module. Do not change to the
+  configuration directory merely to inspect or run a same-name recipe.
+- Use `shadowtree config` once when the selected config or profile is genuinely
+  unknown. Do not use `help` to infer configuration ownership from argument
+  value lists.
+- Use the exact invocation's `--print` plan when a parent override may depend on
+  parent-only paths, assets, or setup. Its resolved `workdir`, variables, and
+  stages must also make sense from the target working directory.
+- If no selected recipe owns the required operation at that boundary, use the
+  repository or module's authoritative tool directly. Do not probe unrelated
+  parent recipes with `help` first.
 
 ## Resolve Only the Current Uncertainty
 
@@ -86,11 +114,14 @@ shadowtree --check --shell <recipe> [args...]
 - Use `config` only when the config path or selected profile is unknown.
 - Use `recipes` once when the recipe name is unknown. Skip it when the user,
   project instructions, or established context already names the recipe.
-- Use `help <recipe>` only when an unfamiliar custom recipe's argument names,
-  types, bounds, presets, or available values are needed. Help resolves dynamic
-  argument values and may run command-backed value providers, so it is not a
-  cheap static preflight and can be large or noisy. Do not run help before every
-  recipe or chain help calls for several known recipes.
+- Use `help <recipe>` only before the first invocation of an unfamiliar custom
+  recipe when the task requires choosing among unknown argument names, types,
+  bounds, presets, or available values. Never use help for a profile built-in
+  name, for an override that is meant to retain built-in usage, or in response
+  to an `unknown argument` error. Help resolves dynamic argument values and may
+  run command-backed value providers, so it is not a cheap static preflight and
+  can be large or noisy. Do not run help before every recipe or chain help calls
+  for several known recipes.
 - Use `--print` on the exact intended invocation to inspect its resolved stages,
   sandbox mode, workdir, requirements, and sync-out behavior without executing
   it. Prefer this over help when the invocation syntax is already known.
@@ -140,17 +171,21 @@ and the arbitrary command specifically needs Shadowtree's sandbox:
 shadowtree exec -- ./scripts/reproduce-bug.sh
 ```
 
-Do not use `exec` to reproduce an existing recipe such as `fmt`, `test`, `vet`,
-`check`, or `build`. The sandbox is disposable by default: ordinary writes
-disappear after the run, so a formatter, generator, migration, or other editing
-command under `exec` does not update the host checkout unless its exact outputs
-are synced out. Prefer the existing persistent recipe. Add invocation-local
-sync-out only when the requested output must persist and every selected path is
-in scope:
+Do not use `exec` to reproduce an existing recipe such as `fmt`, `test`,
+`test-race`, `vet`, `check`, or `build`. The sandbox is disposable by default:
+ordinary writes disappear after the run, so a formatter, generator, migration,
+or other editing command under `exec` does not update the host checkout unless
+its exact outputs are synced out. Prefer the existing persistent recipe. Add
+invocation-local sync-out only when the requested output must persist and every
+selected path is in scope:
 
 ```sh
 shadowtree --sync-out internal/generated exec -- generate-command
 ```
+
+When no recipe owns the operation and the command does not need Shadowtree's
+sandbox, run the repository or module's authoritative tool directly. Do not use
+`exec` as a ceremonial wrapper.
 
 ## Respect Host Persistence
 
