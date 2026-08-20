@@ -33,4 +33,5 @@ eval lines to `~/.bashrc` and `~/.zshrc` when those shells are available.
 
 The `install-skill` recipe installs every local agent skill from
 `.agents/skills/` to `${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}`, then removes
-the legacy installed `shadowtree` skill.
+the legacy installed `using-shadowtree`, `authoring-shadowtree-recipes`, and
+`migrate-to-shadowtree` skills.

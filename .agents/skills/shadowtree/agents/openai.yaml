@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shadowtree"
+  short_description: "Run, author, or migrate to Shadowtree recipes"
+  default_prompt: "Use $shadowtree to run, inspect, design, or migrate to this project's recipes safely."
