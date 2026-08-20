@@ -66,7 +66,7 @@ When changing Zed query files, also compile them against the pinned `tree-sitter
 
 ## Coding Style & Naming Conventions
 
-This project targets Go 1.26.4. Run `gofmt` on Go changes. Use short lowercase package names, MixedCaps for exported identifiers, mixedCaps for internal identifiers, and concise godoc for exported API. Prefer early returns, wrapped errors with `%w`, lowercase error strings, and modern standard library helpers appropriate for Go 1.26. Keep new behavior in existing packages unless a new package boundary is clearly justified.
+This project targets Go 1.27.0. Run `gofmt` on Go changes. Use short lowercase package names, MixedCaps for exported identifiers, mixedCaps for internal identifiers, and concise godoc for exported API. Prefer early returns, wrapped errors with `%w`, lowercase error strings, and modern standard library helpers appropriate for Go 1.26. Keep new behavior in existing packages unless a new package boundary is clearly justified.
 
 ## Testing Guidelines
 
