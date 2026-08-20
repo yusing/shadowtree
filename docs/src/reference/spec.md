@@ -928,7 +928,8 @@ Configs that omit `profile` suppress detected built-ins. This preserves exact
 configured recipe sets unless a config opts into a profile.
 
 When marker detection is active, Shadowtree walks upward from the current
-directory and compares the nearest profile markers:
+directory and compares the nearest profile markers. The walk stops at the
+current repository root.
 
 - `package.json` selects `node`.
 - `go.mod` or `go.work` selects `go`.
@@ -942,7 +943,7 @@ The Go profile is selected when:
 - `--profile go` is provided, or
 - config has `profile = "go"`, or
 - no config is loaded and Shadowtree detects `go.mod` or `go.work` upward from
-  the current directory.
+  the current directory until the repository root.
 
 Built-in Go recipes:
 
@@ -990,7 +991,7 @@ The Node profile is selected when:
 - `--profile node` is provided, or
 - config has `profile = "node"`, or
 - no config is loaded and Shadowtree detects the nearest `package.json` upward
-  from the current directory.
+  from the current directory until the repository root.
 
 Node built-ins resolve the nearest `package.json` directory and generate shell
 commands that `cd` there before invoking the package manager or tool. This
@@ -1084,8 +1085,8 @@ the generated command still runs the original script key `lint:fix`.
 
 ## Built-In Rust Profile
 
-The Rust profile is selected explicitly or from the nearest `Cargo.toml` when
-no config is loaded. It provides `check`, `test`, `build`, `run`, `fmt`, and
+The Rust profile is selected explicitly or from the nearest `Cargo.toml` within
+the repository when no config is loaded. It provides `check`, `test`, `build`, `run`, `fmt`, and
 `clippy`, forwarding trailing arguments to Cargo. Aggregate execution uses
 Cargo workspace flags for every recipe except `run`, whose multiple-binary
 policy must be selected explicitly.

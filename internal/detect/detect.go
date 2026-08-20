@@ -102,6 +102,9 @@ func nearestProfileMarker(cwd string) (string, bool) {
 		case hasRust:
 			return RustProfile, true
 		}
+		if exists(filepath.Join(dir, ".git")) {
+			return "", false
+		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			return "", false

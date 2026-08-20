@@ -1,7 +1,7 @@
 # Rust Profile
 
 The Rust profile is selected by `--profile rust`, `profile = "rust"`, or the
-nearest `Cargo.toml` when no config is loaded. Same-directory Go and Node
+nearest `Cargo.toml` within the repository when no config is loaded. Same-directory Go and Node
 markers retain precedence over Cargo.
 
 ## Built-In Recipes

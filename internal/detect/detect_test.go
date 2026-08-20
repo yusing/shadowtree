@@ -71,8 +71,27 @@ func TestProfileUsesNodeBeforeRustForSameDirectoryTie(t *testing.T) {
 func TestProfileReturnsEmptyWithoutSupportedMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "pyproject.toml"), "[project]\nname = \"app\"\n")
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	if got := Profile(dir); got != "" {
+		t.Fatalf("Profile() = %q, want no profile", got)
+	}
+}
+
+func TestProfileDoesNotCrossRepositoryRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n")
+	nested := filepath.Join(root, "other")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := Profile(nested); got != "" {
 		t.Fatalf("Profile() = %q, want no profile", got)
 	}
 }

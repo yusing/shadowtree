@@ -30,7 +30,8 @@ command -v shadowtree >/dev/null 2>&1 && eval "$(shadowtree completion zsh)"
 
 Completion is dynamic: it uses configured recipes plus recipes from the selected
 profile. Without a config file, Shadowtree detects the nearest Go, Node, or Rust
-project marker upward from the current directory and exposes matching built-ins.
+project marker upward from the current directory, stopping at the current
+repository root, and exposes matching built-ins.
 
 ## Create a Config
 

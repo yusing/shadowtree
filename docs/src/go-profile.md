@@ -5,7 +5,7 @@ The Go profile is selected when:
 - `--profile go` is provided
 - config has `profile = "go"`
 - no config is loaded and Shadowtree detects `go.mod` or `go.work` upward from
-  the current directory
+  the current directory until the repository root
 
 ## Built-In Recipes
 

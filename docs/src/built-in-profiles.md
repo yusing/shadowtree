@@ -22,7 +22,8 @@ profile = "go"
 ## Marker Detection
 
 When no config file is loaded, Shadowtree walks upward from the current
-directory and compares the nearest profile markers:
+directory and compares the nearest profile markers. The walk stops at the
+current repository root.
 
 - `package.json` selects `node`.
 - `go.mod` or `go.work` selects `go`.

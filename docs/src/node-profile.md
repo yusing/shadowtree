@@ -5,7 +5,7 @@ The Node profile is selected when:
 - `--profile node` is provided
 - config has `profile = "node"`
 - no config is loaded and Shadowtree detects the nearest `package.json` upward
-  from the current directory
+  from the current directory until the repository root
 
 Node built-ins resolve the nearest `package.json` directory and generate shell
 commands that `cd` there before invoking the package manager or tool. This
