@@ -463,8 +463,30 @@ func printRecipes(w io.Writer, recipes map[string]recipe.Recipe) error {
 func printRecipeList(w io.Writer, recipes map[string]recipe.Recipe, indent string) error {
 	names := slices.Sorted(maps.Keys(recipes))
 	nameColumn := recipeNameColumn(names)
+	const markerColumn = len("[overridden]") + 2
+	showMarkers := false
+	for _, rec := range recipes {
+		builtin, overridden := recipe.BuiltinStatus(rec)
+		if builtin || overridden {
+			showMarkers = true
+			break
+		}
+	}
 	for _, name := range names {
-		fmt.Fprintf(w, "%s%-*s%s\n", indent, nameColumn, name, recipe.Help(recipes[name]))
+		rec := recipes[name]
+		if !showMarkers {
+			fmt.Fprintf(w, "%s%-*s%s\n", indent, nameColumn, name, recipe.Help(rec))
+			continue
+		}
+		marker := ""
+		builtin, overridden := recipe.BuiltinStatus(rec)
+		switch {
+		case overridden:
+			marker = "[overridden]"
+		case builtin:
+			marker = "[built-in]"
+		}
+		fmt.Fprintf(w, "%s%-*s%-*s%s\n", indent, nameColumn, name, markerColumn, marker, recipe.Help(rec))
 	}
 	return nil
 }

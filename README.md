@@ -42,7 +42,7 @@ exactly unless it opts into a profile with `profile = "go"`,
 
 | Workflow | Command | Output |
 | --- | --- | --- |
-| List available recipes | `shadowtree recipes` | Resolved recipe names and help text |
+| List available recipes | `shadowtree recipes` | Resolved recipe names, profile markers, and help text |
 | Inspect a recipe | `shadowtree help test` | Recipe help, args, requirements, stages, and sync-out paths |
 | Print a plan | `shadowtree --print test` | Resolved plan without running commands |
 | Print expanded details | `shadowtree --print --expanded test` | Expanded scripts, args, vars, env, logs, and sync-out paths |

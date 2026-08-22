@@ -7,7 +7,7 @@ sync-out.
 ## Help
 
 `shadowtree help` prints CLI usage, active config/profile, and resolved recipes
-with their `help` text.
+with profile-origin markers and their `help` text.
 
 ```sh
 shadowtree help
@@ -30,8 +30,11 @@ shadowtree help test color=false
 
 ## Recipe Listing
 
-`shadowtree recipes` prints resolved recipe names and help text. If a recipe
-has no `help`, Shadowtree falls back to a compact command summary.
+`shadowtree recipes` prints resolved recipe names and help text. Profile recipes
+are marked `[built-in]`; config recipes that replace a same-name profile recipe
+are marked `[overridden]`. Custom config recipes are unmarked. If a recipe has
+no `help`, Shadowtree falls back to a compact command summary. The recipe lists
+in `shadowtree help` and `shadowtree config` use the same markers.
 
 ```sh
 shadowtree recipes

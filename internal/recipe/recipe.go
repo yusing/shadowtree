@@ -159,6 +159,14 @@ type Recipe struct {
 	LogTee       *bool                   `toml:"log_tee"`
 	varsExpanded bool
 	all          *allPlan
+	builtin      bool
+	overridden   bool
+}
+
+// BuiltinStatus reports whether rec comes from a profile and whether project
+// configuration overrides that profile recipe.
+func BuiltinStatus(rec Recipe) (builtin, overridden bool) {
+	return rec.builtin, rec.overridden
 }
 
 // Requirements declares external tools a recipe expects before commands run.
@@ -299,9 +307,9 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 	if profile != GoProfile {
 		switch profile {
 		case NodeProfile:
-			return nodeBuiltins(opts)
+			return markBuiltins(nodeBuiltins(opts))
 		case RustProfile:
-			return rustBuiltins(cmp.Or(opts.RustToolchain, DefaultRustToolchain))
+			return markBuiltins(rustBuiltins(cmp.Or(opts.RustToolchain, DefaultRustToolchain)))
 		}
 		return map[string]Recipe{}
 	}
@@ -453,6 +461,14 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		recipes["fix"] = withAllPlan(fix, "packages", GoPackageTargets, allTargetRecipe(fix, "pkg"))
 	}
 	recipes["run"] = withUnsupportedAll(recipes["run"], "running multiple main packages has no defined process policy")
+	return markBuiltins(recipes)
+}
+
+func markBuiltins(recipes map[string]Recipe) map[string]Recipe {
+	for name, rec := range recipes {
+		rec.builtin = true
+		recipes[name] = rec
+	}
 	return recipes
 }
 
@@ -522,7 +538,9 @@ func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) 
 		baseRecipe.ForEach = nil
 		baseRecipe.Workdir = ""
 		baseRecipe.all = nil
-		merged[name] = MergeRecipe(baseRecipe, override)
+		mergedRecipe := MergeRecipe(baseRecipe, override)
+		mergedRecipe.overridden = baseRecipe.builtin
+		merged[name] = mergedRecipe
 	}
 	return merged, nil
 }

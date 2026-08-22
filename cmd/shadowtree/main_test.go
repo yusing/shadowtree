@@ -757,6 +757,41 @@ func TestPrintRecipesAlignsLongRecipeNames(t *testing.T) {
 	}
 }
 
+func TestPrintRecipesMarksBuiltinsAndOverrides(t *testing.T) {
+	recipes, err := recipe.MergeRecipes(recipe.Builtins(recipe.GoProfile, recipe.BuiltinOptions{}), map[string]recipe.Recipe{
+		"test":    {Help: "Run project tests."},
+		"release": {Help: "Publish a release.", Cmd: recipe.Command{"release"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := printRecipes(&out, recipes); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(out.String(), "\n")
+	if line := lineWithPrefix(t, lines, "fmt"); !strings.Contains(line, "[built-in]") {
+		t.Fatalf("built-in recipe missing marker: %q", line)
+	}
+	if line := lineWithPrefix(t, lines, "test"); !strings.Contains(line, "[overridden]") {
+		t.Fatalf("overridden recipe missing marker: %q", line)
+	}
+	if line := lineWithPrefix(t, lines, "release"); strings.Contains(line, "[") {
+		t.Fatalf("custom recipe has profile marker: %q", line)
+	}
+	fmtLine := lineWithPrefix(t, lines, "fmt")
+	testLine := lineWithPrefix(t, lines, "test")
+	releaseLine := lineWithPrefix(t, lines, "release")
+	if got, want := strings.Index(fmtLine, recipe.Help(recipes["fmt"])), strings.Index(testLine, recipe.Help(recipes["test"])); got != want {
+		t.Fatalf("description columns differ: fmt=%d test=%d\n%s\n%s", got, want, fmtLine, testLine)
+	}
+	if got, want := strings.Index(releaseLine, recipe.Help(recipes["release"])), strings.Index(testLine, recipe.Help(recipes["test"])); got != want {
+		t.Fatalf("description columns differ: release=%d test=%d\n%s\n%s", got, want, releaseLine, testLine)
+	}
+}
+
 func TestPrintRecipeHelpIncludesCommandDetails(t *testing.T) {
 	var out bytes.Buffer
 	err := printRecipeHelp(t.Context(), &out, "install", recipe.Recipe{

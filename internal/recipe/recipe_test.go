@@ -1374,6 +1374,27 @@ func TestMergeRecipesDoesNotInheritBuiltinForEachAndWorkdir(t *testing.T) {
 	}
 }
 
+func TestBuiltinStatusTracksProfileOverrides(t *testing.T) {
+	builtins := Builtins(GoProfile, BuiltinOptions{})
+	if builtin, overridden := BuiltinStatus(builtins["test"]); !builtin || overridden {
+		t.Fatalf("built-in test status = (%v, %v), want (true, false)", builtin, overridden)
+	}
+
+	merged, err := MergeRecipes(builtins, map[string]Recipe{
+		"test":    {Help: "Run project tests."},
+		"release": {Help: "Publish a release.", Cmd: Command{"release"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if builtin, overridden := BuiltinStatus(merged["test"]); !builtin || !overridden {
+		t.Fatalf("overridden test status = (%v, %v), want (true, true)", builtin, overridden)
+	}
+	if builtin, overridden := BuiltinStatus(merged["release"]); builtin || overridden {
+		t.Fatalf("custom release status = (%v, %v), want (false, false)", builtin, overridden)
+	}
+}
+
 func TestMergeRecipesAllowsExplicitForEachAndWorkdirOverride(t *testing.T) {
 	merged, err := MergeRecipes(Builtins(GoProfile, BuiltinOptions{}), map[string]Recipe{
 		"test": {

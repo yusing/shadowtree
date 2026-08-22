@@ -1127,8 +1127,11 @@ verbose boundary, and log boundary output.
 
 ## Recipe Listing
 
-`shadowtree recipes` prints resolved recipe names and help text. If a recipe has
-no `help`, Shadowtree falls back to a compact command summary.
+`shadowtree recipes` prints resolved recipe names and help text. Profile recipes
+are marked `[built-in]`; config recipes that replace a same-name profile recipe
+are marked `[overridden]`. Custom config recipes are unmarked. If a recipe has
+no `help`, Shadowtree falls back to a compact command summary. The recipe lists
+in `shadowtree help` and `shadowtree config` use the same markers.
 
 ## Plan Printing
 
