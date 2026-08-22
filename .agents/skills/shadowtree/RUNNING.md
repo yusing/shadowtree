@@ -7,6 +7,9 @@ Invocation, inspection, lifecycle, configuration form, and persistence live in
 Use an existing recipe when it owns the requested operation. Run the selected
 operation once, then only the smallest non-overlapping validation.
 
+When recipe ownership is unknown, use the `[built-in]` and `[overridden]`
+markers in `shadowtree recipes`; custom config recipes are unmarked.
+
 ## Arguments
 
 - DO use `--` only to forward every following token through the recipe's `{@}`
