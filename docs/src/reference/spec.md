@@ -46,8 +46,14 @@ tools such as `go test` see a stable working directory while writes land in the
 overlay upperdir instead of the host checkout. Shadowtree hides metadata entries
 from the lower tree. When namespace overlayfs is unavailable, Shadowtree warns
 and falls back to copying the current source directory into the temporary
-workspace and running commands there. On filesystems that support it, fallback
-copy may use reflinks as an optimization.
+workspace and running commands there. Other platforms always use the copied
+workspace and do not warn. On filesystems that support it, fallback copy uses
+reflinks on Linux and `clonefile` on macOS as an optimization.
+
+For copied workspaces, Shadowtree appends `-trimpath` to `GOFLAGS` so Go build
+cache keys do not depend on the per-run workspace path. A `GOFLAGS` value that
+already contains a `-trimpath` flag, including `-trimpath=false`, is left
+unchanged.
 
 By default:
 
@@ -1325,6 +1331,8 @@ tidy
 
 - Workspace isolation uses namespace overlayfs only when the host supports it.
 - Large repositories may be slower when Shadowtree falls back to copying files.
+- Copied workspaces use a new path per run; tests that open files still miss
+  Go's test cache because it records opened files by absolute path.
 - Commands can still intentionally read or write absolute host paths.
 - Configured commands are shell strings; direct process argv arrays are only an
   internal representation used by built-in recipes and resolved execution.

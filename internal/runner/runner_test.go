@@ -319,6 +319,62 @@ func TestRunWarnsAndFallsBackWhenOverlayUnavailable(t *testing.T) {
 	}
 }
 
+func TestRunCopiesWorkspaceWithoutWarningWhenOverlayUnsupported(t *testing.T) {
+	original := newOverlayWorkspace
+	newOverlayWorkspace = func(context.Context, string, string, string) (*sandboxWorkspace, error) {
+		return nil, errOverlayUnsupported
+	}
+	t.Cleanup(func() {
+		newOverlayWorkspace = original
+	})
+	t.Setenv("GOFLAGS", "-mod=mod")
+	source := t.TempDir()
+	out := filepath.Join(t.TempDir(), "goflags.txt")
+	resolved, err := recipe.Resolve("run", recipe.Recipe{Cmd: recipe.Command{"sh", "-c", `printf %s "$GOFLAGS" > "$1"`, "sh", out}}, nil, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stderr bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "-mod=mod -trimpath" {
+		t.Fatalf("GOFLAGS = %q, want %q", data, "-mod=mod -trimpath")
+	}
+}
+
+func TestWithGoTrimpath(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       []string
+		want      string
+		wantAdded bool
+	}{
+		{name: "unset", env: []string{"HOME=/home"}, want: "-trimpath", wantAdded: true},
+		{name: "appends", env: []string{"GOFLAGS=-mod=mod"}, want: "-mod=mod -trimpath", wantAdded: true},
+		{name: "keeps explicit", env: []string{"GOFLAGS=-trimpath"}, want: "-trimpath"},
+		{name: "keeps disabled", env: []string{"GOFLAGS=-mod=mod -trimpath=false"}, want: "-mod=mod -trimpath=false"},
+		{name: "keeps double dash", env: []string{"GOFLAGS=--trimpath"}, want: "--trimpath"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, added := withGoTrimpath(tt.env)
+			got, _ := envValue(env, "GOFLAGS")
+			if got != tt.want || added != tt.wantAdded {
+				t.Fatalf("withGoTrimpath(%q) = GOFLAGS %q, added %v; want %q, %v", tt.env, got, added, tt.want, tt.wantAdded)
+			}
+		})
+	}
+}
+
 func newOverlaySandboxForTest(t *testing.T, source, upper string) *sandboxWorkspace {
 	t.Helper()
 	workDir := t.TempDir()

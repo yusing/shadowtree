@@ -7,13 +7,12 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"os"
 
 	"github.com/yusing/shadowtree/internal/recipe"
 )
 
 func createOverlayWorkspace(context.Context, string, string, string) (*sandboxWorkspace, error) {
-	return nil, errors.New("overlayfs requires linux")
+	return nil, errOverlayUnsupported
 }
 
 func (sandbox *sandboxWorkspace) runNamespaceCommand(context.Context, []string, string, []string, io.Reader, io.Writer, io.Writer) error {
@@ -34,14 +33,6 @@ func (sandbox *sandboxWorkspace) runNamespaceExecutionTargets(context.Context, [
 
 func OverlayHelperMain(context.Context, []string) int {
 	return 125
-}
-
-func reflinkRegularFile(_, _ string, _ os.FileMode) error {
-	return errReflinkUnsupported
-}
-
-func isReflinkUnsupported(err error) bool {
-	return errors.Is(err, errReflinkUnsupported)
 }
 
 func isOverlayWhiteout(string, fs.FileInfo) bool {

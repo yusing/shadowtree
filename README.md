@@ -91,7 +91,7 @@ Shadowtree puts those workflows behind one recipe interface:
 | Surface | What it does |
 | --- | --- |
 | Recipe config | `.shadowtree.toml` recipes with `pre`, `cmd`, `post`, `for_each`, `workdir`, `env`, `vars`, requirements, logs, and sync-out |
-| Sandboxed runs | Overlayfs in a user and mount namespace on Linux, with a copied-workspace fallback when overlayfs is unavailable |
+| Sandboxed runs | Overlayfs in a user and mount namespace on Linux, otherwise a copied workspace (APFS clones on macOS, `-trimpath` so Go build cache hits survive the temporary path) |
 | Explicit checkout writes | Recipe `sync_out`, CLI `--sync-out`, `--sync-out-all`, or `sandboxed = false` for workflows that intentionally edit the host checkout |
 | Typed arguments | Positional and named recipe inputs with defaults, validation, value providers, presets, and completion |
 | Recipe references | `@recipe` and `@path:recipe` references for composing workflows without a second task language |

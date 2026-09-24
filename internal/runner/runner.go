@@ -52,7 +52,10 @@ type CommandOutputOptions struct {
 	SourceDir  string
 }
 
-var errReflinkUnsupported = errors.New("reflink unsupported")
+var (
+	errReflinkUnsupported = errors.New("reflink unsupported")
+	errOverlayUnsupported = errors.New("overlayfs requires linux")
+)
 
 const OverlayHelperCommand = "__shadowtree_overlay_helper"
 
@@ -367,6 +370,12 @@ func Run(ctx context.Context, options Options) (runErr error) {
 			runErr = err
 		}
 	}()
+	if !sandbox.overlay {
+		var added bool
+		if env, added = withGoTrimpath(env); added && options.Verbose {
+			fmt.Fprintln(stderr, "shadowtree: adding -trimpath to GOFLAGS for copied workspace")
+		}
+	}
 	logPath, err := runWithRecipeLog(options, source, func(logged Options) error {
 		return runResolvedCommands(ctx, sandbox, sandbox.root, env, logged, stdin, stdout, stderr, []string{recipeReferenceStackKey(logged.Resolved.ConfigPath, logged.Resolved.Name)})
 	})
@@ -417,7 +426,9 @@ func createSandboxWorkspace(ctx context.Context, source, workDir, workspace stri
 		}
 		return sandbox, nil
 	}
-	fmt.Fprintf(stderr, "shadowtree: overlayfs unavailable (%v); falling back to copied workspace\n", err)
+	if !errors.Is(err, errOverlayUnsupported) {
+		fmt.Fprintf(stderr, "shadowtree: overlayfs unavailable (%v); falling back to copied workspace\n", err)
+	}
 	if verbose {
 		fmt.Fprintf(stderr, "shadowtree: copying %s -> %s\n", source, workspace)
 	}
@@ -2085,6 +2096,21 @@ func envListMap(env []string) map[string]string {
 		}
 	}
 	return values
+}
+
+// withGoTrimpath adds -trimpath to GOFLAGS so Go build cache keys do not
+// depend on the per-run copied workspace path. An explicit trimpath flag wins.
+func withGoTrimpath(env []string) ([]string, bool) {
+	flags, _ := envValue(env, "GOFLAGS")
+	for flag := range strings.FieldsSeq(flags) {
+		name, _, _ := strings.Cut(strings.TrimLeft(flag, "-"), "=")
+		if name == "trimpath" {
+			return env, false
+		}
+	}
+	values := envListMap(env)
+	values["GOFLAGS"] = strings.TrimSpace(flags + " -trimpath")
+	return envMapList(values), true
 }
 
 func envValue(env []string, name string) (string, bool) {

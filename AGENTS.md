@@ -75,7 +75,7 @@ Schema changes should be checked with a representative Shadowtree TOML file thro
 
 ## Agent-Specific Instructions
 
-Sandboxed recipes isolate writes by default. On Linux, namespace overlayfs runs commands at the source checkout path inside the namespace so Go test caching remains stable; writes land in the overlay upperdir unless explicitly synced. When namespace overlayfs is unavailable, Shadowtree warns and falls back to a copied workspace.
+Sandboxed recipes isolate writes by default. On Linux, namespace overlayfs runs commands at the source checkout path inside the namespace so Go test caching remains stable; writes land in the overlay upperdir unless explicitly synced. When namespace overlayfs is unavailable, Shadowtree warns and falls back to a copied workspace; other platforms use the copied workspace silently (APFS `clonefile` on macOS). Copied workspaces append `-trimpath` to `GOFLAGS` unless it already sets a trimpath flag.
 
 Use recipe `sync_out` or CLI `--sync-out` when a sandboxed recipe should mirror selected paths back to the host checkout. A missing selected path is mirrored as a deletion. Use `--sync-out-all` only when the whole sandbox should be applied back. There is no top-level `sync_out`; copy-back must be recipe-local or invocation-local. Recipes that intentionally edit the checkout directly should set `sandboxed = false`.
 

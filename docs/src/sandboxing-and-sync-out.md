@@ -5,7 +5,14 @@ is unchanged unless sync-out is requested.
 
 On Linux, Shadowtree uses overlayfs in a user and mount namespace by default.
 When namespace overlayfs is unavailable, it warns and falls back to a copied
-workspace with the same isolation contract.
+workspace with the same isolation contract. Other platforms always use the
+copied workspace without a warning; on macOS APFS, files are copied as
+copy-on-write clones.
+
+Copied workspaces live at a new temporary path on every run. Go's build cache
+keys include the package directory, so Shadowtree adds `-trimpath` to `GOFLAGS`
+for copied workspaces unless `GOFLAGS` already sets a `-trimpath` flag. Set
+`GOFLAGS=-trimpath=false` to opt out.
 
 ## Edit the Host Checkout Directly
 
