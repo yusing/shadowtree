@@ -25,6 +25,7 @@ sync_out = ["internal/generated"]
 - `sync_out`: sandboxed paths copied back to the host checkout after success.
 - `for_each`: value provider that runs the main command once per candidate.
 - `workdir`: relative working directory for the main command.
+- `all`: on an override of a profile recipe, keep its `--all` plan.
 - `log`, `log_stages`, `log_tee`: recipe log output.
 - `requires`: host tool checks performed before sandbox setup and `pre`.
 - `env`: recipe-specific environment overrides.

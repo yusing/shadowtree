@@ -120,6 +120,11 @@ as an explicit target and rejected. Tool flags with separate values therefore
 use `--`, for example `shadowtree --all test -- -run TestName`; single-token
 flags such as `-count=1` do not require the delimiter.
 
+Aggregate targets are independent: a failing target does not stop later
+targets. After every target runs, the recipe fails with each failing target
+and exits with the first failure's status. Cancellation stops the run at the
+current target.
+
 ## Config Discovery
 
 Shadowtree discovers config upward from the current directory until the outer
@@ -170,6 +175,7 @@ help = "Short recipe help text."
 sandboxed = true
 for_each = "cmd arg"
 workdir = "{item}"
+all = false
 pre = ["cmd arg"]
 cmd = "cmd {placeholders}"
 post = ["cmd arg"]
@@ -434,6 +440,13 @@ references.
 : Optional relative workspace path used as the working directory for the main
 command. With `for_each`, it is expanded per item and can use `{item}`,
 `{item_help}`, and `{item_index}`.
+
+`all`
+: Optional boolean on an override of a profile recipe. When `true`, the
+override keeps that recipe's `--all` plan instead of dropping it. Invalid on a
+recipe that overrides no profile recipe, on a profile recipe without an
+inheritable plan, and together with `for_each` or `workdir`. See
+[Recipe Resolution](#recipe-resolution).
 
 `pre`
 : Commands run before the main command, in order. May be an array of command
@@ -793,9 +806,29 @@ then trailing recipe args
 
 Config recipes with the same name as a built-in recipe override only specified
 fields, except `for_each` and `workdir`. Those scheduling fields are not
-inherited. Any project override also removes the built-in profile-owned
-aggregate plan, so `--all` fails unless a future supported configuration
-surface explicitly supplies one.
+inherited. A project override also drops the built-in profile-owned aggregate
+plan, so `--all` fails unless the override sets `all = true`.
+
+With `all = true`, `--all` keeps the built-in plan's target domain, discovery,
+and per-target workdirs, and runs the override's own resolved stages: `pre`
+once, then `cmd` once per discovered target, then `post` once. In `cmd`, the
+built-in target argument, such as `{pkg}` or `{target}`, is bound to each
+target. `--all` takes no explicit target, so outside `cmd` that argument keeps
+its default. `all = true` is rejected on a recipe that overrides no profile
+recipe, on a profile recipe that rejects `--all`, on a profile recipe whose
+aggregate plan rewrites its own command, such as the Rust built-ins, and with
+`for_each` or `workdir`, which would compete with the plan's scheduling.
+
+```toml
+[recipes.test]
+all = true
+pre = ['go generate "{pkg}"']
+cmd = 'go test -count=1 "{pkg}" {@}'
+```
+
+`shadowtree test ./internal/recipe` runs once with that package, and
+`shadowtree --all test` runs `go generate ./...` once and then
+`go test -count=1 ./...` from each module.
 
 Example:
 
@@ -976,7 +1009,9 @@ recipe workspace. `--all` selects a recipe-specific aggregate target domain:
 package recipes batch `./...` per module, `build` and `install` execute each
 main package from its owning module, and `tidy` executes each module. `run`
 rejects `--all` because multi-process supervision is undefined. Discovery runs
-after `pre` in the active workspace, and an empty target set fails. Built-in
+after `pre` in the active workspace, and an empty target set fails. With an
+active `go.work`, as reported by `go env GOWORK`, discovery selects only the
+workspace modules, because go commands cannot run in a module outside it. Built-in
 `build` exposes an optional positional `pkg` argument with shell completion from
 `@go-main-packages`; `install` exposes a named `ldflags` argument defaulting to
 `-s -w` plus an optional positional `pkg` completed from `@go-main-packages`;

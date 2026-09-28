@@ -2234,6 +2234,94 @@ func TestRunAllMainDiscoveryUsesResolvedBuildContext(t *testing.T) {
 	}
 }
 
+func TestRunAllContinuesPastFailingTargets(t *testing.T) {
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module example.com/root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(source, "services", "api")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module example.com/api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := recipe.Recipe{
+		Cmd:       recipe.Command{"sh", "-c", `printf '%s\n' "$PWD"; exit 3`},
+		Sandboxed: new(false),
+	}
+	resolved, err := recipe.ResolveWithOptions("test", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
+		Scope:        recipe.ScopeAll,
+		TargetDomain: "packages",
+		TargetSource: recipe.GoPackageTargets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout, Stderr: io.Discard})
+	if want := source + "\n" + nested + "\n"; stdout.String() != want {
+		t.Fatalf("stdout = %q, want every target to run: %q", stdout.String(), want)
+	}
+	for _, want := range []string{"target example.com/root:", "target example.com/api:"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	}
+	if exitErr, ok := errors.AsType[ExitError](err); !ok || exitErr.Code != 3 {
+		t.Fatalf("error = %#v, want exit code 3", err)
+	}
+}
+
+func TestRunAllSkipsModulesOutsideGoWork(t *testing.T) {
+	// A source under a symlinked directory, as with macOS /var, checks that
+	// the go.work paths reported by go env still match the discovered modules.
+	realParent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(realParent, link); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(link, "src")
+	realSource := filepath.Join(realParent, "src")
+	for _, module := range []string{".", "services/api", "tools/lint"} {
+		dir := filepath.Join(source, filepath.FromSlash(module))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/"+filepath.Base(dir)+"\n\ngo 1.24\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "go.work"), []byte("go 1.24\n\nuse (\n\t.\n\t./services/api\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := recipe.Recipe{
+		Cmd:       recipe.Command{"sh", "-c", `pwd -P`},
+		Sandboxed: new(false),
+	}
+	resolved, err := recipe.ResolveWithOptions("test", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{
+		Scope:        recipe.ScopeAll,
+		TargetDomain: "packages",
+		TargetSource: recipe.GoPackageTargets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: &stdout, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if want := realSource + "\n" + filepath.Join(realSource, "services", "api") + "\n"; stdout.String() != want {
+		t.Fatalf("stdout = %q, want only go.work modules: %q", stdout.String(), want)
+	}
+}
+
 func TestRunAllRejectsEmptyTargetDiscovery(t *testing.T) {
 	rec := recipe.Recipe{Cmd: recipe.Command{"true"}, Sandboxed: new(false)}
 	resolved, err := recipe.ResolveWithOptions("fmt", rec, nil, nil, nil, "", recipe.GoProfile, recipe.ResolveOptions{

@@ -71,7 +71,9 @@ from another command.
 ## Lifecycle
 
 1. `pre` runs in order; a failure there skips `cmd`.
-2. `cmd` runs once, or once per `for_each` value.
+2. `cmd` runs once, or once per `for_each` value or `--all` target. A failing
+   `for_each` item stops later items; `--all` runs every target, then reports
+   each failure.
 3. `post` runs after success, failure, and initial cancellation. Cancellation
    never skips cleanup.
 4. The first `pre` or `cmd` failure is preserved unless only `post` fails.

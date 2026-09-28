@@ -35,25 +35,40 @@ type ExecutionTarget struct {
 }
 
 type allPlan struct {
-	Domain      string
-	Source      TargetSource
-	TargetArg   string
+	Domain    string
+	Source    TargetSource
+	TargetArg string
+	// Target is the target argument definition; outside cmd, --all resolves
+	// TargetArg to its default.
+	Target      Argument
 	Recipe      Recipe
+	Inheritable bool
 	Unsupported string
 }
 
+// withAllPlan gives rec an aggregate plan that runs the separate recipe all
+// once per discovered target.
 func withAllPlan(rec Recipe, domain string, source TargetSource, all Recipe) Recipe {
-	targetArg := ""
-	for name, arg := range rec.Arguments {
-		if arg.Position == 0 {
-			continue
-		}
-		if _, retained := all.Arguments[name]; !retained {
-			targetArg = name
-			break
-		}
+	rec.all = &allPlan{Domain: domain, Source: source, Recipe: all}
+	return rec
+}
+
+// withTargetAllPlan gives rec an aggregate plan that runs rec's own command
+// once per discovered target, from the target's workdir, with targetArg bound
+// to the target in cmd. Project overrides can inherit such a plan with all.
+func withTargetAllPlan(rec Recipe, domain string, source TargetSource, targetArg string) Recipe {
+	all := rec
+	all.ForEach = nil
+	all.Workdir = ""
+	all.all = nil
+	plan := &allPlan{Domain: domain, Source: source, TargetArg: targetArg, Inheritable: true}
+	if targetArg != "" {
+		plan.Target = rec.Arguments[targetArg]
+		all.Arguments = maps.Clone(rec.Arguments)
+		delete(all.Arguments, targetArg)
 	}
-	rec.all = &allPlan{Domain: domain, Source: source, TargetArg: targetArg, Recipe: all}
+	plan.Recipe = all
+	rec.all = plan
 	return rec
 }
 
@@ -62,21 +77,18 @@ func withUnsupportedAll(rec Recipe, reason string) Recipe {
 	return rec
 }
 
-func allTargetRecipe(rec Recipe, argument string) Recipe {
-	all := rec
-	all.Arguments = maps.Clone(rec.Arguments)
-	delete(all.Arguments, argument)
-	all.ForEach = nil
-	all.Workdir = ""
-	all.Cmd = slices.Clone(rec.Cmd)
-	placeholder := "{" + argument + "}"
-	for i, value := range all.Cmd {
-		if value == placeholder {
-			all.Cmd[i] = "{" + ForEachItemPlaceholder + "}"
-		}
+// inheritAllPlan gives the project override rec the aggregate plan of the
+// built-in recipe it overrides.
+func inheritAllPlan(name string, rec Recipe, builtin *allPlan) (Recipe, error) {
+	switch {
+	case builtin == nil:
+		return Recipe{}, configValuePathError(fmt.Errorf("recipe %q all requires a profile recipe with an --all plan", name), "recipes", name, "all")
+	case builtin.Unsupported != "":
+		return Recipe{}, configValuePathError(fmt.Errorf("recipe %q all: the profile recipe does not support --all: %s", name, builtin.Unsupported), "recipes", name, "all")
+	case !builtin.Inheritable:
+		return Recipe{}, configValuePathError(fmt.Errorf("recipe %q all: the profile recipe's --all plan rewrites its own command, so an override cannot inherit it", name), "recipes", name, "all")
 	}
-	all.all = nil
-	return all
+	return withTargetAllPlan(rec, builtin.Domain, builtin.Source, builtin.TargetArg), nil
 }
 
 // AllSupport reports how --all applies to rec.
@@ -141,7 +153,7 @@ func ResolveExecutionTargets(ctx context.Context, source TargetSource, dir strin
 		}
 		return []ExecutionTarget{{Label: "Cargo workspace " + project.WorkspaceRoot, Workdir: "."}}, nil
 	case GoPackageTargets:
-		modules, err := discoverGoModules(ctx, dir, "")
+		modules, err := discoverGoWorkspaceModules(ctx, dir, env)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +163,7 @@ func ResolveExecutionTargets(ctx context.Context, source TargetSource, dir strin
 		}
 		return targets, nil
 	case GoModuleTargets:
-		modules, err := discoverGoModules(ctx, dir, "")
+		modules, err := discoverGoWorkspaceModules(ctx, dir, env)
 		if err != nil {
 			return nil, err
 		}
@@ -167,8 +179,53 @@ func ResolveExecutionTargets(ctx context.Context, source TargetSource, dir strin
 	}
 }
 
-func goMainPackageExecutionTargets(ctx context.Context, baseDir string, env, buildArgs []string) ([]ExecutionTarget, error) {
+// discoverGoWorkspaceModules returns the modules under baseDir that go
+// commands can use. With an active go.work, a module outside the workspace
+// cannot run go commands, so only workspace modules are returned.
+func discoverGoWorkspaceModules(ctx context.Context, baseDir string, env []string) ([]ValueCandidate, error) {
 	modules, err := discoverGoModules(ctx, baseDir, "")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "go", "env", "GOWORK")
+	cmd.Dir = baseDir
+	cmd.Env = env
+	output, err := cmd.Output()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("go env GOWORK: %w", err)
+	}
+	workFile := strings.TrimSpace(string(output))
+	if workFile == "" || workFile == "off" {
+		return modules, nil
+	}
+	// go env may report workFile with or without symlinks resolved, so both
+	// paths are resolved before workspace modules are made relative to baseDir.
+	realBaseDir, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	realWorkFile, err := filepath.EvalSymlinks(workFile)
+	if err != nil {
+		return nil, err
+	}
+	workModules, err := goWorkModules(ctx, realBaseDir, realWorkFile)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", workFile, err)
+	}
+	used := make(map[string]bool, len(workModules))
+	for _, module := range workModules {
+		used[module.Value] = true
+	}
+	return slices.DeleteFunc(modules, func(module ValueCandidate) bool {
+		return !used[module.Value]
+	}), nil
+}
+
+func goMainPackageExecutionTargets(ctx context.Context, baseDir string, env, buildArgs []string) ([]ExecutionTarget, error) {
+	modules, err := discoverGoWorkspaceModules(ctx, baseDir, env)
 	if err != nil {
 		return nil, err
 	}

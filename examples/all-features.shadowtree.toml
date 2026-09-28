@@ -7,6 +7,7 @@
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print --expanded kitchen-sink preset=smoke
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --check --shell kitchen-sink preset=smoke
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml dispatch-demo
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --all --print --expanded vet
 
 "$schema" = "../schemas/shadowtree.schema.json"
 include = ["./all-features-base.shadowtree.toml"]
@@ -49,6 +50,12 @@ extra = "including-config"
 [recipes.inherited-merge.arguments.mode]
 default = "merged"
 values = "@enum merged='merged default' override='override mode'"
+
+[recipes.vet]
+help = "Override a profile recipe and keep its --all plan."
+all = true
+pre = ["printf 'vet default target=%s\\n' \"{pkg}\""]
+cmd = 'go vet "{pkg}" {@}'
 
 [recipes.kitchen-sink]
 help = "Exercise every recipe field in one sandboxed recipe."

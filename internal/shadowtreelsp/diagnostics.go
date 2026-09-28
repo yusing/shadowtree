@@ -77,7 +77,7 @@ func documentDiagnosticsWithOptions(ctx context.Context, text string, opts diagn
 	diagnostics = append(diagnostics, resolvedRecipeCommandDiagnostics(text, &resolver, diagnostics)...)
 	if len(diagnostics) == 0 {
 		if err := resolver.Err(); err != nil {
-			diagnostics = append(diagnostics, documentDiagnostic(text, err.Error()))
+			diagnostics = append(diagnostics, configValidationDiagnostic(text, err))
 		}
 	}
 	if diagnostics == nil {

@@ -46,6 +46,7 @@ Record every legacy surface's destination before implementing:
 | Trap or finally-style cleanup | Idempotent `post` |
 | Nested target or script call | `@recipe` or `@path:recipe` |
 | Same command repeated per module or item | `for_each`, with `workdir` when needed |
+| Built-in override that also runs across every package or module | `all = true`, invoked as `shadowtree --all <recipe>` |
 | Required executable check | `requires` |
 | Selected generated output | Recipe-local `sync_out` |
 | Intentional direct checkout or host mutation | `sandboxed = false` |

@@ -52,6 +52,7 @@
     "sandboxed"
     "for_each"
     "workdir"
+    "all"
     "cmd"
     "pre"
     "post"

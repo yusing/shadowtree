@@ -24,7 +24,10 @@ parsed as typed recipe arguments.
 : Select the recipe's profile-defined aggregate plan. The target domain is
 recipe-specific: for example, Go `build` targets main packages, `fmt` targets
 packages, and `tidy` targets modules. Unsupported recipes fail before running.
-`--all` cannot be combined with the recipe's explicit primary target.
+`--all` cannot be combined with the recipe's explicit primary target. Every
+target runs even when an earlier one fails, and the recipe then reports each
+failing target. A project override keeps a built-in plan only with
+`all = true`.
 Single-token tool flags such as `-count=1` can follow the recipe normally. If a
 tool flag takes a separate bare value, start passthrough with `--` so the value
 is not mistaken for a primary target:

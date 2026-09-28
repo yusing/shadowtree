@@ -141,6 +141,11 @@
           "type": "string",
           "description": "Optional relative working directory for the main command. With for_each, this is expanded per item and may use {item}, {item_help}, and {item_index}."
         },
+        "all": {
+          "type": "boolean",
+          "description": "On an override of a profile recipe, keep that recipe's --all plan: after pre, cmd runs once per discovered target from the target's module, with the profile recipe's target argument, such as {pkg}, bound to each target. Outside cmd, that argument keeps its default. Cannot be combined with for_each or workdir.",
+          "default": false
+        },
         "cmd": {
           "$ref": "#/definitions/command",
           "description": "Required main command. Use {@} in cmd to splice leftover recipe CLI args. Recipes with for_each may also use {item}, {item_help}, and {item_index}."

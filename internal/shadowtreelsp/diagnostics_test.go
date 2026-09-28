@@ -628,6 +628,29 @@ log_stages = ["cleanup"]
 			start:   len(`log_stages = `),
 			end:     len(`log_stages = ["cleanup"]`),
 		},
+		{
+			name: "all with for_each",
+			text: `[recipes.test]
+cmd = "go test"
+for_each = "@go-modules"
+all = true
+`,
+			message: `recipe "test" all cannot be combined with for_each or workdir; the --all plan schedules cmd`,
+			line:    3,
+			start:   len(`all = `),
+			end:     len(`all = true`),
+		},
+		{
+			name: "all without profile recipe",
+			text: `[recipes.ci]
+cmd = "go test"
+all = true
+`,
+			message: `recipe "ci" all requires a profile recipe with an --all plan`,
+			line:    2,
+			start:   len(`all = `),
+			end:     len(`all = true`),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

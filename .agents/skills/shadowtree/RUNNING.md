@@ -17,7 +17,8 @@ markers in `shadowtree recipes`; custom config recipes are unmarked.
   read as a named argument: `shadowtree test pkg=./internal/recipe -- --cookie NAME=value`.
 - DON'T turn `shadowtree test ./...` into `shadowtree test -- ./...`.
 - DO use `--all` only when the recipe declares aggregate support, placing it
-  before the recipe name.
+  before the recipe name. A project override supports it only with
+  `all = true`.
 - DO put `--` before passthrough flags that take separate bare values under
   `--all`: `shadowtree --all test -- -run TestName`.
 - DON'T combine `--all` with an explicit primary target.

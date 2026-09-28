@@ -197,7 +197,9 @@ they are meant to update the checkout.
 
 Aggregate invocations reject an explicit primary target. Tool flags can still
 be forwarded; use the passthrough delimiter when a flag takes a separate bare
-value, for example `shadowtree --all test -- -run TestName`.
+value, for example `shadowtree --all test -- -run TestName`. Every target runs
+even when an earlier one fails. A project override of a built-in keeps its
+aggregate plan only with `all = true`.
 
 Node projects expose recipes such as `install`, `dev`, `build`, `start`,
 `test`, `lint`, `fmt`, `typecheck`, and `check`. Package manager, script,

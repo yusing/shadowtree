@@ -31,6 +31,7 @@ readable path from `pre` through `cmd` to `post`.
 | Named bundles of defaults | `presets` | When users repeatedly pick the same related values; explicit arguments still win. |
 | Bounded or discoverable values | `values`, `enum_sets` | Prefer builtins such as `@enum`, `@lines`, `@glob`, or Go providers over custom shell discovery. |
 | Repeat `cmd` per value | `for_each`, usually `workdir` | Module or package fan-out; `pre` and `post` still run once. |
+| Override a built-in that must still support `--all` | `all = true` | Keeps the built-in aggregate plan; `cmd` gets each target through the built-in target argument such as `{pkg}`, which keeps its default outside `cmd`. DON'T hand-roll per-module dispatch with `for_each` for the same effect. Not with `for_each` or `workdir`. |
 | Run `cmd` from a subdirectory | `workdir` | Keep it workspace-relative; combine with `{item}` for fan-out. |
 | Shared static values | top-level or recipe `vars` | Placeholders instead of duplicated literals; keep recipe-specific overrides local. |
 | Values computed at resolution | `var_commands` | Versions, commit IDs, or detected labels that must appear in expanded plans. |

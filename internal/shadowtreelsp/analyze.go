@@ -79,6 +79,7 @@ var recipeKeys = []completion{
 	{Label: "sandboxed", InsertText: "sandboxed = true", Kind: completionKindKeyword, Detail: "Run in disposable workspace"},
 	{Label: "for_each", InsertText: `for_each = ""`, Kind: completionKindKeyword, Detail: "Run main command once per value"},
 	{Label: "workdir", InsertText: `workdir = ""`, Kind: completionKindKeyword, Detail: "Relative main-command working directory"},
+	{Label: "all", InsertText: "all = true", Kind: completionKindKeyword, Detail: "Keep the overridden profile recipe's --all plan"},
 	{Label: "cmd", InsertText: `cmd = ""`, Kind: completionKindKeyword, Detail: "Main command"},
 	{Label: "pre", InsertText: "pre = []", Kind: completionKindKeyword, Detail: "Commands before main"},
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
@@ -1626,7 +1627,7 @@ func valueCompletions(key string) []completion {
 		return argumentTypeValues
 	case "path_kind":
 		return pathKindValues
-	case "sandboxed", "required", "log_tee":
+	case "sandboxed", "required", "log_tee", "all":
 		return boolValues
 	case "log_stages":
 		return logStageValues

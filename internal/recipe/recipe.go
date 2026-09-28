@@ -157,6 +157,7 @@ type Recipe struct {
 	Log          string                  `toml:"log"`
 	LogStages    []string                `toml:"log_stages"`
 	LogTee       *bool                   `toml:"log_tee"`
+	All          bool                    `toml:"all"`
 	varsExpanded bool
 	all          *allPlan
 	builtin      bool
@@ -432,33 +433,20 @@ func Builtins(profile string, opts BuiltinOptions) map[string]Recipe {
 		}
 	}
 	for _, name := range []string{"check", "lint", "test", "test-race", "vet"} {
-		rec := recipes[name]
 		argument := "pkg"
 		if name == "check" {
 			argument = ""
 		}
-		all := rec
-		if argument != "" {
-			all = allTargetRecipe(rec, argument)
-		}
-		recipes[name] = withAllPlan(rec, "packages", GoPackageTargets, all)
+		recipes[name] = withTargetAllPlan(recipes[name], "packages", GoPackageTargets, argument)
 	}
-	for _, name := range []string{"fmt", "generate"} {
-		rec := recipes[name]
-		argument := "pkg"
-		if name == "fmt" {
-			argument = "target"
-		}
-		recipes[name] = withAllPlan(rec, "packages", GoPackageTargets, allTargetRecipe(rec, argument))
-	}
+	recipes["fmt"] = withTargetAllPlan(recipes["fmt"], "packages", GoPackageTargets, "target")
+	recipes["generate"] = withTargetAllPlan(recipes["generate"], "packages", GoPackageTargets, "pkg")
 	for _, name := range []string{"build", "install"} {
-		rec := recipes[name]
-		recipes[name] = withAllPlan(rec, "main packages", GoMainPackageTargets, allTargetRecipe(rec, "pkg"))
+		recipes[name] = withTargetAllPlan(recipes[name], "main packages", GoMainPackageTargets, "pkg")
 	}
-	tidy := recipes["tidy"]
-	recipes["tidy"] = withAllPlan(tidy, "modules", GoModuleTargets, tidy)
+	recipes["tidy"] = withTargetAllPlan(recipes["tidy"], "modules", GoModuleTargets, "")
 	if fix, ok := recipes["fix"]; ok {
-		recipes["fix"] = withAllPlan(fix, "packages", GoPackageTargets, allTargetRecipe(fix, "pkg"))
+		recipes["fix"] = withTargetAllPlan(fix, "packages", GoPackageTargets, "pkg")
 	}
 	recipes["run"] = withUnsupportedAll(recipes["run"], "running multiple main packages has no defined process policy")
 	return markBuiltins(recipes)
@@ -535,10 +523,18 @@ func MergeRecipes(base, overrides map[string]Recipe) (map[string]Recipe, error) 
 			return nil, fmt.Errorf("recipe name %q is reserved", name)
 		}
 		baseRecipe := merged[name]
+		builtinAll := baseRecipe.all
 		baseRecipe.ForEach = nil
 		baseRecipe.Workdir = ""
 		baseRecipe.all = nil
 		mergedRecipe := MergeRecipe(baseRecipe, override)
+		if override.All {
+			var err error
+			mergedRecipe, err = inheritAllPlan(name, mergedRecipe, builtinAll)
+			if err != nil {
+				return nil, err
+			}
+		}
 		mergedRecipe.overridden = baseRecipe.builtin
 		merged[name] = mergedRecipe
 	}
@@ -600,6 +596,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	}
 	if override.LogTee != nil {
 		out.LogTee = new(*override.LogTee)
+	}
+	if override.All {
+		out.All = true
 	}
 	return out
 }
@@ -692,9 +691,26 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	}
 	values := mergeStringMaps(vars, argValues)
 	values[RunIDPlaceholder] = runID
+	// --all takes no explicit target, so its target argument keeps the
+	// default outside cmd, and cmd receives each discovered target.
+	targetArg := ""
+	var target Argument
+	if opts.TargetSource != "" && rec.all != nil {
+		targetArg, target = rec.all.TargetArg, rec.all.Target
+	}
+	if targetArg != "" && target.Default != nil {
+		value, err := resolvedArgumentValueString(targetArg, target, target.Default, ValueBuiltinOptions{Recipe: rec, Recipes: opts.Recipes, EnumSets: opts.EnumSets})
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q args: %s default: %w", name, targetArg, err)
+		}
+		values[targetArg] = value
+	}
 	commandValues := values
 	if len(rec.ForEach) > 0 || opts.TargetSource != "" {
 		commandValues = mergeStringMaps(values, forEachPlaceholderSentinels())
+		if targetArg != "" {
+			commandValues[targetArg] = "{" + ForEachItemPlaceholder + "}"
+		}
 	}
 	cmd, err := expandCommandWithOptions(rec.Cmd, commandValues, variadicArgs, rec.Shell, placeholderExpansionOptions{commandStage: LogStageCmd})
 	if err != nil {
@@ -928,6 +944,9 @@ func ValidateConfig(cfg Config) error {
 			if err := ValidateCommand(rec.Cmd); err != nil {
 				return configValuePathError(fmt.Errorf("recipe %q cmd: %w", name, err), "recipes", name, "cmd")
 			}
+		}
+		if rec.All && (len(rec.ForEach) > 0 || rec.Workdir != "") {
+			return configValuePathError(fmt.Errorf("recipe %q all cannot be combined with for_each or workdir; the --all plan schedules cmd", name), "recipes", name, "all")
 		}
 		if len(rec.ForEach) > 0 {
 			if err := validateValueCommand("for_each", rec.ForEach); err != nil {

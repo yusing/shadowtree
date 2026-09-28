@@ -514,6 +514,32 @@ cmd = "go fmt ./..."
 	}
 }
 
+func TestRunAllUsesInheritedOverridePlan(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, "go.mod"), "module example.com/project\n")
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `
+profile = "go"
+
+[recipes.test]
+all = true
+cmd = 'go test -count=1 "{pkg}" {@}'
+`)
+
+	out := captureStdout(t, func() error {
+		return run(t.Context(), []string{"--all", "--print", "--expanded", "test"})
+	})
+	for _, want := range []string{
+		"scope: all\n",
+		"target_domain: packages\n",
+		`go test -count=1 "{item}"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expanded plan missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRunAllRequiresRecipe(t *testing.T) {
 	err := run(t.Context(), []string{"--all"})
 	if err == nil || err.Error() != "--all requires a recipe" {

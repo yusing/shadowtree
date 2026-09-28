@@ -578,8 +578,7 @@ func statusValue(err error) string {
 	if err == nil {
 		return "0"
 	}
-	var exitErr ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[ExitError](err); ok {
 		return strconv.Itoa(exitErr.Code)
 	}
 	return "1"
@@ -648,6 +647,9 @@ func runAggregateCommands(ctx context.Context, sandbox *sandboxWorkspace, dir st
 	if options.Verbose {
 		fmt.Fprintf(stderr, "shadowtree: discovered %d execution batch(es) for %s\n", len(targets), options.Resolved.TargetDomain)
 	}
+	// Targets are independent, so a failing target does not hide the results
+	// of later ones; only cancellation stops the run early.
+	var failures []error
 	for index, target := range targets {
 		item := recipe.ValueCandidate{Value: target.Value, Help: target.Label}
 		command, err := recipe.ExpandForEachCommand(options.Resolved.Main, item, index)
@@ -659,10 +661,13 @@ func runAggregateCommands(ctx context.Context, sandbox *sandboxWorkspace, dir st
 			return fmt.Errorf("target[%d] workdir: %w", index, err)
 		}
 		if err := runCommand(ctx, sandbox, workdir, env, command, stdin, stdout, stderr, options, phaseMain, index, stack); err != nil {
-			return fmt.Errorf("target %s: %w", target.Label, err)
+			failures = append(failures, fmt.Errorf("target %s: %w", target.Label, err))
+			if ctx.Err() != nil {
+				break
+			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func aggregateTargets(ctx context.Context, sandbox *sandboxWorkspace, dir string, env []string, options Options, stderr io.Writer) ([]recipe.ExecutionTarget, error) {
@@ -818,8 +823,7 @@ func runExternalCommand(ctx context.Context, dir string, env []string, command r
 	cmd.Stderr = stderr
 	configureCommandCancellation(cmd)
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return ExitError{Code: exitErr.ExitCode()}
 		}
 		return err
@@ -2114,8 +2118,8 @@ func withGoTrimpath(env []string) ([]string, bool) {
 }
 
 func envValue(env []string, name string) (string, bool) {
-	for i := len(env) - 1; i >= 0; i-- {
-		key, value, ok := strings.Cut(env[i], "=")
+	for _, e := range slices.Backward(env) {
+		key, value, ok := strings.Cut(e, "=")
 		if !ok {
 			continue
 		}

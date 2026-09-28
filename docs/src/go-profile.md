@@ -54,8 +54,13 @@ build-context flags, so `GOOS`, `GOARCH`, `GOFLAGS`, and `-tags` select the same
 packages for discovery and execution.
 
 Aggregate target discovery runs after `pre` in the active host checkout or
-sandbox. An empty aggregate target set is an error. Project overrides do not
-inherit a built-in aggregate plan.
+sandbox. An empty aggregate target set is an error. With an active `go.work`,
+discovery selects only its workspace modules, because go commands cannot run
+in a module outside the workspace. Every target runs even when an earlier one
+fails; the recipe then reports each failing target.
+
+Project overrides drop a built-in aggregate plan unless they set `all = true`;
+see [Recipe Resolution](recipe-resolution.md#keeping-the---all-plan).
 
 ## Arguments and Completion
 

@@ -531,7 +531,7 @@ func discoverGoPackagesContext(parent context.Context, baseDir, prefix string) (
 	}
 	addModulePackages(baseDir, ".")
 	if _, err := os.Stat(filepath.Join(baseDir, "go.work")); err == nil {
-		modules, err := goWorkModules(ctx, baseDir)
+		modules, err := goWorkModules(ctx, baseDir, filepath.Join(baseDir, "go.work"))
 		if err != nil {
 			return nil, err
 		}
@@ -561,8 +561,9 @@ func goListPackageCandidates(ctx context.Context, baseDir, moduleDir, pattern st
 	return parseGoListPackageCandidates(baseDir, output)
 }
 
-func goWorkModules(ctx context.Context, baseDir string) ([]ValueCandidate, error) {
-	cmd := exec.CommandContext(ctx, "go", "work", "edit", "-json", "go.work")
+// goWorkModules returns the modules that workFile uses, relative to baseDir.
+func goWorkModules(ctx context.Context, baseDir, workFile string) ([]ValueCandidate, error) {
+	cmd := exec.CommandContext(ctx, "go", "work", "edit", "-json", workFile)
 	cmd.Dir = baseDir
 	output, err := cmd.Output()
 	if err != nil {
@@ -581,7 +582,7 @@ func goWorkModules(ctx context.Context, baseDir string) ([]ValueCandidate, error
 	for _, use := range work.Use {
 		moduleDir := filepath.FromSlash(use.DiskPath)
 		if !filepath.IsAbs(moduleDir) {
-			moduleDir = filepath.Join(baseDir, moduleDir)
+			moduleDir = filepath.Join(filepath.Dir(workFile), moduleDir)
 		}
 		value, err := relativeSlashPath(baseDir, moduleDir)
 		if err != nil {

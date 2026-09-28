@@ -1416,6 +1416,89 @@ func TestMergeRecipesAllowsExplicitForEachAndWorkdirOverride(t *testing.T) {
 	}
 }
 
+func TestMergeRecipesAllInheritsBuiltinAllPlan(t *testing.T) {
+	merged, err := MergeRecipes(Builtins(GoProfile, BuiltinOptions{}), map[string]Recipe{
+		"test": {
+			All: true,
+			Pre: StageCommands{{Cmd: ScriptCommand(`echo "{pkg}"`)}},
+			Cmd: ScriptCommand(`go test -count=1 "{pkg}" {@}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, domain, source, err := SelectAll("test", merged["test"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if domain != "packages" || source != GoPackageTargets {
+		t.Fatalf("domain = %q source = %q", domain, source)
+	}
+	if _, exists := all.Arguments["pkg"]; exists {
+		t.Fatalf("all arguments retain primary target: %#v", all.Arguments)
+	}
+	opts := ResolveOptions{Scope: ScopeAll, TargetDomain: domain, TargetSource: source}
+	if _, err := ResolveWithOptions("test", all, []string{"./internal"}, nil, nil, "", GoProfile, opts); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("explicit target error = %v", err)
+	}
+	resolved, err := ResolveWithOptions("test", all, []string{"-v"}, nil, nil, "", GoProfile, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := ScriptBody(resolved.Main); !strings.Contains(body, `go test -count=1 "{item}" -v`) {
+		t.Fatalf("main = %q, want the target bound per batch", body)
+	}
+	if body := ScriptBody(resolved.Recipe.Pre[0].Cmd); !strings.Contains(body, `echo "./..."`) {
+		t.Fatalf("pre = %q, want the target default", body)
+	}
+
+	single, err := Resolve("test", merged["test"], []string{"./internal"}, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := ScriptBody(single.Main); !strings.Contains(body, `go test -count=1 "./internal"`) {
+		t.Fatalf("single-target main = %q", body)
+	}
+}
+
+func TestMergeRecipesRejectsUninheritableAll(t *testing.T) {
+	tests := []struct {
+		name     string
+		builtins map[string]Recipe
+		recipe   string
+		want     string
+	}{
+		{name: "project recipe", builtins: Builtins(GoProfile, BuiltinOptions{}), recipe: "ci", want: "requires a profile recipe"},
+		{name: "unsupported plan", builtins: Builtins(GoProfile, BuiltinOptions{}), recipe: "run", want: "process policy"},
+		{name: "command-rewriting plan", builtins: rustBuiltins(DefaultRustToolchain), recipe: "test", want: "cannot inherit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := MergeRecipes(test.builtins, map[string]Recipe{
+				test.recipe: {All: true, Cmd: Command{"true"}},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+			if pathErr, ok := errors.AsType[*ConfigPathError](err); !ok || !slices.Equal(pathErr.ConfigPath(), []string{"recipes", test.recipe, "all"}) {
+				t.Fatalf("error path = %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateConfigRejectsAllWithScheduling(t *testing.T) {
+	for _, rec := range []Recipe{
+		{All: true, ForEach: Command{"@go-modules"}, Cmd: Command{"true"}},
+		{All: true, Workdir: "sub", Cmd: Command{"true"}},
+	} {
+		err := ValidateConfig(Config{Recipes: map[string]Recipe{"test": rec}})
+		if err == nil || !strings.Contains(err.Error(), "all cannot be combined with for_each or workdir") {
+			t.Fatalf("error = %v", err)
+		}
+	}
+}
+
 func TestMergeRecipesRejectsReservedNames(t *testing.T) {
 	if _, err := MergeRecipes(nil, map[string]Recipe{"exec": {Cmd: Command{"go"}}}); err == nil {
 		t.Fatal("MergeRecipes succeeded with reserved name")

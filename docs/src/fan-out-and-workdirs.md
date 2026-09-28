@@ -43,7 +43,9 @@ workdir = "{item}"
 
 `pre` commands run once before candidate resolution. `post` commands run once
 after the loop, even if `pre`, candidate resolution, or an item command fails.
-Items run sequentially; the first failing item stops later items.
+Items run sequentially; the first failing item stops later items. `--all`
+aggregate targets differ: every target runs, and the recipe then reports each
+failing target.
 
 For sandboxed recipes, `sync_out` runs once after all items and `post` commands
 succeed. `sync_out` does not accept `{item}` placeholders.
