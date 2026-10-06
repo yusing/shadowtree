@@ -1105,6 +1105,130 @@ func TestRunCopiedWorkspaceSyncOutDirectoryRemovesStaleFile(t *testing.T) {
 	assertFileContent(t, filepath.Join(source, "dir", "new.txt"), "shadow")
 }
 
+func TestRunSyncOutRootAppliesChangesExceptExcludedPaths(t *testing.T) {
+	source := t.TempDir()
+	writeTestFiles(t, source, map[string]string{
+		"keep.txt":      "keep",
+		"edit.txt":      "host",
+		"gone.txt":      "gone",
+		"gen/a.txt":     "host",
+		"gen/sub/b.txt": "host",
+		".git/HEAD":     "ref",
+	})
+	keepBefore, err := os.Stat(filepath.Join(source, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := recipe.Resolve(
+		"fix",
+		recipe.Recipe{
+			Cmd:            recipe.ScriptCommand("printf shadow > edit.txt; rm gone.txt; printf pruned > gen/a.txt; rm -r gen/sub; mkdir new; printf new > new/c.txt"),
+			SyncOut:        []string{"."},
+			SyncOutExclude: []string{"gen"},
+		},
+		nil, nil, nil, "", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "edit.txt"), "shadow")
+	assertFileContent(t, filepath.Join(source, "new", "c.txt"), "new")
+	if _, err := os.Stat(filepath.Join(source, "gone.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("gone.txt err = %v, want not exist", err)
+	}
+	assertFileContent(t, filepath.Join(source, "gen", "a.txt"), "host")
+	assertFileContent(t, filepath.Join(source, "gen", "sub", "b.txt"), "host")
+	assertFileContent(t, filepath.Join(source, ".git", "HEAD"), "ref")
+	keepAfter, err := os.Stat(filepath.Join(source, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(keepBefore, keepAfter) {
+		t.Fatal("unchanged keep.txt was rewritten")
+	}
+}
+
+func TestRunSyncOutAllHonorsSyncOutExclude(t *testing.T) {
+	source := t.TempDir()
+	writeTestFiles(t, source, map[string]string{"out.txt": "host", "gen/a.txt": "host"})
+	resolved, err := recipe.Resolve(
+		"fix",
+		recipe.Recipe{
+			Cmd:            recipe.ScriptCommand("printf shadow > out.txt; printf pruned > gen/a.txt"),
+			SyncOutExclude: []string{"gen/a.txt"},
+		},
+		nil, nil, nil, "", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, SyncOutAll: true, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(source, "out.txt"), "shadow")
+	assertFileContent(t, filepath.Join(source, "gen", "a.txt"), "host")
+}
+
+func TestRunSyncOutPathKeepsExcludedDescendantOfDeletedDirectory(t *testing.T) {
+	source := t.TempDir()
+	writeTestFiles(t, source, map[string]string{"dir/other.txt": "host", "dir/gen/a.txt": "host"})
+	resolved, err := recipe.Resolve(
+		"clean",
+		recipe.Recipe{
+			Cmd:            recipe.ScriptCommand("rm -r dir"),
+			SyncOut:        []string{"dir"},
+			SyncOutExclude: []string{"dir/gen"},
+		},
+		nil, nil, nil, "", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "dir", "other.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dir/other.txt err = %v, want not exist", err)
+	}
+	assertFileContent(t, filepath.Join(source, "dir", "gen", "a.txt"), "host")
+}
+
+func TestRunRejectsSyncOutExcludeOutsideWorkspace(t *testing.T) {
+	source := t.TempDir()
+	resolved, err := recipe.Resolve(
+		"fix",
+		recipe.Recipe{Cmd: recipe.ScriptCommand("true"), SyncOut: []string{"."}, SyncOutExclude: []string{"../gen"}},
+		nil, nil, nil, "", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Resolved: resolved, SourceDir: source, Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "sync_out_exclude: sync_out path must stay under workspace") {
+		t.Fatalf("err = %v, want sync_out_exclude path rejection", err)
+	}
+}
+
+func writeTestFiles(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRunLogsPostAfterMainFailure(t *testing.T) {
 	source := t.TempDir()
 	resolved, err := recipe.Resolve(
@@ -3083,7 +3207,7 @@ func TestSyncPathDeletesMissingWorkspacePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SyncPath(workspace, source, "out.txt"); err != nil {
+	if err := SyncPath(workspace, source, "out.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := os.Stat(filepath.Join(source, "out.txt"))
@@ -3096,7 +3220,7 @@ func TestSyncPathMissingWorkspacePathDoesNotCreateParent(t *testing.T) {
 	workspace := t.TempDir()
 	source := t.TempDir()
 
-	if err := SyncPath(workspace, source, "missing/out.txt"); err != nil {
+	if err := SyncPath(workspace, source, "missing/out.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := os.Stat(filepath.Join(source, "missing"))
@@ -3119,7 +3243,7 @@ func TestSyncPathReplacesLeafSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SyncPath(workspace, source, "out.txt"); err != nil {
+	if err := SyncPath(workspace, source, "out.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(source, "out.txt"))
@@ -3155,7 +3279,7 @@ func TestSyncPathRejectsWorkspaceParentSymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SyncPath(workspace, source, "out/file.txt"); err == nil {
+	if err := SyncPath(workspace, source, "out/file.txt", nil); err == nil {
 		t.Fatal("SyncPath succeeded, want symlink escape error")
 	}
 	data, err := os.ReadFile(filepath.Join(source, "out", "file.txt"))
@@ -3181,7 +3305,7 @@ func TestSyncPathDeletesThroughParentSymlinkWithoutMutatingTarget(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := SyncPath(workspace, source, "out/file.txt"); err != nil {
+	if err := SyncPath(workspace, source, "out/file.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	victimData, err := os.ReadFile(filepath.Join(real, "file.txt"))
@@ -3224,7 +3348,7 @@ func TestSyncPathReplacesParentSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SyncPath(workspace, source, "out/file.txt"); err != nil {
+	if err := SyncPath(workspace, source, "out/file.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(source, "out", "file.txt"))

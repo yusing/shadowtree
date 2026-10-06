@@ -118,6 +118,17 @@ func TestMergeRecipeOverridesOnlySpecifiedFields(t *testing.T) {
 	}
 }
 
+func TestMergeRecipeOverridesSyncOutExclude(t *testing.T) {
+	base := Recipe{Cmd: Command{"go", "fix", "{pkg}"}, SyncOutExclude: []string{"base"}}
+
+	if got := MergeRecipe(base, Recipe{SyncOut: []string{"."}}); !slices.Equal(got.SyncOutExclude, []string{"base"}) {
+		t.Fatalf("inherited SyncOutExclude = %#v", got.SyncOutExclude)
+	}
+	if got := MergeRecipe(base, Recipe{SyncOutExclude: []string{"override"}}); !slices.Equal(got.SyncOutExclude, []string{"override"}) {
+		t.Fatalf("overridden SyncOutExclude = %#v", got.SyncOutExclude)
+	}
+}
+
 func TestMergeRecipeReplacesRequirements(t *testing.T) {
 	base := Recipe{
 		Cmd: Command{"go", "test"},
@@ -903,6 +914,33 @@ func TestResolveUnsandboxedIgnoresSyncOut(t *testing.T) {
 	}
 	if got.SyncOut != nil {
 		t.Fatalf("SyncOut = %#v, want nil", got.SyncOut)
+	}
+}
+
+func TestResolveExpandsSyncOutExclude(t *testing.T) {
+	rec := Recipe{
+		Cmd:            ScriptCommand("true"),
+		Vars:           map[string]string{"GEN": "internal/gen"},
+		SyncOut:        []string{"."},
+		SyncOutExclude: []string{"{GEN}"},
+	}
+
+	got, err := Resolve("fix", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.SyncOutExclude, []string{"internal/gen"}) {
+		t.Fatalf("SyncOutExclude = %#v", got.SyncOutExclude)
+	}
+
+	rec.Sandboxed = new(false)
+	rec.SyncOutExclude = []string{"{missing}"}
+	got, err = Resolve("fix", rec, nil, nil, nil, "", GoProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SyncOutExclude != nil {
+		t.Fatalf("unsandboxed SyncOutExclude = %#v, want nil", got.SyncOutExclude)
 	}
 }
 

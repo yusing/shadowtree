@@ -138,7 +138,8 @@ cmd = "go install ./cmd/tool"
 
 Recipes are sandboxed unless they set `sandboxed = false` or inherit behavior
 from a built-in profile. Use `sync_out` when a sandboxed recipe should copy
-specific generated paths back after a successful run. Prefer narrow sync-out
+specific generated paths back after a successful run, and `sync_out_exclude`
+for scratch paths that must never reach the host. Prefer narrow sync-out
 paths over `--sync-out-all`.
 
 Includes, vars, env, typed arguments, command requirements, logging, lifecycle

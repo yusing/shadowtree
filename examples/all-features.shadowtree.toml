@@ -79,15 +79,17 @@ recipe_banner
 printf 'item=%s help=%s index=%s\n' "{item}" "{item_help}" "{item_index}"
 printf 'target=%s retries=%s ratio=%s enabled=%s path=%s timeout=%s seconds=%s leftover=%s\n' \
   "{target}" "{retries}" "{ratio}" "{enabled}" "{input}" "{timeout}" "{seconds}" "{@}"
-mkdir -p out "{log_dir}"
+mkdir -p out/scratch "{log_dir}"
 printf 'synced from {target}\n' > "out/{target}.txt"
+printf 'never synced\n' > out/scratch/note.txt
 '''
 post = [
   "printf 'post string stage\\n'",
   "printf 'pre=%s cmd=%s\\n' '{status:pre}' '{status:cmd}'",
   { cmd = "printf 'post table stage\\n'", timeout = "5s" },
 ]
-sync_out = ["out/{target}.txt"]
+sync_out = ["out/{target}.txt", "out/scratch"]
+sync_out_exclude = ["out/scratch"]
 log = "{log_dir}/kitchen-sink-{run_id}.log"
 log_stages = ["pre", "cmd", "post"]
 log_tee = true

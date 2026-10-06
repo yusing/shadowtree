@@ -22,7 +22,10 @@ sync_out = ["internal/generated"]
   failures.
 - `sandboxed`: `true` by default. Set `false` only for recipes that should edit
   the host checkout directly.
-- `sync_out`: sandboxed paths copied back to the host checkout after success.
+- `sync_out`: sandboxed paths copied back to the host checkout after success;
+  `.` selects the whole workspace.
+- `sync_out_exclude`: paths never copied back, such as scratch state that `pre`
+  prepares inside the sandbox.
 - `for_each`: value provider that runs the main command once per candidate.
 - `workdir`: relative working directory for the main command.
 - `all`: on an override of a profile recipe, keep its `--all` plan.

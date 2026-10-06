@@ -99,7 +99,7 @@ are synced out.
 - DO prefer exact sync-out paths. Use `--sync-out-all` only when applying the
   whole sandbox is the request.
 - DO account for deletion: a selected path missing in the sandbox is mirrored as
-  a host deletion.
+  a host deletion. `sync_out_exclude` paths are never synced back.
 - DO `--print` the exact invocation before running an unfamiliar recipe that is
   unsandboxed, persists output, installs dependencies, uses privileges, controls
   processes, or writes externally; add `--expanded` when a script's effects are

@@ -90,6 +90,8 @@ post = ["docker compose down"]
 - DO keep the default sandbox for checks, tests, builds, and speculative work.
 - DO use recipe-local `sync_out` when only named outputs should persist after
   success.
+- DO use `sync_out = ["."]` with `sync_out_exclude` when edits anywhere should
+  persist but scratch state, such as generated code `pre` rewrites, must not.
 - DO set `sandboxed = false` when writes are inherently direct, as in a format,
   tidy, install, or dev workflow that must edit the checkout or another host
   location.

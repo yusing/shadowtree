@@ -37,7 +37,8 @@ Prefer normal shell quotes around free string or path values, such as
 
 ## Non-Shell Fields
 
-Fields such as `env`, `vars`, `workdir`, `sync_out`, and `log` use raw string
+Fields such as `env`, `vars`, `workdir`, `sync_out`, `sync_out_exclude`, and
+`log` use raw string
 placeholder expansion. Only `{name}` and `{name:raw}` are valid in those
 fields.
 

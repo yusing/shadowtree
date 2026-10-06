@@ -41,6 +41,7 @@
     "shell"
     "shell_prelude"
     "sync_out"
+    "sync_out_exclude"
     "env"
     "vars"
     "var_commands"

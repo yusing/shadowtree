@@ -34,7 +34,7 @@ func TestCompletionsIncludeKeysForCurrentTable(t *testing.T) {
 	text := `[recipes.build]
 `
 	items := completionsAt(t.Context(), text, lspPosition{Line: 1, Character: 0})
-	assertLabels(t, items, "cmd", "requires", "sandboxed", "sync_out", "log", "log_stages", "log_tee", "all")
+	assertLabels(t, items, "cmd", "requires", "sandboxed", "sync_out", "sync_out_exclude", "log", "log_stages", "log_tee", "all")
 }
 
 func TestCompletionsIncludeKeysForRequiresTable(t *testing.T) {

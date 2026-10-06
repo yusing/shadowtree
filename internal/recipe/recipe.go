@@ -139,29 +139,30 @@ type Config struct {
 }
 
 type Recipe struct {
-	Help         string                  `toml:"help"`
-	Arguments    map[string]Argument     `toml:"arguments"`
-	Presets      map[string]RecipePreset `toml:"presets"`
-	Requires     Requirements            `toml:"requires"`
-	Vars         map[string]string       `toml:"vars"`
-	Shell        string                  `toml:"shell"`
-	ShellPrelude string                  `toml:"shell_prelude"`
-	Sandboxed    *bool                   `toml:"sandboxed"`
-	ForEach      Command                 `toml:"for_each"`
-	Workdir      string                  `toml:"workdir"`
-	Cmd          Command                 `toml:"cmd"`
-	Pre          StageCommands           `toml:"pre"`
-	Post         StageCommands           `toml:"post"`
-	Env          map[string]string       `toml:"env"`
-	SyncOut      []string                `toml:"sync_out"`
-	Log          string                  `toml:"log"`
-	LogStages    []string                `toml:"log_stages"`
-	LogTee       *bool                   `toml:"log_tee"`
-	All          bool                    `toml:"all"`
-	varsExpanded bool
-	all          *allPlan
-	builtin      bool
-	overridden   bool
+	Help           string                  `toml:"help"`
+	Arguments      map[string]Argument     `toml:"arguments"`
+	Presets        map[string]RecipePreset `toml:"presets"`
+	Requires       Requirements            `toml:"requires"`
+	Vars           map[string]string       `toml:"vars"`
+	Shell          string                  `toml:"shell"`
+	ShellPrelude   string                  `toml:"shell_prelude"`
+	Sandboxed      *bool                   `toml:"sandboxed"`
+	ForEach        Command                 `toml:"for_each"`
+	Workdir        string                  `toml:"workdir"`
+	Cmd            Command                 `toml:"cmd"`
+	Pre            StageCommands           `toml:"pre"`
+	Post           StageCommands           `toml:"post"`
+	Env            map[string]string       `toml:"env"`
+	SyncOut        []string                `toml:"sync_out"`
+	SyncOutExclude []string                `toml:"sync_out_exclude"`
+	Log            string                  `toml:"log"`
+	LogStages      []string                `toml:"log_stages"`
+	LogTee         *bool                   `toml:"log_tee"`
+	All            bool                    `toml:"all"`
+	varsExpanded   bool
+	all            *allPlan
+	builtin        bool
+	overridden     bool
 }
 
 // BuiltinStatus reports whether rec comes from a profile and whether project
@@ -196,25 +197,26 @@ type RecipePreset struct {
 }
 
 type Resolved struct {
-	Name         string
-	Recipe       Recipe
-	Main         Command
-	Preset       string
-	Arguments    map[string]string
-	VariadicArgs []string
-	SyncOut      []string
-	Sandboxed    bool
-	GlobalEnv    map[string]string
-	ConfigPath   string
-	Profile      string
-	RunID        string
-	LogPath      string
-	LogStages    []string
-	LogTee       bool
-	Warnings     []string
-	Scope        Scope
-	TargetDomain string
-	TargetSource TargetSource
+	Name           string
+	Recipe         Recipe
+	Main           Command
+	Preset         string
+	Arguments      map[string]string
+	VariadicArgs   []string
+	SyncOut        []string
+	SyncOutExclude []string
+	Sandboxed      bool
+	GlobalEnv      map[string]string
+	ConfigPath     string
+	Profile        string
+	RunID          string
+	LogPath        string
+	LogStages      []string
+	LogTee         bool
+	Warnings       []string
+	Scope          Scope
+	TargetDomain   string
+	TargetSource   TargetSource
 }
 
 type ResolveOptions struct {
@@ -588,6 +590,9 @@ func MergeRecipe(base, override Recipe) Recipe {
 	if override.SyncOut != nil {
 		out.SyncOut = slices.Clone(override.SyncOut)
 	}
+	if override.SyncOutExclude != nil {
+		out.SyncOutExclude = slices.Clone(override.SyncOutExclude)
+	}
 	if override.Log != "" {
 		out.Log = override.Log
 	}
@@ -727,12 +732,19 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	if containsVariadicArgsPlaceholder(globalSyncOut) || containsVariadicArgsPlaceholder(rec.SyncOut) {
 		return Resolved{}, fmt.Errorf("recipe %q sync_out: %s is not supported in sync_out", name, variadicArgsPlaceholder)
 	}
+	if containsVariadicArgsPlaceholder(rec.SyncOutExclude) {
+		return Resolved{}, fmt.Errorf("recipe %q sync_out_exclude: %s is not supported in sync_out_exclude", name, variadicArgsPlaceholder)
+	}
 	sandboxed := RecipeSandboxed(rec)
-	var syncOut []string
+	var syncOut, syncOutExclude []string
 	if sandboxed {
 		syncOut, err = expandStrings(slices.Concat(globalSyncOut, rec.SyncOut), values, nil)
 		if err != nil {
 			return Resolved{}, fmt.Errorf("recipe %q sync_out: %w", name, err)
+		}
+		syncOutExclude, err = expandStrings(rec.SyncOutExclude, values, nil)
+		if err != nil {
+			return Resolved{}, fmt.Errorf("recipe %q sync_out_exclude: %w", name, err)
 		}
 	}
 	logPath := rec.Log
@@ -813,25 +825,26 @@ func ResolveWithOptions(name string, rec Recipe, cliArgs, globalSyncOut []string
 	resolvedRecipe.Post = post
 	resolvedRecipe.Env = env
 	return Resolved{
-		Name:         name,
-		Recipe:       resolvedRecipe,
-		Main:         cmd,
-		Preset:       presetName,
-		Arguments:    argValues,
-		VariadicArgs: variadicArgs,
-		SyncOut:      syncOut,
-		Sandboxed:    sandboxed,
-		GlobalEnv:    expandedGlobalEnv,
-		ConfigPath:   configPath,
-		Profile:      profile,
-		RunID:        runID,
-		LogPath:      logPath,
-		LogStages:    logStages,
-		LogTee:       logTee,
-		Warnings:     warnings,
-		Scope:        opts.Scope,
-		TargetDomain: opts.TargetDomain,
-		TargetSource: opts.TargetSource,
+		Name:           name,
+		Recipe:         resolvedRecipe,
+		Main:           cmd,
+		Preset:         presetName,
+		Arguments:      argValues,
+		VariadicArgs:   variadicArgs,
+		SyncOut:        syncOut,
+		SyncOutExclude: syncOutExclude,
+		Sandboxed:      sandboxed,
+		GlobalEnv:      expandedGlobalEnv,
+		ConfigPath:     configPath,
+		Profile:        profile,
+		RunID:          runID,
+		LogPath:        logPath,
+		LogStages:      logStages,
+		LogTee:         logTee,
+		Warnings:       warnings,
+		Scope:          opts.Scope,
+		TargetDomain:   opts.TargetDomain,
+		TargetSource:   opts.TargetSource,
 	}, nil
 }
 

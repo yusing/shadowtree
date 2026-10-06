@@ -622,6 +622,12 @@ func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.R
 				fmt.Fprintf(w, "    %s\n", colors.literal(path))
 			}
 		}
+		if len(rec.SyncOutExclude) > 0 {
+			fmt.Fprintf(w, "\n%s\n\n", colors.section("- Sync out exclude:"))
+			for _, path := range rec.SyncOutExclude {
+				fmt.Fprintf(w, "    %s\n", colors.literal(path))
+			}
+		}
 	}
 	return nil
 }

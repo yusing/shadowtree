@@ -57,7 +57,7 @@
     },
     "vars": {
       "type": "object",
-      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, shell_prelude, workdir, sync_out, and log.",
+      "description": "Static placeholder values. Use {NAME} in vars, env, cmd, pre, post, for_each, shell_prelude, workdir, sync_out, sync_out_exclude, and log.",
       "additionalProperties": false,
       "patternProperties": {
         "^(?!run_id$)[A-Za-z_][A-Za-z0-9_]*$": {
@@ -163,6 +163,9 @@
         },
         "sync_out": {
           "$ref": "#/definitions/syncOut"
+        },
+        "sync_out_exclude": {
+          "$ref": "#/definitions/syncOutExclude"
         },
         "log": {
           "type": "string",
@@ -403,7 +406,14 @@
     },
     "syncOut": {
       "type": "array",
-      "description": "Paths mirrored back to the host checkout after a successful sandboxed run. Missing paths are mirrored as deletions.",
+      "description": "Paths mirrored back to the host checkout after a successful sandboxed run. Missing paths are mirrored as deletions. \".\" selects the whole workspace, like --sync-out-all. Only changed files are written.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "syncOutExclude": {
+      "type": "array",
+      "description": "Paths a sandboxed run may change but never syncs back, under sync_out, --sync-out, or --sync-out-all. Host copies of these paths are left untouched.",
       "items": {
         "type": "string"
       }

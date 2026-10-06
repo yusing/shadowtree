@@ -65,7 +65,15 @@ Exceptions for sandboxed runs:
 
 - `--sync-out PATH` mirrors selected paths back after a successful recipe.
 - Recipe-level `sync_out` mirrors selected paths back after a successful recipe.
-- `--sync-out-all` copies the whole workspace back after a successful recipe.
+- `--sync-out-all`, or a `.` sync-out path, applies the whole workspace back
+  after a successful recipe.
+
+Sync-out writes only changes: a file whose size and modification time match
+the host copy, or whose contents match, is left untouched, and host paths that
+are absent from the sandbox are deleted. Recipe-level `sync_out_exclude` paths
+are never synced back by any sync-out mode, and their host copies are left
+untouched even when an enclosing directory is synced or deleted. Use it for
+scratch state that `pre` prepares inside the sandbox.
 
 Unsandboxed recipes set `sandboxed = false` and run directly in the host
 checkout. `--sync-out`, `sync_out`, and `--sync-out-all` only apply to sandboxed
@@ -180,6 +188,7 @@ pre = ["cmd arg"]
 cmd = "cmd {placeholders}"
 post = ["cmd arg"]
 sync_out = ["path/from/project/root"]
+sync_out_exclude = ["path/never/synced"]
 log = "logs/{run_id}.log"
 log_stages = ["pre", "cmd", "post"]
 log_tee = true
@@ -264,7 +273,8 @@ shell quotes for free string or path values, for example `foo "{bar}"`.
 - `{name:raw}` expands raw text and documents intentional unsafe shell text or
   word splitting.
 
-In non-shell fields such as `env`, `vars`, `workdir`, `sync_out`, and `log`,
+In non-shell fields such as `env`, `vars`, `workdir`, `sync_out`,
+`sync_out_exclude`, and `log`,
 `{name}` and `{name:raw}` use raw string substitution; shell-specific modes are
 invalid. `{@}` is only special in `cmd`, where it splices leftover recipe CLI
 args as separate shell-quoted words and must occupy a whole shell word.
@@ -462,7 +472,13 @@ inheritable plan, and together with `for_each` or `workdir`. See
 `sync_out`
 : Paths mirrored back to the host checkout after a successful sandboxed recipe.
 If a selected path is deleted in the sandbox, it is deleted from the host
-checkout. Ignored when `sandboxed = false`.
+checkout. `.` selects the whole workspace, like `--sync-out-all`. Ignored when
+`sandboxed = false`.
+
+`sync_out_exclude`
+: Paths the sandboxed recipe may change but never syncs back, under `sync_out`,
+`--sync-out`, or `--sync-out-all`. Host copies of these paths stay untouched.
+Paths must stay under the workspace. Ignored when `sandboxed = false`.
 
 `log`
 : Optional recipe log file path. The path is expanded with recipe placeholders,
@@ -714,7 +730,7 @@ any recipe command runs.
 Argument values are exposed to recipe commands through `{name}` placeholders.
 Shared vars are exposed through the same placeholder syntax. Placeholders are
 expanded in `vars`, `env`, `cmd`, `pre`, `post`, `for_each`, `shell_prelude`,
-`workdir`, `sync_out`, and `log`.
+`workdir`, `sync_out`, `sync_out_exclude`, and `log`.
 Shell parameter expansion such as `${HOME}` is not treated as a Shadowtree
 placeholder.
 In shell command strings, placeholders inside single or double quotes are

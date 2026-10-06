@@ -84,6 +84,7 @@ var recipeKeys = []completion{
 	{Label: "pre", InsertText: "pre = []", Kind: completionKindKeyword, Detail: "Commands before main"},
 	{Label: "post", InsertText: "post = []", Kind: completionKindKeyword, Detail: "Commands after main"},
 	{Label: "sync_out", InsertText: "sync_out = []", Kind: completionKindKeyword, Detail: "Recipe sync-out paths"},
+	{Label: "sync_out_exclude", InsertText: "sync_out_exclude = []", Kind: completionKindKeyword, Detail: "Paths never synced back"},
 	{Label: "log", InsertText: `log = ""`, Kind: completionKindKeyword, Detail: "Recipe log file"},
 	{Label: "log_stages", InsertText: `log_stages = ["pre", "cmd", "post"]`, Kind: completionKindKeyword, Detail: "Recipe stages written to log with boundaries"},
 	{Label: "log_tee", InsertText: "log_tee = true", Kind: completionKindKeyword, Detail: "Also write logged output to the terminal"},
@@ -3329,7 +3330,10 @@ func keyBeforeValue(prefix string) (string, bool) {
 }
 
 func syncOutArrayStringValueAt(lines []string, pos lspPosition) bool {
-	_, ok := arrayStringRegionAt(lines, pos, "sync_out")
+	if _, ok := arrayStringRegionAt(lines, pos, "sync_out"); ok {
+		return true
+	}
+	_, ok := arrayStringRegionAt(lines, pos, "sync_out_exclude")
 	return ok
 }
 

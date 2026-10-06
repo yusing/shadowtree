@@ -1563,6 +1563,16 @@ sync_out = ["out/{non_existent}.txt"]
 			end:   len(`sync_out = ["out/{non_existent}`),
 		},
 		{
+			name: "sync_out_exclude",
+			text: `[recipes.test]
+cmd = "true"
+sync_out_exclude = ["out/{non_existent}"]
+`,
+			line:  2,
+			start: len(`sync_out_exclude = ["out/`),
+			end:   len(`sync_out_exclude = ["out/{non_existent}`),
+		},
+		{
 			name: "log",
 			text: `[recipes.test]
 cmd = "true"

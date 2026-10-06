@@ -385,23 +385,55 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err := mirrorRecipeLogToSandbox(logPath, source, sandbox); err != nil {
 		return err
 	}
-	if options.SyncOutAll {
+	excluded, err := syncOutExclusions(options.Resolved.SyncOutExclude)
+	if err != nil {
+		return err
+	}
+	syncAll, paths := splitSyncOutPaths(options.Resolved.SyncOut)
+	if options.SyncOutAll || syncAll {
 		if options.Verbose {
 			fmt.Fprintln(stderr, "shadowtree: syncing entire workspace")
 		}
-		return sandbox.SyncAll(source)
+		return sandbox.SyncAll(source, excluded)
 	}
-	syncRoot, cleanup, err := sandbox.SyncRoot(options.Resolved.SyncOut)
+	syncRoot, cleanup, err := sandbox.SyncRoot(paths)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	for _, path := range options.Resolved.SyncOut {
-		if err := SyncPath(syncRoot, source, path); err != nil {
+	for _, path := range paths {
+		if err := SyncPath(syncRoot, source, path, excluded); err != nil {
 			return fmt.Errorf("sync %s: %w", path, err)
 		}
 	}
 	return nil
+}
+
+// splitSyncOutPaths reports whether paths select the workspace root, which
+// syncs the whole workspace, and returns the remaining paths.
+func splitSyncOutPaths(paths []string) (bool, []string) {
+	var all bool
+	rest := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if filepath.Clean(path) == "." {
+			all = true
+			continue
+		}
+		rest = append(rest, path)
+	}
+	return all, rest
+}
+
+func syncOutExclusions(paths []string) (map[string]struct{}, error) {
+	excluded := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		name, err := cleanSyncOutPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("sync_out_exclude: %w", err)
+		}
+		excluded[name] = struct{}{}
+	}
+	return excluded, nil
 }
 
 type sandboxWorkspace struct {
@@ -450,11 +482,26 @@ func (sandbox *sandboxWorkspace) SyncRoot(paths []string) (string, func(), error
 	return root, func() { _ = os.RemoveAll(root) }, nil
 }
 
-func (sandbox *sandboxWorkspace) SyncAll(source string) error {
+// SyncAll applies the workspace's changes to source, leaving excluded paths
+// untouched.
+func (sandbox *sandboxWorkspace) SyncAll(source string, excluded map[string]struct{}) error {
 	if !sandbox.overlay {
-		return replaceDirContents(sandbox.root, source)
+		srcRoot, err := os.OpenRoot(sandbox.root)
+		if err != nil {
+			return err
+		}
+		defer srcRoot.Close()
+		dstRoot, err := os.OpenRoot(source)
+		if err != nil {
+			return err
+		}
+		defer dstRoot.Close()
+		return mirrorRootPath(srcRoot, dstRoot, ".", excluded)
 	}
-	return applyOverlayUpper(sandbox.upper, source, sandbox.protectedWhiteouts)
+	skipped := make(map[string]struct{}, len(excluded)+len(sandbox.protectedWhiteouts))
+	maps.Copy(skipped, excluded)
+	maps.Copy(skipped, sandbox.protectedWhiteouts)
+	return applyOverlayUpper(sandbox.upper, source, skipped)
 }
 
 func (sandbox *sandboxWorkspace) Close() error {
@@ -1127,6 +1174,9 @@ func printPlan(w io.Writer, resolved recipe.Resolved) {
 	for _, path := range resolved.SyncOut {
 		fmt.Fprintf(w, "sync_out: %s\n", path)
 	}
+	for _, path := range resolved.SyncOutExclude {
+		fmt.Fprintf(w, "sync_out_exclude: %s\n", path)
+	}
 }
 
 func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
@@ -1144,6 +1194,9 @@ func printExpandedPlan(w io.Writer, resolved recipe.Resolved) {
 		for _, path := range resolved.SyncOut {
 			fmt.Fprintf(w, "sync_out: %s\n", path)
 		}
+	}
+	for _, path := range resolved.SyncOutExclude {
+		fmt.Fprintf(w, "sync_out_exclude: %s\n", path)
 	}
 	if resolved.LogPath == "" {
 		fmt.Fprintln(w, "log: <none>")
@@ -1414,10 +1467,15 @@ func copySourcePathToRoot(srcRoot *os.Root, name string, dstRoot *os.Root, exclu
 	return err
 }
 
-func SyncPath(workspace, source, requested string) error {
+// SyncPath mirrors requested from workspace to source, leaving excluded paths
+// and unchanged files untouched.
+func SyncPath(workspace, source, requested string, excluded map[string]struct{}) error {
 	cleaned, err := cleanSyncOutPath(requested)
 	if err != nil {
 		return err
+	}
+	if isExcludedPath(cleaned, excluded) {
+		return nil
 	}
 	srcRoot, err := os.OpenRoot(workspace)
 	if err != nil {
@@ -1431,48 +1489,137 @@ func SyncPath(workspace, source, requested string) error {
 	}
 	defer dstRoot.Close()
 	if statErr != nil {
-		if errors.Is(statErr, os.ErrNotExist) {
-			return removeRootPathIfPresent(dstRoot, cleaned)
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
 		}
-		return statErr
+		if hasExcludedDescendant(cleaned, excluded) {
+			return removeRootPathExcept(dstRoot, cleaned, excluded)
+		}
+		return removeRootPathIfPresent(dstRoot, cleaned)
 	}
 	if info.IsDir() && shouldSkip(cleaned, fileInfoDirEntry{info: info}) {
 		return removeRootPath(dstRoot, cleaned)
 	}
-	if info.IsDir() {
-		if err := removeRootPath(dstRoot, cleaned); err != nil {
-			return err
-		}
+	if mode := info.Mode(); !mode.IsDir() && !mode.IsRegular() && mode.Type() != os.ModeSymlink {
+		return fmt.Errorf("unsupported sync_out file type: %s", requested)
 	}
-	supported, err := copyRootPathToRoot(srcRoot, cleaned, info, dstRoot, cleaned, nil)
+	return mirrorRootPath(srcRoot, dstRoot, cleaned, excluded)
+}
+
+// mirrorRootPath makes name in dstRoot match name in srcRoot. Excluded paths,
+// skipped entries such as .git, and files that already match stay untouched,
+// so only changes reach dstRoot.
+func mirrorRootPath(srcRoot, dstRoot *os.Root, name string, excluded map[string]struct{}) error {
+	if isExcludedPath(name, excluded) {
+		return nil
+	}
+	srcInfo, err := srcRoot.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return removeRootPathExcept(dstRoot, name, excluded)
+	}
 	if err != nil {
 		return err
 	}
-	if !supported {
-		return fmt.Errorf("unsupported sync_out file type: %s", requested)
+	// A destination that cannot be inspected, such as one below an escaping
+	// symlink, is treated as absent; the copy below replaces it.
+	dstInfo, dstErr := dstRoot.Lstat(name)
+	dstExists := dstErr == nil
+	if !srcInfo.IsDir() {
+		if dstExists && dstInfo.IsDir() && hasExcludedDescendant(name, excluded) {
+			return fmt.Errorf("cannot replace directory %s: it contains a sync_out_exclude path", name)
+		}
+		if dstExists && sameRootEntry(srcRoot, dstRoot, name, srcInfo, dstInfo) {
+			return nil
+		}
+		_, err := copyRootPathToRoot(srcRoot, name, srcInfo, dstRoot, name, nil)
+		return err
+	}
+	if name != "." {
+		if err := mkdirAllRootReplacingLeaf(dstRoot, name, srcInfo.Mode().Perm()); err != nil {
+			return err
+		}
+		if err := dstRoot.Chmod(name, srcInfo.Mode().Perm()); err != nil {
+			return err
+		}
+	}
+	names, err := rootDirEntryNames(srcRoot, name)
+	if err != nil {
+		return err
+	}
+	dstNames, err := rootDirEntryNames(dstRoot, name)
+	if err != nil {
+		return err
+	}
+	names = append(names, dstNames...)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	for _, child := range names {
+		if err := mirrorRootPath(srcRoot, dstRoot, pathJoinSlash(name, child), excluded); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func replaceDirContents(src, dst string) error {
-	dstRoot, err := os.OpenRoot(dst)
+// rootDirEntryNames lists dir's entries, omitting the ones sandboxes skip.
+func rootDirEntryNames(root *os.Root, dir string) ([]string, error) {
+	f, err := root.Open(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer dstRoot.Close()
-	entries, err := os.ReadDir(dst)
-	if err != nil {
-		return err
+	entries, readErr := f.ReadDir(-1)
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, readErr
 	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if shouldSkip(entry.Name(), entry) {
-			continue
-		}
-		if err := dstRoot.RemoveAll(entry.Name()); err != nil {
-			return err
+		if !shouldSkip(pathJoinSlash(dir, entry.Name()), entry) {
+			names = append(names, entry.Name())
 		}
 	}
-	return copyTreeToRoot(src, dstRoot, ".")
+	return names, nil
+}
+
+// sameRootEntry reports whether a non-directory entry already matches. Like
+// rsync's quick check, a regular file with the same size and modification time
+// is assumed unchanged; otherwise the contents are compared.
+func sameRootEntry(srcRoot, dstRoot *os.Root, name string, srcInfo, dstInfo fs.FileInfo) bool {
+	srcMode, dstMode := srcInfo.Mode(), dstInfo.Mode()
+	if srcMode != dstMode {
+		return false
+	}
+	switch {
+	case srcMode.Type() == os.ModeSymlink:
+		srcTarget, srcErr := srcRoot.Readlink(name)
+		dstTarget, dstErr := dstRoot.Readlink(name)
+		return srcErr == nil && dstErr == nil && srcTarget == dstTarget
+	case srcMode.IsRegular():
+		if srcInfo.Size() != dstInfo.Size() {
+			return false
+		}
+		if srcInfo.ModTime().Equal(dstInfo.ModTime()) {
+			return true
+		}
+		return sameRootFileContents(srcRoot, dstRoot, name)
+	default:
+		return false
+	}
+}
+
+func sameRootFileContents(srcRoot, dstRoot *os.Root, name string) bool {
+	srcData, err := srcRoot.ReadFile(name)
+	if err != nil {
+		return false
+	}
+	dstData, err := dstRoot.ReadFile(name)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(srcData, dstData)
 }
 
 func applyOverlayUpper(upperRoot, dstRoot string, excluded map[string]struct{}) error {
@@ -1489,7 +1636,7 @@ func applyOverlayUpperPaths(upperRoot, dstRoot string, paths []string) error {
 	}
 	defer dst.Close()
 	return walkSelectedUpperEntries(upperRoot, paths, func(name, path string, info fs.FileInfo) error {
-		return applyOverlayUpperEntry(dst, name, path, info)
+		return applyOverlayUpperEntry(dst, name, path, info, nil)
 	})
 }
 
@@ -1533,7 +1680,7 @@ func applyOverlayUpperFiltered(upperRoot, dstRoot string, excluded map[string]st
 		if err != nil {
 			return err
 		}
-		return applyOverlayUpperEntry(dst, name, src, info)
+		return applyOverlayUpperEntry(dst, name, src, info, excluded)
 	})
 }
 
@@ -1615,9 +1762,11 @@ func pathPrefixes(name string) []string {
 	return prefixes
 }
 
-func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo) error {
+// applyOverlayUpperEntry applies one upper entry to dst. Removals keep the
+// excluded paths below name.
+func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo, excluded map[string]struct{}) error {
 	if isOverlayWhiteout(src, info) {
-		return removeRootPath(dst, name)
+		return removeRootPathExcept(dst, name, excluded)
 	}
 	mode := info.Mode()
 	switch {
@@ -1629,7 +1778,7 @@ func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo) er
 			return err
 		}
 		if isOverlayOpaqueDir(src) {
-			if err := clearRootDir(dst, name); err != nil {
+			if err := clearRootDirExcept(dst, name, excluded); err != nil {
 				return err
 			}
 		}
@@ -1639,17 +1788,17 @@ func applyOverlayUpperEntry(dst *os.Root, name, src string, info fs.FileInfo) er
 		if err != nil {
 			return err
 		}
-		if err := removeRootPath(dst, name); err != nil {
+		if err := removeRootPathExcept(dst, name, excluded); err != nil {
 			return err
 		}
 		return dst.Symlink(target, name)
 	case mode.Type() == 0:
-		if err := removeRootPath(dst, name); err != nil {
+		if err := removeRootPathExcept(dst, name, excluded); err != nil {
 			return err
 		}
 		return copyRegularFileToRoot(dst, name, src, mode.Perm())
 	default:
-		return removeRootPath(dst, name)
+		return removeRootPathExcept(dst, name, excluded)
 	}
 }
 
@@ -1982,7 +2131,29 @@ func chmodTreeDirs(path string) error {
 	})
 }
 
-func clearRootDir(root *os.Root, dirName string) error {
+// removeRootPathExcept removes name from root but keeps excluded paths below
+// it, removing only their non-excluded siblings.
+func removeRootPathExcept(root *os.Root, name string, excluded map[string]struct{}) error {
+	if isExcludedPath(name, excluded) {
+		return nil
+	}
+	if !hasExcludedDescendant(name, excluded) {
+		return removeRootPath(root, name)
+	}
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return removeRootPath(root, name)
+	}
+	return clearRootDirExcept(root, name, excluded)
+}
+
+func clearRootDirExcept(root *os.Root, dirName string, excluded map[string]struct{}) error {
 	dir, err := root.Open(dirName)
 	if err != nil {
 		return err
@@ -1996,8 +2167,8 @@ func clearRootDir(root *os.Root, dirName string) error {
 		return closeErr
 	}
 	for _, entry := range entries {
-		name := filepath.ToSlash(filepath.Join(dirName, entry.Name()))
-		if err := root.RemoveAll(name); err != nil {
+		name := pathJoinSlash(dirName, entry.Name())
+		if err := removeRootPathExcept(root, name, excluded); err != nil {
 			return err
 		}
 	}
@@ -2023,6 +2194,17 @@ func isExcludedPath(name string, excluded map[string]struct{}) bool {
 	name = filepath.ToSlash(name)
 	for excludedName := range excluded {
 		if sameOrDescendant(name, excludedName) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExcludedDescendant reports whether an excluded path lies strictly below
+// name.
+func hasExcludedDescendant(name string, excluded map[string]struct{}) bool {
+	for excludedName := range excluded {
+		if name == "." || strings.HasPrefix(excludedName, name+"/") {
 			return true
 		}
 	}

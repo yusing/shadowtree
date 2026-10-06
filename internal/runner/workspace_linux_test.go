@@ -306,6 +306,49 @@ func TestApplyOverlayUpperExcludesSeededWhiteouts(t *testing.T) {
 	}
 }
 
+func TestApplyOverlayUpperKeepsExcludedPathsBelowWhiteoutAndOpaqueDir(t *testing.T) {
+	upper := t.TempDir()
+	dst := t.TempDir()
+	for _, name := range []string{"gone/other.txt", "gone/gen/a.txt", "opaque/other.txt", "opaque/gen/a.txt"} {
+		path := filepath.Join(dst, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("host"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	whiteout := filepath.Join(upper, "gone")
+	if err := os.WriteFile(whiteout, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setOverlayXattr(t, whiteout, "whiteout")
+	opaque := filepath.Join(upper, "opaque")
+	if err := os.Mkdir(opaque, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setOverlayXattr(t, opaque, "opaque")
+
+	excluded := map[string]struct{}{"gone/gen": {}, "opaque/gen": {}}
+	if err := applyOverlayUpper(upper, dst, excluded); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gone/other.txt", "opaque/other.txt"} {
+		if _, err := os.Stat(filepath.Join(dst, filepath.FromSlash(name))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s err = %v, want not exist", name, err)
+		}
+	}
+	for _, name := range []string{"gone/gen/a.txt", "opaque/gen/a.txt"} {
+		data, err := os.ReadFile(filepath.Join(dst, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "host" {
+			t.Fatalf("%s = %q, want host", name, data)
+		}
+	}
+}
+
 func TestApplyOverlayUpperSkipsUnsupportedFileType(t *testing.T) {
 	upper := t.TempDir()
 	dst := t.TempDir()
@@ -386,7 +429,7 @@ func TestOverlaySyncRootDirectoryDeletionMirrorsToSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if err := SyncPath(syncRoot, source, "dir"); err != nil {
+	if err := SyncPath(syncRoot, source, "dir", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(source, "dir", "stale.txt")); !errors.Is(err, os.ErrNotExist) {
@@ -539,7 +582,7 @@ func TestNamespaceCommandTimeoutKillsBackgroundWriterBeforeSyncOut(t *testing.T)
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if err := SyncPath(syncRoot, source, "started.txt"); err != nil {
+	if err := SyncPath(syncRoot, source, "started.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	assertFileContent(t, filepath.Join(source, "started.txt"), "started")
@@ -552,7 +595,7 @@ func TestNamespaceCommandTimeoutKillsBackgroundWriterBeforeSyncOut(t *testing.T)
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if err := SyncPath(syncRoot, source, "late.txt"); err != nil {
+	if err := SyncPath(syncRoot, source, "late.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(source, "late.txt")); !errors.Is(err, os.ErrNotExist) {

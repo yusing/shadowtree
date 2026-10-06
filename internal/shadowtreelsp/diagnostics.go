@@ -790,7 +790,7 @@ func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) 
 		if !ok || !placeholderDiagnosticValueKey(table, key) {
 			continue
 		}
-		if key == "sync_out" && recipeTable(table) {
+		if (key == "sync_out" || key == "sync_out_exclude") && recipeTable(table) {
 			listRegions, endLine := commandListStringRegions(lines, lineNo, table, key, "", func(string) bool {
 				return true
 			})
@@ -809,7 +809,7 @@ func placeholderDiagnosticRegions(lines []string, scriptRegions []scriptRegion) 
 
 func placeholderDiagnosticKey(key string) bool {
 	switch key {
-	case "cmd", "pre", "post", "for_each", "workdir", "sync_out", "shell_prelude", "log":
+	case "cmd", "pre", "post", "for_each", "workdir", "sync_out", "sync_out_exclude", "shell_prelude", "log":
 		return true
 	default:
 		return false
@@ -823,7 +823,7 @@ func placeholderDiagnosticValueKey(table, key string) bool {
 	if varsTable(table) {
 		return true
 	}
-	return key == "workdir" || key == "log" || key == "sync_out" && recipeTable(table)
+	return key == "workdir" || key == "log" || (key == "sync_out" || key == "sync_out_exclude") && recipeTable(table)
 }
 
 func envTable(table string) bool {
