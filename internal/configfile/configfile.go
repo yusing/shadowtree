@@ -612,6 +612,12 @@ func crossConfigTargetDir(path, configPath, sourceDir string) (string, string, e
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", "", fmt.Errorf("@%s: path is outside source", path)
 	}
+	// Containment is checked on resolved paths, but commands should see the
+	// logical paths the user works in when those also nest, as they do below a
+	// symlinked checkout or temp dir.
+	if logicalRel, err := filepath.Rel(source, target); err == nil && filepath.IsLocal(logicalRel) {
+		return target, source, nil
+	}
 	return resolvedTarget, resolvedSource, nil
 }
 
