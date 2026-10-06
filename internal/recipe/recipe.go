@@ -2626,12 +2626,28 @@ func commandOutput(ctx context.Context, dir string, env map[string]string, comma
 	command = ShellCommand(command)
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = dir
-	cmd.Env = mergedEnv(os.Environ(), env)
+	cmd.Env = WithPWD(mergedEnv(os.Environ(), env), dir)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return string(output), nil
+}
+
+// WithPWD returns env with PWD set to dir. os/exec sets PWD only when Cmd.Env
+// is nil; without it, a child under a symlinked dir sees a stale PWD and
+// reports physical paths, which go list then returns outside the logical root.
+func WithPWD(env []string, dir string) []string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if !strings.HasPrefix(item, "PWD=") {
+			out = append(out, item)
+		}
+	}
+	return append(out, "PWD="+dir)
 }
 
 func mergedEnv(base []string, overlays ...map[string]string) []string {

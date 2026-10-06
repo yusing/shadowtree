@@ -189,7 +189,7 @@ func discoverGoWorkspaceModules(ctx context.Context, baseDir string, env []strin
 	}
 	cmd := exec.CommandContext(ctx, "go", "env", "GOWORK")
 	cmd.Dir = baseDir
-	cmd.Env = env
+	cmd.Env = WithPWD(env, baseDir)
 	output, err := cmd.Output()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -240,7 +240,7 @@ func goMainPackageExecutionTargets(ctx context.Context, baseDir string, env, bui
 		args = append(args, "./...")
 		cmd := exec.CommandContext(ctx, "go", args...)
 		cmd.Dir = moduleDir
-		cmd.Env = env
+		cmd.Env = WithPWD(env, moduleDir)
 		output, err := cmd.Output()
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {

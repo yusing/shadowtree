@@ -817,7 +817,7 @@ func runExternalCommand(ctx context.Context, dir string, env []string, command r
 	cmd := exec.CommandContext(ctx, executable, command[1:]...)
 	cmd.Args[0] = command[0]
 	cmd.Dir = dir
-	cmd.Env = env
+	cmd.Env = recipe.WithPWD(env, dir)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
