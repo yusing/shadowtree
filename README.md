@@ -56,6 +56,10 @@ exactly unless it opts into a profile with `profile = "go"`,
 
 <!-- markdownlint-enable MD013 -->
 
+Recipe names beginning with `_` are hidden from recipe lists and shell
+recipe-name completion. Use `shadowtree --verbose recipes` to show them. They
+remain invocable by name and usable in recipe references.
+
 Global flags come before the command or recipe name:
 
 ```sh
@@ -175,7 +179,7 @@ Global flags:
 | `--expanded` | With `--print`, include expanded scripts, values, env, logs, and sync-out paths |
 | `--check` | Validate the resolved recipe without running commands |
 | `--shell` | With `--check`, parse expanded `sh` and `bash` scripts |
-| `--verbose` | Show workspace details and compact stage boundaries |
+| `--verbose` | Show hidden recipes, workspace details, and compact stage boundaries |
 | `--help` | Show basic CLI help |
 | `--version` | Print the version |
 

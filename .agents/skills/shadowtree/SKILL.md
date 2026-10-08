@@ -68,6 +68,10 @@ from another command.
 - Inspect once per unresolved decision. Reuse that result unless the recipe,
   arguments, working directory, or configuration changes.
 
+Recipe names beginning with `_` are hidden from CLI recipe lists and shell
+recipe-name completion unless `--verbose` is enabled. They remain invocable,
+inspectable with `help <recipe>`, and usable in recipe references.
+
 ## Lifecycle
 
 1. `pre` runs in order; a failure there skips `cmd`.

@@ -2,6 +2,7 @@
 #
 # Try:
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml recipes
+#   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --verbose recipes
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml help kitchen-sink color=false
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print kitchen-sink target=api
 #   go run ./cmd/shadowtree --config examples/all-features.shadowtree.toml --print --expanded kitchen-sink preset=smoke
@@ -252,3 +253,8 @@ post = ["printf 'dispatch complete\\n'"]
 help = "Exercise sandboxed=false; sync_out is unnecessary for direct checkout writes."
 sandboxed = false
 cmd = "printf 'unsandboxed demo only\\n'"
+
+# Hidden from recipe lists and shell recipe-name completion unless --verbose is enabled.
+[recipes._helper]
+help = "Hidden helper, still invocable by name or recipe reference."
+cmd = "printf 'hidden helper\n'"

@@ -23,6 +23,7 @@ type Candidate struct {
 }
 
 type Options struct {
+	Verbose                    bool
 	Dir                        string
 	ConfigPath                 string
 	Env                        map[string]string
@@ -329,7 +330,7 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 	if candidates, ok := staticCandidates(spec, words); ok {
 		return candidates, nil
 	}
-	if candidates, ok := helpCandidates(words, recipes); ok {
+	if candidates, ok := helpCandidates(words, recipes, opts.Verbose); ok {
 		return candidates, nil
 	}
 	if candidates, ok := argumentCandidates(ctx, spec, words, recipes, opts); ok {
@@ -346,7 +347,7 @@ func Candidates(ctx context.Context, shell string, words []string, recipes map[s
 		{Value: "config", Help: "Print resolved config"},
 		{Value: "completion", Help: "Generate shell completion"},
 	}
-	candidates = append(candidates, recipeCandidates(words, recipes)...)
+	candidates = append(candidates, recipeCandidates(words, recipes, opts.Verbose)...)
 	return filterPrefix(candidates, currentWord(words)), nil
 }
 
@@ -808,7 +809,7 @@ func commandSelected(words []string) bool {
 	return true
 }
 
-func helpCandidates(words []string, recipes map[string]recipe.Recipe) ([]Candidate, bool) {
+func helpCandidates(words []string, recipes map[string]recipe.Recipe, verbose bool) ([]Candidate, bool) {
 	positionals := positionalWords(words)
 	current := currentWord(words)
 	if len(positionals) == 0 || positionals[0] != "help" {
@@ -829,14 +830,14 @@ func helpCandidates(words []string, recipes map[string]recipe.Recipe) ([]Candida
 	}
 
 	if len(positionals) <= 2 {
-		return recipeCandidates(words, recipes), true
+		return recipeCandidates(words, recipes, verbose), true
 	}
 	return nil, false
 }
 
-func recipeCandidates(words []string, recipes map[string]recipe.Recipe) []Candidate {
+func recipeCandidates(words []string, recipes map[string]recipe.Recipe, verbose bool) []Candidate {
 	var candidates []Candidate
-	names := slices.Sorted(maps.Keys(recipes))
+	names := recipe.VisibleNames(recipes, verbose)
 	for _, name := range names {
 		candidates = append(candidates, Candidate{Value: name, Help: recipe.Help(recipes[name])})
 	}

@@ -192,17 +192,17 @@ func run(ctx context.Context, args []string) error {
 				Color:      recipeHelpColor,
 			})
 		}
-		return printHelp(os.Stdout, loaded, profile, resolvedSet)
+		return printHelp(os.Stdout, loaded, profile, resolvedSet, opts.verbose)
 	case "recipes":
 		if opts.all {
 			return errors.New("--all requires a recipe")
 		}
-		return printRecipes(os.Stdout, resolvedSet)
+		return printRecipes(os.Stdout, resolvedSet, opts.verbose)
 	case "config":
 		if opts.all {
 			return errors.New("--all requires a recipe")
 		}
-		return printConfig(os.Stdout, loaded, profile, resolvedSet)
+		return printConfig(os.Stdout, loaded, profile, resolvedSet, opts.verbose)
 	default:
 		name, recipeArgs := recipe.Invocation(rest)
 		rec, ok := resolvedSet[name]
@@ -396,6 +396,7 @@ func runComplete(ctx context.Context, args []string) error {
 		ConfigPath: loaded.Path,
 		Env:        loaded.Config.Env,
 		EnumSets:   loaded.Config.EnumSets,
+		Verbose:    opts.verbose,
 	})
 	if err != nil {
 		return err
@@ -432,13 +433,19 @@ func completionOptions(words []string) options {
 				opts.profile = args[i+1]
 				i++
 			}
-		case "--" + globalflag.AllTargets:
-			if !hasValue {
-				opts.all = true
-				continue
+		case "--" + globalflag.AllTargets, "--" + globalflag.Verbose:
+			enabled := true
+			if hasValue {
+				var err error
+				enabled, err = strconv.ParseBool(value)
+				if err != nil {
+					continue
+				}
 			}
-			if enabled, err := strconv.ParseBool(value); err == nil {
+			if name == "--"+globalflag.AllTargets {
 				opts.all = enabled
+			} else {
+				opts.verbose = enabled
 			}
 		}
 	}
@@ -456,17 +463,17 @@ func allScopeRecipes(recipes map[string]recipe.Recipe) map[string]recipe.Recipe 
 	return out
 }
 
-func printRecipes(w io.Writer, recipes map[string]recipe.Recipe) error {
-	return printRecipeList(w, recipes, "")
+func printRecipes(w io.Writer, recipes map[string]recipe.Recipe, verbose bool) error {
+	return printRecipeList(w, recipes, "", verbose)
 }
 
-func printRecipeList(w io.Writer, recipes map[string]recipe.Recipe, indent string) error {
-	names := slices.Sorted(maps.Keys(recipes))
+func printRecipeList(w io.Writer, recipes map[string]recipe.Recipe, indent string, verbose bool) error {
+	names := recipe.VisibleNames(recipes, verbose)
 	nameColumn := recipeNameColumn(names)
 	const markerColumn = len("[overridden]") + 2
 	showMarkers := false
-	for _, rec := range recipes {
-		builtin, overridden := recipe.BuiltinStatus(rec)
+	for _, name := range names {
+		builtin, overridden := recipe.BuiltinStatus(recipes[name])
 		if builtin || overridden {
 			showMarkers = true
 			break
@@ -500,7 +507,7 @@ func recipeNameColumn(names []string) int {
 	return column
 }
 
-func printConfig(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe) error {
+func printConfig(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe, verbose bool) error {
 	if loaded.Path != "" {
 		fmt.Fprintf(w, "config: %s\n", loaded.Path)
 	} else {
@@ -512,10 +519,10 @@ func printConfig(w io.Writer, loaded configfile.Loaded, profile string, recipes 
 		fmt.Fprintln(w, "profile: <none>")
 	}
 	fmt.Fprintln(w, "recipes:")
-	return printRecipeList(w, recipes, "  ")
+	return printRecipeList(w, recipes, "  ", verbose)
 }
 
-func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe) error {
+func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes map[string]recipe.Recipe, verbose bool) error {
 	printBasicHelp(w)
 	if loaded.Path != "" {
 		fmt.Fprintf(w, "\nconfig: %s\n", loaded.Path)
@@ -524,7 +531,7 @@ func printHelp(w io.Writer, loaded configfile.Loaded, profile string, recipes ma
 		fmt.Fprintf(w, "profile: %s\n", profile)
 	}
 	fmt.Fprintln(w, "\nrecipes:")
-	return printRecipes(w, recipes)
+	return printRecipes(w, recipes, verbose)
 }
 
 func printRecipeHelp(ctx context.Context, w io.Writer, name string, rec recipe.Recipe, opts recipeHelpOptions) error {

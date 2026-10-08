@@ -675,6 +675,16 @@ func TestCandidatesCompleteRecipeBuiltinArgumentValues(t *testing.T) {
 	}
 }
 
+func TestCandidatesCompleteHiddenRecipeArguments(t *testing.T) {
+	recipes := map[string]recipe.Recipe{
+		"_helper": {Arguments: map[string]recipe.Argument{"target": {Values: recipe.ScriptCommand("@recipes")}}},
+	}
+	candidates := complete(t, []string{"shadowtree", "_helper", "target="}, recipes)
+	if len(candidates) != 1 || candidates[0].Value != "target=_helper" {
+		t.Fatalf("candidates = %#v, want hidden recipe value for explicitly named recipe", candidates)
+	}
+}
+
 func TestCandidatesCompleteVarsBuiltinArgumentValues(t *testing.T) {
 	candidates := complete(t, []string{"shadowtree", "build", "target=m"}, map[string]recipe.Recipe{
 		"build": {

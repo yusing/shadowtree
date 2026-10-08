@@ -38,7 +38,13 @@ in `shadowtree help` and `shadowtree config` use the same markers.
 
 ```sh
 shadowtree recipes
+shadowtree --verbose recipes
 ```
+
+Names beginning with `_` are hidden from the recipe lists in `recipes`,
+`help`, and `config` unless `--verbose` comes before the command. You can still
+invoke them directly, inspect them with `help <recipe>`, or reference them with
+`@recipe`.
 
 ## Plan Printing
 

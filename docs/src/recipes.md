@@ -11,6 +11,10 @@ post = ["git diff --stat"]
 sync_out = ["internal/generated"]
 ```
 
+Prefix a helper recipe name with `_` to hide it from CLI recipe lists and shell
+recipe-name completion. It remains invocable and usable in recipe references.
+Use `shadowtree --verbose recipes` to list hidden recipes.
+
 ## Core Fields
 
 - `help`: short text shown by `shadowtree recipes`, `shadowtree help`, and

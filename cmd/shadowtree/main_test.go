@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -537,7 +538,7 @@ func TestRunAllRequiresRecipe(t *testing.T) {
 }
 
 func TestCompletionOptionsFollowGlobalBoundary(t *testing.T) {
-	opts := completionOptions([]string{"shadowtree", "--sync-out", "dist", "--profile", "go", "--all", "test", "--config", "other.toml"})
+	opts := completionOptions([]string{"shadowtree", "--sync-out", "dist", "--profile", "go", "--all", "--verbose", "test", "--config", "other.toml", "--verbose=false"})
 
 	if opts.profile != "go" {
 		t.Fatalf("profile = %q, want go", opts.profile)
@@ -547,6 +548,9 @@ func TestCompletionOptionsFollowGlobalBoundary(t *testing.T) {
 	}
 	if !opts.all {
 		t.Fatal("all = false")
+	}
+	if !opts.verbose {
+		t.Fatal("verbose = false, want global flag preserved")
 	}
 }
 
@@ -719,7 +723,7 @@ func TestPrintHelpIncludesRecipeHelp(t *testing.T) {
 	var out bytes.Buffer
 	err := printHelp(&out, zeroLoaded(), "go", map[string]recipe.Recipe{
 		"test": {Help: "Run tests.", Cmd: recipe.Command{"go", "test"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +745,7 @@ func TestPrintConfigAlignsLongRecipeNames(t *testing.T) {
 	err := printConfig(&out, zeroLoaded(), "go", map[string]recipe.Recipe{
 		"build":            {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
 		"export-db-schema": {Help: "Export schemas.", Cmd: recipe.Command{"go", "run"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +763,7 @@ func TestPrintRecipesAlignsLongRecipeNames(t *testing.T) {
 	err := printRecipes(&out, map[string]recipe.Recipe{
 		"build":            {Help: "Build binary.", Cmd: recipe.Command{"go", "build"}},
 		"export-db-schema": {Help: "Export schemas.", Cmd: recipe.Command{"go", "run"}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +786,7 @@ func TestPrintRecipesMarksBuiltinsAndOverrides(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := printRecipes(&out, recipes); err != nil {
+	if err := printRecipes(&out, recipes, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1301,4 +1305,70 @@ func lineWithPrefix(t *testing.T, lines []string, prefix string) string {
 	}
 	t.Fatalf("missing line with prefix %q in %#v", prefix, lines)
 	return ""
+}
+
+func TestHiddenRecipeDiscoveryAndInvocation(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTextFile(t, filepath.Join(dir, ".shadowtree.toml"), `
+[recipes._helper]
+help = "Hidden helper"
+sandboxed = false
+cmd = "printf helper-ran"
+[recipes.public]
+help = "Public workflow"
+sandboxed = false
+cmd = "@_helper"
+`)
+	for _, command := range []string{"recipes", "help", "config"} {
+		for _, flag := range []string{"", "--verbose", "--verbose=false"} {
+			args := []string{command}
+			if flag != "" {
+				args = append([]string{flag}, args...)
+			}
+			out := captureStdout(t, func() error { return run(t.Context(), args) })
+			if got, want := strings.Contains(out, "_helper"), flag == "--verbose"; got != want {
+				t.Fatalf("%v: hidden recipe visible = %t, want %t\n%s", args, got, want, out)
+			}
+			if !strings.Contains(out, "public") {
+				t.Fatalf("%v: public recipe missing\n%s", args, out)
+			}
+		}
+	}
+	for _, name := range []string{"_helper", "public"} {
+		out := captureStdout(t, func() error { return run(t.Context(), []string{name}) })
+		if out != "helper-ran" {
+			t.Fatalf("%s output = %q", name, out)
+		}
+	}
+	out := captureStdout(t, func() error { return run(t.Context(), []string{"help", "_helper", "color=false"}) })
+	if !strings.Contains(out, "Hidden helper") {
+		t.Fatalf("explicit hidden recipe help missing: %s", out)
+	}
+	for _, shell := range []string{"bash", "fish", "zsh"} {
+		for _, flag := range []string{"", "--verbose", "--verbose=false"} {
+			for _, command := range []string{"", "help"} {
+				words := []string{"shadowtree"}
+				if flag != "" {
+					words = append(words, flag)
+				}
+				if command != "" {
+					words = append(words, command)
+				}
+				words = append(words, "")
+				args := append([]string{shell}, words...)
+				if shell == "bash" {
+					line := strings.Join(words, " ")
+					args = []string{shell, strconv.Itoa(len(line)), line, ""}
+				}
+				out := captureStdout(t, func() error { return runComplete(t.Context(), args) })
+				if got, want := strings.Contains(out, "_helper\t"), flag == "--verbose"; got != want {
+					t.Fatalf("%v: hidden completion visible = %t, want %t\n%s", args, got, want, out)
+				}
+				if !strings.Contains(out, "public\t") {
+					t.Fatalf("%v: public completion missing\n%s", args, out)
+				}
+			}
+		}
+	}
 }

@@ -60,6 +60,7 @@ comma-separated paths.
 
 `--verbose`
 : Show workspace information and compact command boundaries during execution.
+Include underscore-prefixed recipes in recipe lists and shell recipe-name completion.
 
 `--help`
 : Show basic CLI help.

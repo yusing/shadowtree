@@ -165,6 +165,16 @@ type Recipe struct {
 	overridden     bool
 }
 
+// VisibleNames returns sorted recipe names for discovery output.
+// Names beginning with _ are included only when verbose is true.
+func VisibleNames(recipes map[string]Recipe, verbose bool) []string {
+	names := slices.Sorted(maps.Keys(recipes))
+	if !verbose {
+		names = slices.DeleteFunc(names, func(name string) bool { return strings.HasPrefix(name, "_") })
+	}
+	return names
+}
+
 // BuiltinStatus reports whether rec comes from a profile and whether project
 // configuration overrides that profile recipe.
 func BuiltinStatus(rec Recipe) (builtin, overridden bool) {

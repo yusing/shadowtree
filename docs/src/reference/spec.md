@@ -112,7 +112,7 @@ shadowtree __complete zsh <words...>
 --expanded          with --print, include expanded scripts and resolved values
 --check             validate the resolved recipe without running
 --shell             with --check, parse expanded shell scripts
---verbose           show workspace and compact command boundaries
+--verbose           show hidden recipes, workspace and compact command boundaries
 --help              show basic CLI help
 --version           print the version
 ```
@@ -1189,6 +1189,13 @@ are marked `[built-in]`; config recipes that replace a same-name profile recipe
 are marked `[overridden]`. Custom config recipes are unmarked. If a recipe has
 no `help`, Shadowtree falls back to a compact command summary. The recipe lists
 in `shadowtree help` and `shadowtree config` use the same markers.
+
+Recipe names beginning with `_` are hidden from these lists and shell
+recipe-name completion by default. Put `--verbose` before the command to show
+them, for example `shadowtree --verbose recipes`. Hidden recipes remain
+invocable by name, available through `help <recipe>`, and usable in recipe
+references. `@recipes` value providers and editor authoring completion still
+include them.
 
 ## Plan Printing
 

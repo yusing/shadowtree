@@ -44,6 +44,10 @@ Completion uses:
 - typed argument metadata
 - `values` providers for the active argument
 
+Recipe-name completion hides names beginning with `_` unless the global
+`--verbose` flag is enabled. Arguments for an explicitly named hidden recipe
+still complete normally. `@recipes` value providers include hidden recipes.
+
 ## Supported Behavior
 
 - `shadowtree <TAB>` completes core commands and resolved recipes.
